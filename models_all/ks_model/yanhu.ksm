@@ -1,0 +1,37 @@
+[keship_model v1]
+
+===BASE_SDF===
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="yanhu">
+    <pose>0 0 0 0 0 0</pose>
+    <static>true</static>
+    <link name="base_link">
+      <visual name="visual">
+        <geometry>
+          <mesh><uri>robot_model/yanhu/yanhu.dae</uri></mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh><uri>robot_model/yanhu/yanhu.dae</uri></mesh>
+        </geometry>
+      </collision>
+    </link>
+    <plugin filename="libKSPlugin_Controller.so"        name="keship::KSPlugin_Controller">
+      <link_name>base_link</link_name>
+    </plugin>
+  </model>
+</sdf>
+
+===END===
+
+===BUOYANCY===
+===END===
+
+===THRUST===
+===END===
+
+===HYDRO===
+===END===
+

@@ -1,0 +1,73 @@
+[keship_model v1]
+
+===BASE_SDF===
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="keship">
+    <pose>0 0 0 0 0 0</pose>
+    <static>false</static>
+    <link name="base_link">
+      <inertial>
+        <mass>300</mass>
+        <inertia>
+          <ixx>50</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>50</iyy><iyz>0</iyz>
+          <izz>50</izz>
+        </inertia>
+      </inertial>
+      <visual name="visual">
+        <geometry>
+          <mesh><uri>file:///home/keship/keship_ws/src/keship/models/keship_03/mesh/kehaisanhao.dae</uri></mesh>
+        </geometry>
+      </visual>
+      <collision name="collision">
+        <geometry>
+          <mesh><uri>file:///home/keship/keship_ws/src/keship/models/keship_03/mesh/kehaisanhao.dae</uri></mesh>
+        </geometry>
+      </collision>
+    </link>
+    <plugin filename="libKSPlugin_Controller.so"        name="keship::KSPlugin_Controller">
+      <link_name>base_link</link_name>
+    </plugin>
+  </model>
+</sdf>
+
+===END===
+
+===BUOYANCY===
+link_name=base_link
+fluid_density=1000
+fluid_level=0
+linear_drag=0.5
+angular_drag=0.05
+body=body_0,Cyl,0.25,2.6,0,0,-0.2,0.7,-0.2,0,1.5708,0
+body=body_1,Cyl,0.25,2.6,0,0,-0.2,-0.7,-0.2,0,1.5708,0
+===END===
+
+===THRUST===
+===END===
+
+===HYDRO===
+link_name=base_link
+am=X_udot,0
+am=Y_vdot,0
+am=Z_wdot,0
+am=K_pdot,0
+am=M_qdot,0
+am=N_rdot,0
+am=Y_pdot,0
+am=Y_rdot,0
+am=K_vdot,0
+am=K_rdot,0
+am=M_wdot,0
+am=N_vdot,0
+damp=Xu,0
+damp=Yv,0
+damp=Zw,0
+damp=Kp,0
+damp=Mq,0
+damp=Nr,0
+damp=Yr,0
+damp=Nv,0
+===END===
+

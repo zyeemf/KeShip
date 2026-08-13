@@ -1,0 +1,55 @@
+{
+  "version": "0.0.4",
+  "attributes": {
+    "name": "新世界aa",
+    "pose": [0,0,0,0,0,0]
+  },
+  "models": {
+    "lklklk": {
+      "attributes": {
+        "file": "lklklk.ksm",
+        "pose": [-0.00510817,-0.00172381,-0.16803,-0.00123697,-0.0283018,0.00354504],
+        "isStatic": false
+      }
+    }
+  },
+  "waters": {
+    "默认水域": {
+      "attributes": {
+        "bounds": {
+          "xMin": -250,
+          "xMax": 250,
+          "yMin": -250,
+          "yMax": 250
+        },
+        "baseHeight": 0,
+        "vertices": []
+      },
+      "fluids": {
+        "wave": {
+          "model": "PMS",
+          "period": 5,
+          "number": 6,
+          "amplitude": 0,
+          "scale": 1.1,
+          "gain": 0,
+          "direction": 0,
+          "angle": 0.4,
+          "steepness": 0,
+          "tau": 2
+        },
+        "wind": {
+          "speed": 0,
+          "direction": 0
+        },
+        "current": {
+          "speed": 0,
+          "direction": 0
+        },
+        "directionAuto": true
+      }
+    }
+  },
+  "subWorlds": {
+  }
+}

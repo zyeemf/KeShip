@@ -1,0 +1,46 @@
+# ===== 构建产物 =====
+build/
+install/
+log/
+mylogs/
+buoy_ut_logs/
+.colcon/
+.cache/
+
+# ===== 编译中间文件 =====
+__pycache__/
+*.pyc
+*.so
+*.o
+*.a
+compile_commands.json
+CTestTestfile.cmake
+
+# ===== 大模型二进制：目录结构保留（.gitkeep），文件不入库 =====
+models_all/robot_model/
+!models_all/robot_model/.gitkeep
+!models_all/robot_model/**/.gitkeep
+data/models_normalized/
+!data/models_normalized/.gitkeep
+data/experiments/
+!data/experiments/.gitkeep
+!data/experiments/**/.gitkeep
+
+# ===== 旧数据目录（迁移过渡期保留在磁盘，不入库）=====
+models_ksm/
+models_ksw/
+models_robot/
+models_env/
+
+# ===== data 运行时/临时文件 =====
+data/bak_cache_0408/
+data/keship.lock
+data/preview/
+data/test/
+data/waves/
+
+# ===== src 内模型数据（waves 纹理等大文件）=====
+src/keship/models/waves/materials/textures/
+
+# ===== 个人 IDE =====
+.vscode/

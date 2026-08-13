@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Keship 世界桥接节点 — 动态管理每个模型的 ROS 2 bridge"""
+
+import json
+import os
+import signal
+import subprocess
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+
+class KeshipWorldBridge(Node):
+    """监听 /keship/model_ready，动态创建/销毁 per-model ros_gz_bridge 子进程"""
+
+    def __init__(self):
+        super().__init__('keship_world_bridge')
+        self.sub_ = self.create_subscription(
+            String, '/keship/model_ready', self.on_model_ready, 10)
+        self.bridges_ = {}
+        self.get_logger().info('KeshipWorldBridge 就绪，等待模型事件...')
+
+    def on_model_ready(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().error(f'无效 JSON: {msg.data}')
+            return
+        event = data.get('event', '')
+        name = data.get('name', '')
+        if not name:
+            return
+        if event == 'spawn':
+            self._spawn_bridge(name, data.get('thrusters', []), data.get('sensors', {}))
+        elif event == 'delete':
+            self._delete_bridge(name)
+
+    # 传感器类型 → (data_type, ros_msg, gz_msg) 映射表
+    SENSOR_MAP = {
+        'IMU':          ('imu',          'sensor_msgs/msg/Imu',            'gz.msgs.IMU'),
+        'NavSat':       ('navsat',       'sensor_msgs/msg/NavSatFix',      'gz.msgs.NavSat'),
+        'Magnetometer': ('magnetometer', 'sensor_msgs/msg/MagneticField',  'gz.msgs.Magnetometer'),
+        'Camera':       ('image',        'sensor_msgs/msg/Image',          'gz.msgs.Image'),
+        'Lidar':        ('scan',         'sensor_msgs/msg/LaserScan',      'gz.msgs.LaserScan'),
+    }
+
+    def _spawn_bridge(self, model_name: str, thrusters: list, sensors: list):
+        """sensors 是实例列表: [{"type":"Camera","name":"front_cam","link":"base_link"}, ...]"""
+        if model_name in self.bridges_:
+            self._delete_bridge(model_name)
+
+        # Phase 1: 基础参数 + ROS remaps
+        args = [
+            'ros2', 'run', 'ros_gz_bridge', 'parameter_bridge',
+            '--ros-args',
+            '-r', f'__node:={model_name}_bridge',
+            '-r', f'/world/keship_world/pose/info:={model_name}/pose',
+        ]
+
+        # 传感器 topic remap (长路径 → 短名: {model}/{sensor_name})
+        sensor_count = 0
+        for s in sensors:
+            s_type = s.get('type', '')
+            s_name = s.get('name', '')
+            s_link = s.get('link', 'base_link')
+            info = self.SENSOR_MAP.get(s_type)
+            if not info or not s_name:
+                continue
+            data_type = info[0]
+            gz_topic = f'/world/keship_world/model/{model_name}/link/{s_link}/sensor/{s_name}/{data_type}'
+            ros_topic = f'{model_name}/{s_type.lower()}/{s_name}'
+            args += ['-r', f'{gz_topic}:={ros_topic}']
+            sensor_count += 1
+
+        # Phase 2: bridge specs
+        args.append('--')
+        args.append(f'/world/keship_world/pose/info@geometry_msgs/msg/PoseStamped[gz.msgs.Pose')
+
+        for t in thrusters:
+            args.append(
+                f'/keship/thrust/{model_name}/{t}'
+                f'@std_msgs/msg/Float64]gz.msgs.Double')
+
+        # 传感器 bridge spec (GZ → ROS 方向，使用 [ 分隔符)
+        for s in sensors:
+            s_type = s.get('type', '')
+            s_name = s.get('name', '')
+            s_link = s.get('link', 'base_link')
+            info = self.SENSOR_MAP.get(s_type)
+            if not info or not s_name:
+                continue
+            data_type, ros_msg, gz_msg = info
+            args.append(
+                f'/world/keship_world/model/{model_name}/link/{s_link}/sensor/{s_name}/{data_type}'
+                f'@{ros_msg}[{gz_msg}')
+
+        self.get_logger().info(f'[{model_name}] 启动 bridge: {len(thrusters)} 个推进器, {sensor_count} 个传感器')
+        proc = subprocess.Popen(args, start_new_session=True,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.bridges_[model_name] = proc
+
+    def _delete_bridge(self, model_name: str):
+        proc = self.bridges_.pop(model_name, None)
+        if proc:
+            self.get_logger().info(f'[{model_name}] 停止 bridge')
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                return
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+
+    def destroy_node(self):
+        for name in list(self.bridges_.keys()):
+            self._delete_bridge(name)
+        super().destroy_node()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = KeshipWorldBridge()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+
+
+if __name__ == '__main__':
+    main()

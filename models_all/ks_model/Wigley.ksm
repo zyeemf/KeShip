@@ -1,0 +1,53 @@
+[keship_model v1]
+
+===BASE_SDF===
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <model name="Wigley">
+    <pose>0 0 0 0 0 0</pose>
+    <static>false</static>
+    <link name="base_link">
+      <inertial>
+        <pose>0 0 -0.5 0 0 0</pose>
+        <mass>1998.44</mass>
+        <inertia>
+          <ixx>541.244</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>6161.85</iyy><iyz>0</iyz>
+          <izz>6370.02</izz>
+        </inertia>
+      </inertial>
+      <visual name="visual">
+        <geometry><mesh><uri>data/models/Wigley_vis.obj</uri></mesh></geometry>
+        <material><ambient>0.6 0.5 0.4 1</ambient><diffuse>0.7 0.6 0.5 1</diffuse></material>
+      </visual>
+      <collision name="collision">
+        <geometry><mesh><uri>data/models/Wigley_vis.obj</uri></mesh></geometry>
+      </collision>
+    </link>
+    <plugin filename="libKSPlugin_Buoyancy.so" name="keship::KSPlugin_Buoyancy">
+      <fluid_density>1000</fluid_density>
+      <fluid_level>0.0</fluid_level>
+      <link_name>base_link</link_name>
+      <wavefield>
+        <topic>/keship/wavefield/parameters</topic>
+      </wavefield>
+      <buoyancy name="hull">
+        <geometry>
+          <mesh><uri>data/models/Wigley_buoy.obj</uri></mesh>
+        </geometry>
+      </buoyancy>
+    </plugin>
+  </model>
+</sdf>
+
+===END===
+
+===BUOYANCY===
+===END===
+
+===THRUST===
+===END===
+
+===HYDRO===
+===END===
+

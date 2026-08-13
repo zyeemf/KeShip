@@ -1,0 +1,31 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+*.so
+*.o
+*.a
+compile_commands.json
+CTestTestfile.cmake
+
+# 备份与临时调试文件
+*.bak
+create_test_inertia.cc
+
+# 模型数据（不随仓库分发，本地保留）
+models/keship_03/
+models/oil_platform/
+models/platform_zjy/
+models/yanhu/
+models/waves/meshes/
+models/waves/model.sdf
+models/waves/model.config
+
+# 测试代码（不随仓库分发）
+src_cpp/test/
+test/
+worlds/test_buoyancy.sdf
+
+# 个人 IDE 配置
+.vscode/

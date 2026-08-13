@@ -1,0 +1,55 @@
+{
+  "version": "0.0.4",
+  "attributes": {
+    "name": "W0811_1",
+    "pose": [0,0,0,0,0,0]
+  },
+  "models": {
+    "KeBoat03": {
+      "attributes": {
+        "file": "KeBoat03.ksm",
+        "pose": [-0.0053831,-0.00148131,-0.16797,1.45122e-06,-0.0266062,0.00371505],
+        "isStatic": false
+      }
+    }
+  },
+  "waters": {
+    "默认水域": {
+      "attributes": {
+        "bounds": {
+          "xMin": -250,
+          "xMax": 250,
+          "yMin": -250,
+          "yMax": 250
+        },
+        "baseHeight": 0,
+        "vertices": []
+      },
+      "fluids": {
+        "wave": {
+          "model": "PMS",
+          "period": 5,
+          "number": 6,
+          "amplitude": 0,
+          "scale": 1.1,
+          "gain": 0,
+          "direction": 0,
+          "angle": 0.4,
+          "steepness": 0,
+          "tau": 2
+        },
+        "wind": {
+          "speed": 0,
+          "direction": 0
+        },
+        "current": {
+          "speed": 0,
+          "direction": 0
+        },
+        "directionAuto": true
+      }
+    }
+  },
+  "subWorlds": {
+  }
+}

@@ -1,0 +1,42 @@
+# KeShip 多片水域配置示例
+# 与 keship_world.sdf 配合使用
+
+[[water_areas]]
+name = "上游水库"
+x_min = -500.0
+x_max = 0.0
+y_min = -500.0
+y_max = 500.0
+base_height = 10.0
+
+[water_areas.wave]
+model = "PMS"
+period = 5.0
+number = 6
+scale = 1.1
+gain = 1.0
+direction = 0.0
+angle = 0.4
+steepness = 0.0
+amplitude = 0.0
+tau = 2.0
+
+[[water_areas]]
+name = "下游河道"
+x_min = 0.0
+x_max = 500.0
+y_min = -500.0
+y_max = 500.0
+base_height = 2.0
+
+[water_areas.wave]
+model = "PMS"
+period = 3.0
+number = 6
+scale = 1.1
+gain = 0.5
+direction = 0.5
+angle = 0.3
+steepness = 0.0
+amplitude = 0.0
+tau = 2.0

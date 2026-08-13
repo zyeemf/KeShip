@@ -1,0 +1,19 @@
+# KeShip 任务场景
+name = "新任务"
+time_limit = 300
+
+[task]
+type = "waypoint"
+arrival_radius = 2
+
+[[task.waypoints]]
+x = -0.538922
+y = 17.395
+
+[[task.waypoints]]
+x = 46.7665
+y = 9.15966
+
+[[task.waypoints]]
+x = 12.6347
+y = -7.64706

@@ -1,0 +1,55 @@
+{
+  "version": "0.0.4",
+  "attributes": {
+    "name": "新世界111",
+    "pose": [0,0,0,0,0,0]
+  },
+  "models": {
+    "kkshishi": {
+      "attributes": {
+        "file": "kkshishi.ksm",
+        "pose": [-0.00492266,-0.00188268,-0.168521,-0.00200796,-0.0292981,0.00341983],
+        "isStatic": false
+      }
+    }
+  },
+  "waters": {
+    "默认水域": {
+      "attributes": {
+        "bounds": {
+          "xMin": -250,
+          "xMax": 250,
+          "yMin": -250,
+          "yMax": 250
+        },
+        "baseHeight": 0,
+        "vertices": []
+      },
+      "fluids": {
+        "wave": {
+          "model": "PMS",
+          "period": 5,
+          "number": 6,
+          "amplitude": 0,
+          "scale": 1.1,
+          "gain": 0,
+          "direction": 0,
+          "angle": 0.4,
+          "steepness": 0,
+          "tau": 2
+        },
+        "wind": {
+          "speed": 0,
+          "direction": 0
+        },
+        "current": {
+          "speed": 0,
+          "direction": 0
+        },
+        "directionAuto": true
+      }
+    }
+  },
+  "subWorlds": {
+  }
+}

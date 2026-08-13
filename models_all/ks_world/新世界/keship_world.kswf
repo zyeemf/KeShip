@@ -1,0 +1,55 @@
+{
+  "version": "0.0.4",
+  "attributes": {
+    "name": "新世界",
+    "pose": [0,0,0,0,0,0]
+  },
+  "models": {
+    "TestBoat": {
+      "attributes": {
+        "file": "TestBoat.ksm",
+        "pose": [-0.00542576,-0.00147386,-0.168025,0.000124779,-0.0264196,0.00369948],
+        "isStatic": false
+      }
+    }
+  },
+  "waters": {
+    "默认水域": {
+      "attributes": {
+        "bounds": {
+          "xMin": -250,
+          "xMax": 250,
+          "yMin": -250,
+          "yMax": 250
+        },
+        "baseHeight": 0,
+        "vertices": []
+      },
+      "fluids": {
+        "wave": {
+          "model": "PMS",
+          "period": 5,
+          "number": 6,
+          "amplitude": 0,
+          "scale": 1.1,
+          "gain": 0,
+          "direction": 0,
+          "angle": 0.4,
+          "steepness": 0,
+          "tau": 2
+        },
+        "wind": {
+          "speed": 0,
+          "direction": 0
+        },
+        "current": {
+          "speed": 0,
+          "direction": 0
+        },
+        "directionAuto": true
+      }
+    }
+  },
+  "subWorlds": {
+  }
+}

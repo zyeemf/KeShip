@@ -1,0 +1,21 @@
+[[water_areas]]
+name = "水域1"
+x_min = 9.35294
+x_max = 114.861
+y_min = -92.4413
+y_max = 0.344153
+base_height = 0
+vertices = [[15.0546, -92.4413], [9.35294, -22.8898], [114.861, 0.344153], [96.303, -90.1977]]
+
+[water_areas.wave]
+model = "PMS"
+period = 5
+number = 3
+scale = 1.1
+gain = 1
+direction = 0
+angle = 0.4
+steepness = 0
+amplitude = 0
+tau = 2
+
