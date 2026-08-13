@@ -40,3 +40,24 @@ colcon build --packages-select keship --merge-install
 ```
 
 运行入口见 `start_keship.sh`（GUI 插件加载于 Gazebo）。
+
+## Git 使用指引
+
+### 分支结构
+- `main`：现行新历史（日常操作此分支）
+- `master` / `legacy`：旧历史存档（仅查阅，勿修改）
+
+### 日常操作
+```bash
+git pull                       # 更新
+git status / git diff          # 查看改动
+git add <文件> && git commit -m "描述"
+git push                       # 推送（凭据已配置，无需手动输入）
+git log --oneline -5           # 查看历史
+```
+
+### 注意事项
+- 凭据自动认证已配置，推送/拉取无需输入账号密码
+- 大模型目录（`models_all/robot_model/` 等）已被 .gitignore 忽略，模型文件放入不会误提交
+- 仓库含中文文件名（如"新世界"目录），如需显示中文可执行 `git config --global core.quotepath false`
+- 克隆时若远端默认分支未切换，需显式 `-b main`
