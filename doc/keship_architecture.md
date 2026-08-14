@@ -76,7 +76,7 @@ keship/（ROS2 功能包，源码根 = src/keship/）
 
 keship_ws/ 其他顶层目录：
 ├── models_all/                # 统一模型资源根目录（ks_model .ksm / ks_world .ksw/.kswf / robot_model 原始模型）
-├── data/                      # 运行时数据（models/ 缓存 obj、models_normalized/ 规范化缓存、experiments/）
+├── data/                      # 纯运行时工作目录（整体可删可重建：log/、models/、waves/、preview/、test/、experiments/、keship.lock、keship_water_areas.json）
 ├── task/                      # 实验任务（.toml）
 ├── scripts/                   # 运维脚本（migrate_models_all.sh）
 ├── doc/                       # 本文档目录（架构 / 开发指南 / 专题笔记）
@@ -128,7 +128,7 @@ keship_ws/ 其他顶层目录：
 
 #### 模型加载坐标系规范化（Mesh 规范化缓存）
 - **目标**：任意格式模型（DAE/OBJ/STL/glTF 等）加载后，视觉 / 碰撞 / GUI 预览 / 物理配置（CoG/浮力体/推进器/传感器）统一到"相对 link 的 Z-UP 右手系"，**不修改用户模型文件**。
-- **机制**：`MeshUtils::NormalizeMeshToSDFCache(src)` 用 `LoadMeshFromFile`（assimp 烘焙节点矩阵 + DAE up_axis 校正）产出标准系顶点，重写为**无装配矩阵、无 up_axis 声明**的"干净 OBJ"+ MTL，缓存到 `data/models_normalized/`；SDF 中所有 file mesh `<uri>` 替换为缓存路径（`ModelManager::NormalizeMeshUrisInSDF`，覆盖 `MakeSDFStringFromValidFileType` / `ParseKSMFile` baseSDF / `SpawnModelInGazeboFromSDFString` / `SpawnModelInGazeboFromFile` 及全部 Rebuild 分支）。
+- **机制**：`MeshUtils::NormalizeMeshToSDFCache(src)` 用 `LoadMeshFromFile`（assimp 烘焙节点矩阵 + DAE up_axis 校正）产出标准系顶点，重写为**无装配矩阵、无 up_axis 声明**的"干净 OBJ"+ MTL，缓存到**源模型目录 `normalized/` 子目录**（随源同生命周期，文件名 `<stem>_<key>`，key 自校验失效重建）；SDF 中所有 file mesh `<uri>` 替换为缓存路径（`ModelManager::NormalizeMeshUrisInSDF`，覆盖 `MakeSDFStringFromValidFileType` / `ParseKSMFile` baseSDF / `SpawnModelInGazeboFromSDFString` / `SpawnModelInGazeboFromFile` 及全部 Rebuild 分支）。
 - **关键**：缓存 OBJ 顶点按 **gz-sim 渲染同款坐标**写入——对声明 `up_axis=Z_UP` 的 DAE 应用 gz ColladaLoader 同款映射 `(x,y,z)→(x,-z,y)`（gz 内部 Y-up，OBJ 无 up_axis 时原样渲染），其余格式（OBJ/STL/glTF 等）保持原样；保证 **import 模型渲染 ≡ DAE 直挂渲染**（几何与纹理方位一致，2026-08-04 修复，实验：缓存直挂 vs DAE 直挂 bbox/四色质心重合）。`LoadMeshFromFile` 内存数据仍为 Z-UP（物理/惯性/预览不受影响），仅缓存文件采用渲染坐标。
 - **坐标系差异提示**：GUI 预览（`Buoyancy3DView` 等）与内部 2D 预览（footprint/投影图）直接 `LoadMeshFromFile(缓存)` 原样渲染 → 显示几何与源模型朝向差 90°；浮力体/推进器/传感器/相机 pose 按缓存渲染坐标系标定（实测 y 取负号后各设置在预览中回到合适位置，2026-08-04 用户验收记录）。
 - **缓存失效**：源文件或纹理的 mtime + size 变化 → key 变化 → 自建重建；同源同目录陈旧缓存自动清理；缓存生成器语义变更通过 key 内嵌版本（`gzmap1`）强制失效重建。
@@ -198,7 +198,7 @@ GUI (QML) ──gz-transport──→ Gazebo ECM ──→ Physics Systems ─�
 - `hydroConfigCache_` 
 - `sensorConfigCache_` 
 - `staticCache_`
-- `data/models_normalized/` — mesh 规范化缓存（OBJ+MTL+纹理副本，磁盘持久化，mtime+size 失效重建）
+- `robot_model/<模型>/normalized/` — mesh 规范化缓存（OBJ+MTL+纹理副本，随源同目录、可整体删除重建，key 自校验失效重建；ksm 持久化源路径，加载时统一归一化）
 
 
 
@@ -252,6 +252,7 @@ GUI (QML) ──gz-transport──→ Gazebo ECM ──→ Physics Systems ─�
 | [notes/archive/gazebo解算fossen模型隐式显式方案.md](notes/archive/gazebo解算fossen模型隐式显式方案.md) | Fossen 模型在 Gazebo 求解的隐式/显式方案讨论 |
 | [notes/water_area_edit_and_polygon_fix.md](notes/water_area_edit_and_polygon_fix.md) | 水域编辑体验（形状统一/交互简化）与多边形判定修复 |
 | [notes/ui_refinement_session3.md](notes/ui_refinement_session3.md) | **UI 第三批优化 (2026-08-12)**：推进器名称可编辑、地图提示词统一、窗口开关不影响暂停状态 |
+| [notes/data_arch_refactor_2026-08-12.md](notes/data_arch_refactor_2026-08-12.md) | **数据架构整理 (2026-08-12)**：data 纯运行时化、ksm 源路径持久化、网格缓存随源同目录、波浪场载入竞态修复、日志收敛 |
 
 
 
