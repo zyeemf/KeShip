@@ -55,3 +55,5 @@ data/models/MathHull_*.obj
 
 # ===== 个人 IDE =====
 .vscode/
+# 个人 AI agent 配置（本地使用，不入库）
+AGENTS.md
