@@ -469,7 +469,7 @@ namespace
     return true;
   }
 
-  /// 清理同一源模型（同名前缀+目录哈希）的陈旧缓存文件
+  /// 清理同一源模型（同名前缀）的陈旧缓存文件
   void CleanupOldCaches(const std::string &_dir, const std::string &_prefix,
                         const std::string &_keepBase)
   {
@@ -513,8 +513,8 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
   // 直接返回原路径（跳过），避免 ksm 载入时把缓存 OBJ 再次当作源规范化，
   // 造成链式版本堆积（载入-保存循环每轮新增 ~22MB）
   const bool inCacheDir =
-      _srcPath.find("/models_normalized/") != std::string::npos ||
-      _srcPath.find("\\models_normalized\\") != std::string::npos;
+      _srcPath.find("/normalized/") != std::string::npos ||
+      _srcPath.find("\\normalized\\") != std::string::npos;
   if (inCacheDir)
   {
     std::error_code ec;
@@ -563,8 +563,9 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     keyInput += "|" + MeshFileCacheKey(texAbs);
   std::string key = Sha1Hex(keyInput).substr(0, 8);
 
-  /// 3. 缓存路径（data/models_normalized/）
-  std::string cacheDir = KeshipDataDir() + "/models_normalized/";
+  /// 3. 缓存路径（源模型目录下 normalized/，与源同生命周期，可整体删除重建）
+  std::string cacheDir =
+      std::filesystem::path(_srcPath).parent_path().string() + "/normalized/";
   {
     std::error_code ec;
     if (!std::filesystem::exists(cacheDir, ec))
@@ -572,9 +573,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
   }
 
   std::string srcName = std::filesystem::path(_srcPath).stem().string();
-  std::string dirHash = Sha1Hex(
-      std::filesystem::path(_srcPath).parent_path().string()).substr(0, 8);
-  std::string base = NormalizeCacheName(srcName) + "_" + dirHash + "_" + key;
+  std::string base = NormalizeCacheName(srcName) + "_" + key;
   std::string objPath = cacheDir + base + ".obj";
   std::string mtlPath = cacheDir + base + ".mtl";
 
@@ -642,8 +641,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
   }
 
   /// 6. 清理陈旧缓存（同一源模型的旧 key 文件）
-  CleanupOldCaches(cacheDir, NormalizeCacheName(srcName) + "_" + dirHash + "_",
-                   base);
+  CleanupOldCaches(cacheDir, NormalizeCacheName(srcName) + "_", base);
 
   std::cout << "MeshUtils: 规范化缓存已生成 " << objPath << " ("
             << mesh.vertices.size() << " 顶点, "
@@ -657,99 +655,33 @@ MeshCacheCleanupResult CleanupUnusedMeshCache()
 {
   MeshCacheCleanupResult result;
 
-  /// 1. 收集所有 ksm 引用的缓存家族基名（models_all/ks_world 递归 + ks_model 散文件）
-  std::set<std::string> referenced;
-  const std::string needle = "models_normalized/";
-  std::vector<std::string> scanDirs;
-  scanDirs.push_back(KeshipWorldsDir());                   // models_all/ks_world
-  scanDirs.push_back(KeshipKsmDir());                      // models_all/ks_model
-  /// 过渡期：旧目录若仍存在（迁移验证阶段）也加入扫描，防误删仍被旧 ksm 引用的缓存
-  {
-    const char *legacyDirs[] = {"/models_ksw", "/models_ksm"};
-    std::error_code lec;
-    for (const char *ld : legacyDirs)
-    {
-      const std::string legacy = KeshipHomeWsDir() + ld;
-      if (std::filesystem::exists(legacy, lec))
-        scanDirs.push_back(legacy);
-      lec.clear();
-    }
-  }
-
+  /// 清空 robot_model 下所有 normalized/ 缓存目录（缓存随源同目录，下次加载自动重建）
+  const std::string robotDir = KeshipRobotModelDir();
   std::error_code ec;
+  if (!std::filesystem::exists(robotDir, ec))
+    return result;
+
   std::filesystem::recursive_directory_iterator end;
-  for (const auto &dir : scanDirs)
+  for (std::filesystem::recursive_directory_iterator it(robotDir, ec);
+       !ec && it != end; it.increment(ec))
   {
-    if (!std::filesystem::exists(dir, ec)) { ec.clear(); continue; }
-    for (std::filesystem::recursive_directory_iterator it(dir, ec);
-         !ec && it != end; it.increment(ec))
+    if (!it->is_directory(ec)) { ec.clear(); continue; }
+    if (it->path().filename() != "normalized")
+      continue;
+    std::filesystem::directory_iterator cend;
+    for (std::filesystem::directory_iterator cit(it->path(), ec);
+         !ec && cit != cend; cit.increment(ec))
     {
-      if (!it->is_regular_file(ec)) { ec.clear(); continue; }
-      const std::string fname = it->path().filename().string();
-      if (fname.size() <= 4 ||
-          fname.compare(fname.size() - 4, 4, ".ksm") != 0)
-        continue;
-
-      std::ifstream ifs(it->path());
-      if (!ifs) continue;
-      std::string content((std::istreambuf_iterator<char>(ifs)),
-                          std::istreambuf_iterator<char>());
-      size_t pos = 0;
-      while ((pos = content.find(needle, pos)) != std::string::npos)
-      {
-        pos += needle.size();
-        const size_t endObj = content.find(".obj", pos);
-        if (endObj != std::string::npos && endObj - pos < 200)
-          referenced.insert(content.substr(pos, endObj - pos));
-      }
-    }
-  }
-
-  /// 2. 遍历缓存目录，先收集未引用家族，再统一删除（防迭代器失效）
-  const std::string cacheDir = KeshipDataDir() + "/models_normalized/";
-  if (!std::filesystem::exists(cacheDir, ec)) return result;
-  {
-    std::vector<std::filesystem::path> toRemove;
-    std::vector<uint64_t> sizes;
-    std::filesystem::directory_iterator end2;
-    for (std::filesystem::directory_iterator it(cacheDir, ec);
-         !ec && it != end2; it.increment(ec))
-    {
-      if (!it->is_regular_file(ec)) { ec.clear(); continue; }
-
-      /// 家族基名：剥扩展名；仅当末段为 "_tex"（纹理副本）时再剥该段，
-      /// 避免源名本身含 "_tex" 的模型（obj 文件名末段非 _tex）被误剥
-      std::string base = it->path().filename().string();
-      const size_t dot = base.rfind('.');
-      if (dot != std::string::npos)
-        base = base.substr(0, dot);
-      const std::string texMark = "_tex";
-      if (base.size() > texMark.size() &&
-          base.compare(base.size() - texMark.size(), texMark.size(),
-                       texMark) == 0)
-        base = base.substr(0, base.size() - texMark.size());
-
-      if (referenced.count(base) == 0)
-      {
-        toRemove.push_back(it->path());
-        sizes.push_back(it->file_size(ec));
-        ec.clear();
-      }
-      else
-      {
-        ++result.kept;
-      }
-    }
-    for (size_t i = 0; i < toRemove.size(); ++i)
-    {
-      std::filesystem::remove(toRemove[i], ec);
-      ec.clear();
+      if (!cit->is_regular_file(ec)) { ec.clear(); continue; }
+      result.freedBytes += cit->file_size(ec); ec.clear();
+      std::filesystem::remove(cit->path(), ec); ec.clear();
       ++result.deleted;
-      result.freedBytes += sizes[i];
-      std::cout << "MeshUtils: 清理未引用缓存 " << toRemove[i].filename().string()
-                << std::endl;
+      std::cout << "MeshUtils: 清理网格缓存 "
+                << cit->path().filename().string() << std::endl;
     }
+    ec.clear();
   }
+
   return result;
 }
 

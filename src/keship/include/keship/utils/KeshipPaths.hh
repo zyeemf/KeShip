@@ -33,12 +33,6 @@ namespace keship
     return KeshipDataDir() + "/keship_water_areas.json";
   }
 
-  /// GUI 设置
-  inline std::string KeshipSettingsFile()
-  {
-    return KeshipDataDir() + "/settings.json";
-  }
-
   /// 数学船模 OBJ（原 ~/.keship/models/）
   inline std::string KeshipModelsDir()
   {

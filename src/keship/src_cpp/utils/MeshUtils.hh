@@ -76,7 +76,8 @@ std::string MeshFileCacheKey(const std::string &_filePath);
 /// gz-sim 渲染 / 项目预览两条加载路径对该 OBJ 均不再引入坐标变换，
 /// 从而与物理配置（CoG/浮力体/传感器）统一到相对 link 的 Z-UP 坐标系。
 ///
-/// 缓存失效：源文件或纹理的修改时间 / 大小变化 → key 变化 → 自动重建。
+/// 缓存位置：源模型所在目录下的 normalized/ 子目录（与源同生命周期），
+/// 文件名 <stem>_<key>，源或纹理变化 → key 变化 → 自动重建。
 ///
 /// @param _srcPath 模型文件绝对路径（DAE/OBJ/STL/glTF 等，assimp 可读）
 /// @return 缓存 OBJ 的绝对路径（可直接写入 SDF <uri>），失败返回空串
@@ -87,16 +88,13 @@ struct MeshCacheCleanupResult
 {
   int deleted = 0;            ///< 删除文件数
   uint64_t freedBytes = 0;    ///< 释放字节数
-  int kept = 0;               ///< 保留文件数（被 ksm 引用）
+  int kept = 0;               ///< 保留文件数（当前策略下恒为 0，保留字段以兼容调用方）
 };
 
-/// @brief 清理 models_normalized 中未被任何 ksm 引用的网格缓存（obj/mtl/tex 同族）
+/// @brief 清空 robot_model 下所有 normalized/ 缓存目录（obj/mtl/tex 全部删除）
 ///
-/// 引用来源：models_ksw（递归，含 <世界>.ksw 多层子文件夹）与 models_ksm 下
-/// 全部 *.ksm 中 <uri> 引用的 models_normalized/<基名>.obj。
-/// 被引用的家族（obj/mtl/tex）整体保留；未引用的删除并统计。
-/// 注意：运行时正在使用但尚未保存为 ksm 的临时缓存可能被清理，
-/// 下次加载时由 NormalizeMeshToSDFCache 自动重建（自愈）。
+/// 缓存随源模型同目录、可整体删除重建，故无需"按 ksm 引用保留"的判定，
+/// 直接清空所有源模型目录下的 normalized/ 缓存，下次加载时自动重建。
 ///
 /// @return 清理统计
 MeshCacheCleanupResult CleanupUnusedMeshCache();

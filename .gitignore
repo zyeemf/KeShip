@@ -20,18 +20,8 @@ CTestTestfile.cmake
 # 模型子目录（keship3/wamv/yanhu/...）由用户自行创建并放入模型文件，见 README.md
 models_all/robot_model/*
 !models_all/robot_model/.gitkeep
-data/models_normalized/*
-!data/models_normalized/.gitkeep
-data/experiments/*
-!data/experiments/disp/
-!data/experiments/probe_compare/
-!data/experiments/sp03/
-data/experiments/disp/*
-!data/experiments/disp/.gitkeep
-data/experiments/probe_compare/*
-!data/experiments/probe_compare/.gitkeep
-data/experiments/sp03/*
-!data/experiments/sp03/.gitkeep
+# ===== 运行时工作目录（整体不入库，可删除，程序自动重建）=====
+data/
 
 # ===== 旧数据目录（迁移过渡期保留在磁盘，不入库）=====
 models_ksm/
@@ -39,15 +29,7 @@ models_ksw/
 models_robot/
 models_env/
 
-# ===== data 运行时/临时文件 =====
-data/bak_cache_0408/
-data/keship.lock
-data/preview/
-data/test/
-data/waves/
-# 程序运行时重写（启动写空 JSON）与无引用的游离文件，不随仓库分发
-data/keship_water_areas.json
-data/models/MathHull_*.obj
+
 
 # ===== src 内模型数据 =====
 # waves 纹理(dds)与着色器(glsl)随源码入库（clone 即用）；

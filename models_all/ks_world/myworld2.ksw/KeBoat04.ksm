@@ -17,12 +17,12 @@
         </inertia>
       </inertial>   <visual name="visual">
         <geometry>
-          <mesh><uri>data/models_normalized/keship3_dfd33918_a280ec8e_bccb2bff_ad50f350_bccb2bff_57f346fb_bccb2bff_a9db9182_bccb2bff_ded3ab9e.obj</uri></mesh>
+          <mesh><uri>robot_model/keship3/keship3.dae</uri></mesh>
         </geometry>
       </visual>
       <collision name="collision">
         <geometry>
-          <mesh><uri>data/models_normalized/keship3_dfd33918_a280ec8e_bccb2bff_ad50f350_bccb2bff_57f346fb_bccb2bff_a9db9182_bccb2bff_ded3ab9e.obj</uri></mesh>
+          <mesh><uri>robot_model/keship3/keship3.dae</uri></mesh>
         </geometry>
       </collision>
     </link>

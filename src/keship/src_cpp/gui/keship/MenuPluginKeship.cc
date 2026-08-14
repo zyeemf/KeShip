@@ -85,25 +85,6 @@ namespace
       urls << QUrl::fromLocalFile("/mnt/" + entry);
     }
 
-    /// 读取用户自定义快捷路径
-    QString cfgPath = QString::fromStdString(keship::KeshipSettingsFile());
-    QFile cfgFile(cfgPath);
-    if (cfgFile.open(QIODevice::ReadOnly))
-    {
-      auto doc = QJsonDocument::fromJson(cfgFile.readAll());
-      cfgFile.close();
-      if (doc.isObject())
-      {
-        auto arr = doc.object()["quick_paths"].toArray();
-        for (const auto &v : arr)
-        {
-          QString p = v.toString();
-          if (QDir(p).exists())
-            urls << QUrl::fromLocalFile(p);
-        }
-      }
-    }
-
     return urls;
   }
 
@@ -2399,7 +2380,7 @@ void MenuPluginKeship::OnBtn_InertiaCalculator()
 void MenuPluginKeship::OnBtn_CleanMeshCache()
 {
   if (QMessageBox::question(nullptr, "清理网格缓存",
-      "将删除未被任何 ksm 文件引用的规范化网格缓存（models_normalized），\n"
+      "将清空所有源模型目录下的规范化网格缓存（robot_model/*/normalized），\n"
       "删除后如再次使用会自动重建。是否继续？",
       QMessageBox::Yes | QMessageBox::No,
       QMessageBox::No) != QMessageBox::Yes)
@@ -2408,11 +2389,9 @@ void MenuPluginKeship::OnBtn_CleanMeshCache()
   }
 
   const keship::MeshCacheCleanupResult r = keship::CleanupUnusedMeshCache();
-  const QString msg = QString("清理完成：删除 %1 个文件，释放 %2 MB；"
-                              "保留 %3 个（被引用）")
+  const QString msg = QString("清理完成：删除 %1 个文件，释放 %2 MB")
       .arg(r.deleted)
-      .arg(r.freedBytes / (1024.0 * 1024.0), 0, 'f', 1)
-      .arg(r.kept);
+      .arg(r.freedBytes / (1024.0 * 1024.0), 0, 'f', 1);
   std::cout << "CleanupUnusedMeshCache: " << msg.toStdString() << std::endl;
   QMessageBox::information(nullptr, "清理网格缓存", msg);
 }

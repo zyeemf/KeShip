@@ -411,7 +411,7 @@ namespace keship
     /// 与物理配置（CoG/浮力体/传感器）一致。非 file:// 与白名单外 uri 原样保留。
     /// @param _sdf 含 <mesh><uri>file://... 的 SDF 字符串
     /// @return 替换后的 SDF
-    static std::string NormalizeMeshUrisInSDF(const std::string &_sdf);
+    std::string NormalizeMeshUrisInSDF(const std::string &_sdf);
 
     /// @brief 从 SDF 字符串中解析惯性参数（独立于缓存）
     static bool ParseInertiaFromSDF(const std::string &_sdf, InertiaParams &_out);
@@ -538,6 +538,8 @@ namespace keship
     std::map<std::string, WorldModelSource> modelSource_;
     /// \brief 水域来源元数据（0.0.4 世界实例化登记，保存子 World 嵌套使用）
     std::map<std::string, WaterWorldSource> waterSource_;
+    /// \brief 规范化缓存绝对路径 → 源 mesh uri（robot_model/... 相对形式），保存 ksm 时反查
+    std::map<std::string, std::string> meshCacheToSrcUri_;
     /// \brief 世界名称
     std::string worldName;
   };

@@ -803,7 +803,10 @@ std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf)
     {
       std::string cachePath = NormalizeMeshToSDFCache(path);
       if (!cachePath.empty())
+      {
+        meshCacheToSrcUri_[cachePath] = uri;
         repl = "file://" + cachePath;
+      }
     }
 
     if (!repl.empty() && repl != uri)
@@ -3251,9 +3254,20 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
   /// BASE_SDF（保存时把 SDF 内模型名还原为原名，避免实例名前缀写入文件）
   std::string baseSdf = sdfIt->second;
 
-  /// 相对路径化：mesh uri 剥 file:// + keship_ws 前缀 → data/...（相对 keship_ws）
-  /// 不匹配该前缀的 file:// uri（如 src/keship/、~/.keship/）保持原样，不误剥
+  /// 相对路径化：mesh uri 反查回源路径（robot_model/... 相对 models_all），
+  /// 保证 ksm 持久化源路径而非缓存路径；未命中（数学船模 data/models/ 等）
+  /// 则剥 file:// + keship_ws 前缀，保持相对路径
   {
+    for (const auto &kv : meshCacheToSrcUri_)
+    {
+      const std::string cacheUri = "file://" + kv.first;
+      size_t p = 0;
+      while ((p = baseSdf.find(cacheUri, p)) != std::string::npos)
+      {
+        baseSdf.replace(p, cacheUri.size(), kv.second);
+        p += kv.second.size();
+      }
+    }
     const std::string wsPrefix = "file://" + keship::KeshipHomeWsDir() + "/";
     size_t p = 0;
     while ((p = baseSdf.find(wsPrefix, p)) != std::string::npos)
