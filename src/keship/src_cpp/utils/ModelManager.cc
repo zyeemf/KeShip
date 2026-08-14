@@ -1591,10 +1591,6 @@ std::string ModelManager::MakeBuoyancyPluginSDF(
       << "      <fluid_density>" << _config.fluidDensity << "</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n";
 
-  if (!_config.waterAreasConfig.empty())
-    sdf << "      <water_areas_config>"
-        << _config.waterAreasConfig
-        << "</water_areas_config>\n";
 
   for (const auto &body : _config.bodies)
   {
@@ -1661,14 +1657,7 @@ bool ModelManager::RebuildModelWithBuoyancy(
     const std::string &_instanceName,
     const BuoyancyConfig &_config)
 {
-  /// 0. 保留已有 waterAreasConfig（编辑器不会回传此字段）
   BuoyancyConfig configCopy = _config;
-  if (configCopy.waterAreasConfig.empty())
-  {
-    BuoyancyConfig oldCfg;
-    if (GetCachedBuoyancyConfig(_instanceName, oldCfg))
-      configCopy.waterAreasConfig = oldCfg.waterAreasConfig;
-  }
 
   /// 1. 保存当前 pose（通过 /state 服务获取物理引擎真实位姿）
   double savedPose[6] = {0, 0, 0, 0, 0, 0};

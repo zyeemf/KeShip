@@ -15,7 +15,7 @@ namespace keship
 {
   /// \brief 多片水域管理器
   ///
-  /// 从 TOML 配置文件加载水域定义（纯数据，不依赖 Gazebo）。
+  /// 水域定义集合（纯数据，不依赖 Gazebo；JSON 反序列化见 WaterAreaSerializer）。
   /// 提供 XY 坐标查找。
   class WaterAreaManager
   {

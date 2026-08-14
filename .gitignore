@@ -16,18 +16,10 @@ __pycache__/
 compile_commands.json
 CTestTestfile.cmake
 
-# ===== 大模型二进制：目录结构保留（.gitkeep），文件不入库 =====
-# 注意：忽略"目录内容"而非"目录本身"；子目录须先 !复活目录、再忽略其内容、再 !复活 .gitkeep
+# ===== 大模型二进制：仅入库 robot_model 一层（.gitkeep），模型子目录与文件均不入库 =====
+# 模型子目录（keship3/wamv/yanhu/...）由用户自行创建并放入模型文件，见 README.md
 models_all/robot_model/*
-!models_all/robot_model/keship3/
-!models_all/robot_model/wamv/
-!models_all/robot_model/yanhu/
-models_all/robot_model/keship3/*
-!models_all/robot_model/keship3/.gitkeep
-models_all/robot_model/wamv/*
-!models_all/robot_model/wamv/.gitkeep
-models_all/robot_model/yanhu/*
-!models_all/robot_model/yanhu/.gitkeep
+!models_all/robot_model/.gitkeep
 data/models_normalized/*
 !data/models_normalized/.gitkeep
 data/experiments/*
@@ -57,8 +49,9 @@ data/waves/
 data/keship_water_areas.json
 data/models/MathHull_*.obj
 
-# ===== src 内模型数据（waves 纹理等大文件）=====
-src/keship/models/waves/materials/textures/
+# ===== src 内模型数据 =====
+# waves 纹理(dds)与着色器(glsl)随源码入库（clone 即用）；
+# 其余模型子目录（keship_03/oil_platform/...）见 src/keship/.gitignore，不入库
 
 # ===== 个人 IDE =====
 .vscode/

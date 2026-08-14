@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-03 数学船型稳性对比 — 对话框实现 */
+/* SP-04 数学船型稳性对比 — 对话框实现 */
 
 #include "HullStabilityDialog.hh"
 
@@ -137,7 +137,7 @@ HullStabilityDialog::HullStabilityDialog(
     QWidget *_parent)
     : QDialog(_parent), transportNode_(_transportNode), worldName_(_worldName)
 {
-  setWindowTitle("SP-03 数学船型稳性对比");
+  setWindowTitle("SP-04 数学船型稳性对比");
   setModal(false); resize(960, 720);
   poseState_ = std::make_shared<HullPoseState>();
 
@@ -162,10 +162,10 @@ HullStabilityDialog::HullStabilityDialog(
     v.set_double_value(0.0);  (*p)["gain"] = v;
     auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
     pub.Publish(msg);
-    std::cout << "SP-03: 已发布静水波浪参数" << std::endl;
+    std::cout << "SP-04: 已发布静水波浪参数" << std::endl;
   }
 
-  std::cout << "SP-03: 数学船型稳性对话框已创建" << std::endl;
+  std::cout << "SP-04: 数学船型稳性对话框已创建" << std::endl;
 }
 
 HullStabilityDialog::~HullStabilityDialog() {
@@ -184,7 +184,7 @@ HullStabilityDialog::~HullStabilityDialog() {
     v.set_double_value(1.0);  (*p)["gain"] = v;
     auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
     pub.Publish(msg);
-    std::cout << "SP-03: 已恢复波浪参数" << std::endl;
+    std::cout << "SP-04: 已恢复波浪参数" << std::endl;
   }
 }
 
@@ -407,9 +407,9 @@ std::string HullStabilityDialog::makeHullSDF() const {
 
 std::string HullStabilityDialog::makeWeightSDF(double _y) const {
   double wh = 0.2;
-  // 对齐 SP-02: deckZ = 甲板高度 + 压载半高 + 间隙
-  // SP-02: H/2 + wh/2 + 0.02 (驳船 centered box, 甲板在 H/2)
-  // SP-03: 0 + wh/2 + 0.02   (船体 mesh 甲板在 z=0)
+  // 对齐 SP-03: deckZ = 甲板高度 + 压载半高 + 间隙
+  // SP-03: H/2 + wh/2 + 0.02 (驳船 centered box, 甲板在 H/2)
+  // SP-04: 0 + wh/2 + 0.02   (船体 mesh 甲板在 z=0)
   double deckZ = wh/2.0 + 0.02;
   std::ostringstream sdf;
   sdf << "<?xml version=\"1.0\"?>\n<sdf version=\"1.6\">\n"
@@ -441,7 +441,7 @@ bool HullStabilityDialog::resolveEntityID(const std::string &_name, uint32_t &_i
 bool HullStabilityDialog::moveWeight(double _y) {
   if (weightEntityId_ == 0) return false;
   double wh = 0.2;
-  // 对齐 SP-02: deckZ = 甲板世界Z + 压载半高 + 间隙
+  // 对齐 SP-03: deckZ = 甲板世界Z + 压载半高 + 间隙
   double deckZ = currentHullZ_ + wh/2.0 + 0.02;
   gz::msgs::Pose req; req.set_id(weightEntityId_);
   req.mutable_position()->set_x(0); req.mutable_position()->set_y(_y); req.mutable_position()->set_z(deckZ);
@@ -499,7 +499,7 @@ bool HullStabilityDialog::doSpawnAll() {
   weightY_ = 0; weightSlider_->blockSignals(true); weightSlider_->setValue(250); weightSlider_->blockSignals(false);
   weightSpinBox_->blockSignals(true); weightSpinBox_->setValue(0); weightSpinBox_->blockSignals(false);
   sliderValueLabel_->setText("0.000 m"); quiescent_ = false; settleCounter_ = 0; spawned_ = true;
-  std::cout << "SP-03: 船型+压载块已生成" << std::endl;
+  std::cout << "SP-04: 船型+压载块已生成" << std::endl;
   return true;
 }
 

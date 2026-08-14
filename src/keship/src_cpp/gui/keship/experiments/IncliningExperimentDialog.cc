@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-02 初稳性倾斜实验对话框实现 */
+/* SP-03 初稳性倾斜实验对话框实现 */
 /// 2026.5.28
 
 #include "IncliningExperimentDialog.hh"
@@ -229,7 +229,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
       transportNode_(_transportNode),
       worldName_(_worldName)
 {
-  setWindowTitle("SP-02 初稳性倾斜实验");
+  setWindowTitle("SP-03 初稳性倾斜实验");
   setModal(false);
   resize(960, 720);
 
@@ -257,7 +257,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
     pub.Publish(msg);
   }
 
-  std::cout << "SP-02: 初稳性倾斜实验对话框已创建" << std::endl;
+  std::cout << "SP-03: 初稳性倾斜实验对话框已创建" << std::endl;
 }
 
 IncliningExperimentDialog::~IncliningExperimentDialog()
@@ -776,7 +776,7 @@ bool IncliningExperimentDialog::doSpawnBoth()
         "/world/" + worldName_ + "/create/blocking", req, 20000, rep, result);
     if (!ok || !result)
     {
-      std::cerr << "SP-02: 驳船生成失败" << std::endl;
+      std::cerr << "SP-03: 驳船生成失败" << std::endl;
       return false;
     }
 
@@ -788,7 +788,7 @@ bool IncliningExperimentDialog::doSpawnBoth()
     }
     if (bargeEntityId_ == 0)
     {
-      std::cerr << "SP-02: 无法解析驳船 entity ID" << std::endl;
+      std::cerr << "SP-03: 无法解析驳船 entity ID" << std::endl;
       return false;
     }
   }
@@ -825,7 +825,7 @@ bool IncliningExperimentDialog::doSpawnBoth()
   settleCounter_ = 0;
   spawned_ = true;
 
-  std::cout << "SP-02: 驳船 + 压载块已生成 — L=" << L
+  std::cout << "SP-03: 驳船 + 压载块已生成 — L=" << L
             << ", B=" << B << ", H=" << H << ", ρ=" << rho << std::endl;
   return true;
 }
@@ -892,7 +892,7 @@ void IncliningExperimentDialog::onRecord()
 
   updateChart();
 
-  std::cout << "SP-02: 记录数据 — y=" << weightY_
+  std::cout << "SP-03: 记录数据 — y=" << weightY_
             << ", φ=" << currentHeelDeg_
             << "°, tanφ=" << tanPhi << std::endl;
 }
@@ -940,7 +940,7 @@ void IncliningExperimentDialog::onDeleteSelected()
     recordedData_.push_back({y, dy, phi, tanPhi, wDy});
   }
   updateChart();
-  std::cout << "SP-02: 已删除 " << selected.size() << " 行" << std::endl;
+  std::cout << "SP-03: 已删除 " << selected.size() << " 行" << std::endl;
 }
 
 void IncliningExperimentDialog::onClearAll()
@@ -948,7 +948,7 @@ void IncliningExperimentDialog::onClearAll()
   dataTable_->setRowCount(0);
   recordedData_.clear();
   chartWidget_->clearData();
-  std::cout << "SP-02: 已清除全部数据" << std::endl;
+  std::cout << "SP-03: 已清除全部数据" << std::endl;
 }
 
 void IncliningExperimentDialog::onUpdatePose()

@@ -89,7 +89,6 @@
 
       <!--自定义界面菜单插件 added by zy-->
       <plugin filename="MenuPluginKeship" name="Menu plugin for keship">
-        <water_areas_config>config/keship_water_areas.toml</water_areas_config>
         <gz-gui>
           <title>MenuPluginKeship</title>
           <property key="resizable" type="bool">false</property>

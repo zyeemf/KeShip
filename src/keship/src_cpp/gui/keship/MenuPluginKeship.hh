@@ -185,9 +185,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   /// \brief 编辑器对话框单例表（key = 类型/模型名）
   private: std::map<QString, QDialog *> editorDialogs_;
 
-  private: QDialog *sp01Dialog_ = nullptr;
   private: QDialog *sp02Dialog_ = nullptr;
   private: QDialog *sp03Dialog_ = nullptr;
+  private: QDialog *sp04Dialog_ = nullptr;
 
   private: QDialog *taskSetDialog_ = nullptr;
   private: QDialog *taskMonitorDialog_ = nullptr;

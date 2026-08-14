@@ -230,6 +230,8 @@ install(TARGETS KSPlugin_WavesModel DESTINATION lib)
 
 
 ############### 测试插件 - 编译/链接/安装 ###############
+# 测试源码不入库（.gitignore 排除 src_cpp/test/），仅本地存在时编译
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/test)
 add_library(TestBuoyancy SHARED
   src_cpp/test/test_buoyancy.cc
 )
@@ -286,6 +288,7 @@ target_link_libraries(gen_test_world PUBLIC
   keship_utils
 )
 install(TARGETS gen_test_world DESTINATION lib/${PROJECT_NAME})
+endif()
 
 ############### 安装 - Python模块 ###############
 ament_python_install_package(src_py)
@@ -337,9 +340,6 @@ install(DIRECTORY models/
 )
 install(DIRECTORY worlds/
   DESTINATION share/${PROJECT_NAME}/worlds
-)
-install(DIRECTORY urdf/
-  DESTINATION share/${PROJECT_NAME}/urdf
 )
 
 

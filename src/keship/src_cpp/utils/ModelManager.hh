@@ -45,7 +45,6 @@ namespace keship
     std::string linkName = "base_link";
     double fluidDensity = 1000.0;
     std::vector<BuoyancyBodyConfig> bodies;
-    std::string waterAreasConfig;
   };
 
   /////////////////////////////////////////////////

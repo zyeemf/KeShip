@@ -1614,29 +1614,6 @@ void MenuPluginKeship::OnBtn_CylinderBuoyancyTest()
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_SP02_Stability()
 {
-  if (sp01Dialog_)
-  {
-    sp01Dialog_->raise();
-    sp01Dialog_->activateWindow();
-    return;
-  }
-
-  auto *dialog = new StabilityExperimentDialog(
-      modelManager->GetNode(), "keship_world");
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-
-  QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
-    sp01Dialog_ = nullptr;
-  });
-
-  sp01Dialog_ = dialog;
-  dialog->show();
-  std::cout << "SP-02: 初稳性实验对话框已打开" << std::endl;
-}
-
-/////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP03_Inclining()
-{
   if (sp02Dialog_)
   {
     sp02Dialog_->raise();
@@ -1644,7 +1621,7 @@ void MenuPluginKeship::OnBtn_SP03_Inclining()
     return;
   }
 
-  auto *dialog = new IncliningExperimentDialog(
+  auto *dialog = new StabilityExperimentDialog(
       modelManager->GetNode(), "keship_world");
   dialog->setAttribute(Qt::WA_DeleteOnClose);
 
@@ -1654,17 +1631,40 @@ void MenuPluginKeship::OnBtn_SP03_Inclining()
 
   sp02Dialog_ = dialog;
   dialog->show();
+  std::cout << "SP-02: 初稳性实验对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_SP03_Inclining()
+{
+  if (sp03Dialog_)
+  {
+    sp03Dialog_->raise();
+    sp03Dialog_->activateWindow();
+    return;
+  }
+
+  auto *dialog = new IncliningExperimentDialog(
+      modelManager->GetNode(), "keship_world");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
+    sp03Dialog_ = nullptr;
+  });
+
+  sp03Dialog_ = dialog;
+  dialog->show();
   std::cout << "SP-03: 倾斜实验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_SP04_HullStability()
 {
-  if (sp03Dialog_) { sp03Dialog_->raise(); sp03Dialog_->activateWindow(); return; }
+  if (sp04Dialog_) { sp04Dialog_->raise(); sp04Dialog_->activateWindow(); return; }
   auto *dialog = new HullStabilityDialog(modelManager->GetNode(), "keship_world");
   dialog->setAttribute(Qt::WA_DeleteOnClose);
-  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sp03Dialog_ = nullptr; });
-  sp03Dialog_ = dialog; dialog->show();
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sp04Dialog_ = nullptr; });
+  sp04Dialog_ = dialog; dialog->show();
   std::cout << "SP-04: 数学船型对话框已打开" << std::endl;
 }
 

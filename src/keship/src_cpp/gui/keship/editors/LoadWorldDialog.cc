@@ -70,8 +70,8 @@ LoadWorldDialog::LoadWorldDialog(const QString &_suggestedNamespace,
 
   auto *mainLayout = new QVBoxLayout(this);
 
-  // 命名空间（默认留空：中文世界名/输入会产生非法 ROS 2 主题，仅允许字母数字下划线斜杠）
-  auto *nsGroup = new QGroupBox("命名空间（实例名前缀，可用 / 表示多层级，仅限字母/数字/下划线）", this);
+  // 命名空间（默认留空：中文世界名/输入会产生非法 ROS 2 主题，仅允许字母数字下划线）
+  auto *nsGroup = new QGroupBox("命名空间（实例名前缀，仅限字母/数字/下划线）", this);
   auto *nsLayout = new QVBoxLayout(nsGroup);
   nsEdit_ = new QLineEdit(nsGroup);
   nsEdit_->setPlaceholderText("留空 = 无前缀；或如 base_1（仅限字母/数字/下划线）");
