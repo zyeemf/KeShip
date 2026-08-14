@@ -83,31 +83,22 @@ void KSPlugin_WavesModel::PreUpdate(
     const gz::sim::UpdateInfo &_info,
     gz::sim::EntityComponentManager &_ecm)
 {
-  if (_info.paused)
-    return;
-
   this->dataPtr->simTime_ = _info.simTime;
 
-  /// 首次运行：读 JSON 建立波浪场实体（Configure 时实体未必齐备，
-  /// 对齐 gz-waves WavesModel 的首次 PreUpdate 加载模式）
+  /// 暂停期也执行 JSON 重建：GUI 载入世界期间仿真暂停（防模型跳起），
+  /// 若暂停即返回，波浪场要到 resume 后 1s 才建立，而船"进入水区"的
+  /// 波浪场查找在 resume 后首帧一次性执行 → 错过 → 静水（2026-08-12 修复：
+  /// 暂停期 GUI 写完 JSON 的下一帧就建波浪场，resume 前已就绪）
   if (!this->dataPtr->initialized_)
   {
     this->dataPtr->RebuildFromJson(_ecm);
     this->dataPtr->initialized_ = true;
   }
 
-  /// 每 1s 轮询 JSON（GUI 修改水区波浪参数 → 立即/1s 内生效）
-  /// 注：lastJsonCheckTime_ 初始 -1，首次 PreUpdate 先建立基准时间，
-  /// 否则 sinceCheck 恒 0 导致轮询永不执行（2026-08-01 修复）
-  if (this->dataPtr->lastJsonCheckTime_ < std::chrono::steady_clock::duration(0))
-    this->dataPtr->lastJsonCheckTime_ = this->dataPtr->simTime_;
-  double sinceCheck = std::chrono::duration<double>(
-      this->dataPtr->simTime_ - this->dataPtr->lastJsonCheckTime_).count();
-  if (sinceCheck >= 1.0)
-  {
-    this->dataPtr->lastJsonCheckTime_ = this->dataPtr->simTime_;
-    this->dataPtr->RebuildFromJson(_ecm);
-  }
+  /// 每帧检查 JSON mtime（RebuildFromJson 内部有 mtime 守卫，
+  /// 文件未变化立即返回，无重复工作）。替代原"每 1s 仿真时间轮询"，
+  /// 暂停期不再被跳过，GUI 写入后下一帧生效
+  this->dataPtr->RebuildFromJson(_ecm);
 
   /// 应用待处理 PMS 消息（实验对话框/环境编辑，立即生效）
   this->dataPtr->ApplyPendingPms(_ecm);
@@ -188,7 +179,7 @@ void KSPlugin_WavesModelPrivate::RebuildFromJson(
 
 /////////////////////////////////////////////////
 void KSPlugin_WavesModelPrivate::ApplyPendingPms(
-    gz::sim::EntityComponentManager &)
+    gz::sim::EntityComponentManager &_ecm)
 {
   gz::msgs::Param msg;
   {
@@ -210,9 +201,16 @@ void KSPlugin_WavesModelPrivate::ApplyPendingPms(
     auto wfIt = this->wavefields_.find(areaName);
     if (wfIt == this->wavefields_.end())
     {
-      gzwarn << "KSPlugin_WavesModel: PMS 目标水区不存在 ["
-             << areaName << "]，忽略" << std::endl;
-      return;
+      /// 波浪场尚未建立（JSON 轮询滞后于载入世界的 PMS 下发）→
+      /// 先按 JSON 重建再查一次，避免消息被提前丢弃（2026-08 竞态修复）
+      this->RebuildFromJson(_ecm);
+      wfIt = this->wavefields_.find(areaName);
+      if (wfIt == this->wavefields_.end())
+      {
+        gzwarn << "KSPlugin_WavesModel: PMS 目标水区不存在 ["
+               << areaName << "]，忽略" << std::endl;
+        return;
+      }
     }
     wfIt->second->Load(msg);
     gzmsg << "KSPlugin_WavesModel: PMS 更新水区 [" << areaName << "]" << std::endl;

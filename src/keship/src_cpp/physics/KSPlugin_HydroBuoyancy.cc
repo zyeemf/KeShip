@@ -255,19 +255,28 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       else
       {
         effectiveFluidLevel = area->baseHeight;
-        if (area->name != this->dataPtr->currentAreaName_)
+        /// 水区变化或波浪场引用缺失（每 30 帧重试一次）时重新查找实体。
+        /// 载入世界时 WavesModel 在暂停期/1s 内重建波浪场，船"进入水区"的
+        /// 首次查找可能早于波浪场实体创建 → 静水；重试保证竞态窗口自愈。
+        /// 日志仅在状态翻转时输出，避免静水场景刷屏（2026-08-12 修复）
+        const bool areaChanged =
+            (area->name != this->dataPtr->currentAreaName_);
+        const bool wfAlive = !this->dataPtr->activeWavefield_.expired();
+        if (areaChanged
+            || (!wfAlive && (++this->dataPtr->wfRetryCounter_ % 30) == 1))
         {
           this->dataPtr->currentAreaName_ = area->name;
-          /// 水区变化 → 切换全局波浪场引用（gz-waves 模式：
-          /// 按水区名查实体 "wavefield_{name}" → 读 ECM 组件 weak_ptr）
+          /// 按水区名查实体 "wavefield_{name}" → 读 ECM 组件 weak_ptr
           auto wfEntity = _ecm.EntityByComponents(
               gz::sim::components::Name("wavefield_" + area->name));
           auto wfComp = _ecm.Component<keship::components::Wavefield>(wfEntity);
           this->dataPtr->activeWavefield_ =
               wfComp ? wfComp->Data() : std::weak_ptr<Wavefield>();
-          gzmsg << "KSPlugin_HydroBuoyancy: 进入水区 [" << area->name
-                << "] 波浪场引用 " << (wfComp ? "有效" : "缺失(静水)")
-                << std::endl;
+          const bool nowAlive = !this->dataPtr->activeWavefield_.expired();
+          if (areaChanged || nowAlive != wfAlive)
+            gzmsg << "KSPlugin_HydroBuoyancy: 进入水区 [" << area->name
+                  << "] 波浪场引用 " << (nowAlive ? "有效" : "缺失(静水)")
+                  << std::endl;
         }
       }
     }

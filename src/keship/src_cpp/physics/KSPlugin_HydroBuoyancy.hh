@@ -146,6 +146,8 @@ namespace keship
     bool waterAreasConfigured_ = false;
     std::string currentAreaName_;
     int waterAreaReloadCounter_ = 0;
+    /// \brief 波浪场引用缺失时的重试节流计数（每 30 帧重查一次）
+    int wfRetryCounter_ = 0;
     std::filesystem::file_time_type lastWaterAreasMtime_;
 
     /// 阻尼分量诊断缓存
