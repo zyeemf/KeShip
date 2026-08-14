@@ -99,6 +99,12 @@ namespace keship
     return KeshipDataDir() + "/test/";
   }
 
+  /// 统一日志目录（原根目录 log/ mylogs/ buoy_ut_logs/ 收敛于此，随 data 可删）
+  inline std::string KeshipLogDir()
+  {
+    return KeshipDataDir() + "/log/";
+  }
+
   /// 确保全部数据子目录存在
   inline void EnsureKeshipDataDirs()
   {
@@ -109,6 +115,7 @@ namespace keship
     std::filesystem::create_directories(KeshipWavesDir(), ec);
     std::filesystem::create_directories(KeshipPreviewDir(), ec);
     std::filesystem::create_directories(KeshipTestDir(), ec);
+    std::filesystem::create_directories(KeshipLogDir(), ec);
     std::filesystem::create_directories(KeshipWorldsDir(), ec);
     std::filesystem::create_directories(KeshipKsmDir(), ec);
     std::filesystem::create_directories(KeshipRobotModelDir(), ec);

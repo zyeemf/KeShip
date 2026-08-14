@@ -45,7 +45,7 @@ void KSPlugin_HydroBuoyancy::Configure(
 {
   gzmsg << "KSPlugin_HydroBuoyancy: 配置实体 " << _entity << std::endl;
 
-  DiagnosticLog::init("/home/keship/keship_ws/mylogs");
+  DiagnosticLog::init(keship::KeshipLogDir());
 
   this->entity_ = _entity;
 

@@ -15,6 +15,7 @@
 #include <gz/msgs/double.pb.h>
 
 #include "../utils/DiagnosticLog.hh"
+#include "keship/utils/KeshipPaths.hh"
 
 /////////////////////////////////////////////////
 keship::KSPlugin_Thrust::KSPlugin_Thrust()
@@ -59,8 +60,8 @@ void keship::KSPlugin_Thrust::Configure(
 
   /// 打印 link 实际加载的惯性/质心（用于核对 KSM 配置是否生效）
   {
-    /// 诊断日志：输出到 mylogs/<时间戳>/，文件名 thrust_<model>_<link>.csv
-    DiagnosticLog::init("/home/keship/keship_ws/mylogs");
+    /// 诊断日志：输出到 data/log/<时间戳>/，文件名 thrust_<model>_<link>.csv
+    DiagnosticLog::init(keship::KeshipLogDir());
     this->dataPtr->logPrefix = this->dataPtr->modelName + "_" + this->linkName_;
 
     auto inertialComp =

@@ -124,7 +124,7 @@ if [ "$NO_BUILD" = true ]; then
     echo "[编译] 已跳过 (--no-build)"
 else
     echo "[编译] 正在编译 keship 包..."
-    colcon build --packages-select keship --merge-install
+    colcon build --packages-select keship --merge-install --log-base "$KSHIP_WS/data/log"
     echo "[编译] 完成"
 fi
 
