@@ -1,0 +1,12 @@
+{
+  "name": "dsh-subagent-effort-router",
+  "version": "0.2.0",
+  "description": "Route reasoning effort per agent from an agentOptions.reasoningEffort marker. See doc/subagent_routing.md.",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

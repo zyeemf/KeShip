@@ -1,6 +1,6 @@
 # KeShip
 
-KeShip 船舶运动仿真系统（ROS2 Jazzy + Gazebo Harmonic + Qt5）。
+KeShip 船舶运动仿真系统（ROS2 Jazzy + Gazebo Harmonic + Qt5.15）。
 
 ## 目录结构
 

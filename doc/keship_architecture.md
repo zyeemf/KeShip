@@ -253,6 +253,7 @@ GUI (QML) ──gz-transport──→ Gazebo ECM ──→ Physics Systems ─�
 | [notes/water_area_edit_and_polygon_fix.md](notes/water_area_edit_and_polygon_fix.md) | 水域编辑体验（形状统一/交互简化）与多边形判定修复 |
 | [notes/ui_refinement_session3.md](notes/ui_refinement_session3.md) | **UI 第三批优化 (2026-08-12)**：推进器名称可编辑、地图提示词统一、窗口开关不影响暂停状态 |
 | [notes/data_arch_refactor_2026-08-12.md](notes/data_arch_refactor_2026-08-12.md) | **数据架构整理 (2026-08-12)**：data 纯运行时化、ksm 源路径持久化、网格缓存随源同目录、波浪场载入竞态修复、日志收敛 |
+| [notes/keBoat04_hydro_params_check_2026-08-14.md](notes/keBoat04_hydro_params_check_2026-08-14.md) | **KeBoat04 惯性/水动力参数检查 (2026-08-14)**：薄壳模型验证惯性张量、切片理论验证 M_A 符号与量级（DART 正号约定）、阻尼比/稳性/1 级海况波浪参数全项物理自洽 |
 
 
 

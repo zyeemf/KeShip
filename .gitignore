@@ -7,6 +7,16 @@ buoy_ut_logs/
 .colcon/
 .cache/
 
+# ===== 本地工具链 =====
+.bin/
+.corepack/
+
+# ===== 临时测试产物 =====
+.gztest/
+
+# ===== 本地算法/试验代码（整体不入库）=====
+controlAlgorithm/
+
 # ===== 编译中间文件 =====
 __pycache__/
 *.pyc

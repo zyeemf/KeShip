@@ -124,7 +124,9 @@ if [ "$NO_BUILD" = true ]; then
     echo "[编译] 已跳过 (--no-build)"
 else
     echo "[编译] 正在编译 keship 包..."
-    colcon build --packages-select keship --merge-install --log-base "$KSHIP_WS/data/log"
+    # 注意：--log-base 是 colcon 全局参数，必须放在子命令 build 之前
+    # （放在 build 之后会报 "unrecognized arguments: --log-base ..."，2026-08-14 修复）
+    colcon --log-base "$KSHIP_WS/data/log" build --packages-select keship --merge-install
     echo "[编译] 完成"
 fi
 
