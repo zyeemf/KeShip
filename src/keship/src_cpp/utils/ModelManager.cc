@@ -1238,7 +1238,7 @@ bool ModelManager::LoadMeshDataFromDae(const std::string &_daePath, MeshData &_m
                                                aiProcess_JoinIdenticalVertices | // 合并相同顶点
                                                aiProcess_GenSmoothNormals |      // 生成平滑法线
                                                aiProcess_CalcTangentSpace |      // 计算切线空间
-                                               false);
+                                               aiProcess_PreTransformVertices);  // 烘焙节点矩阵，与 LoadMeshFromFile 一致
   if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
   {
     std::cerr << "LoadMeshDataFromDae: Assimp: 加载DAE文件失败: " << importer.GetErrorString() << std::endl;

@@ -851,7 +851,13 @@ void Buoyancy3DView::wheelEvent(QWheelEvent *_ev)
 
 void Buoyancy3DView::buildMeshGeo(Geo &_geo, const std::string &_path)
 {
-  auto mesh = keship::LoadMeshFromFile(_path);
+  // 与 KSM 加载一致：先走规范化缓存，保证所有 DAE/STL/OBJ 预览与 KSM 同坐标系
+  std::string meshPath = _path;
+  std::string normalized = keship::NormalizeMeshToSDFCache(_path);
+  if (!normalized.empty())
+    meshPath = normalized;
+
+  auto mesh = keship::LoadMeshFromFile(meshPath);
   if (mesh.triangles.empty()) return;
 
   double cx = 0, cy = 0, cz = 0;

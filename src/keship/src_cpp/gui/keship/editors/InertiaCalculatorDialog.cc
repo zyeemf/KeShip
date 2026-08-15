@@ -25,6 +25,7 @@
 
 #include "../shared/Buoyancy3DView.hh"
 #include "keship/utils/KeshipPaths.hh"
+#include "MeshUtils.hh"
 
 //---------------------------------------------------------------------
 InertiaCalculatorDialog::InertiaCalculatorDialog(QWidget *_parent)
@@ -173,10 +174,15 @@ void InertiaCalculatorDialog::onBrowseFile()
 //---------------------------------------------------------------------
 void InertiaCalculatorDialog::loadMeshFile(const std::string &_path)
 {
-  meshPath_ = _path;
+  // 与 KSM 加载一致：先规范化，保证惯性计算/预览与 KSM 同坐标系
+  std::string normalized = keship::NormalizeMeshToSDFCache(_path);
+  if (normalized.empty())
+    normalized = _path;
+
+  meshPath_ = normalized;
   fileEdit_->setText(QString::fromStdString(_path));
 
-  loadedMesh_ = keship::LoadMeshFromFile(_path);
+  loadedMesh_ = keship::LoadMeshFromFile(normalized);
   if (loadedMesh_.vertices.empty() || loadedMesh_.triangles.empty())
   {
     meshInfo_->setText("⚠ 加载失败或文件格式不支持");
@@ -211,7 +217,7 @@ void InertiaCalculatorDialog::loadMeshFile(const std::string &_path)
 
   Buoyancy3DModelInfo info;
   info.isBox = false;
-  info.meshPath = _path;
+  info.meshPath = normalized;
   preview_->setModel(info);
   preview_->setShowCoG(false);
   preview_->update();
