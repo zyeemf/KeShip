@@ -1,20 +1,22 @@
 # 结构树交互改造方案（美化 / 按钮收拢 / 子世界属性删除 / 层次调整 / 复制）
 
-- 日期：2026-08-18
+- 日期：2026-08-18（v2：补充问题 6「Rebuild 丢失子世界来源」根因与修复设计）
 - 状态：方案定稿，待实施
 - 范围：`keship_ws/src/keship`（GUI QML + C++）
 
 ## 1. 背景与需求
 
 模型管理 Tab 的结构树（`MenuPluginKeship.qml` 中 ListView 平铺模拟树，数据源
-`MenuPluginKeship::GetWorldHierarchy()`）存在 5 个问题：
+`MenuPluginKeship::GetWorldHierarchy()`）存在 6 个问题：
 
 1. 多个模型 / 水域 / 子 world 并存时树展示不好看（平铺无树线、组行仅 +/- 文本、无图标、无选中高亮）；
 2. 每个实体行按钮过多放不下（模型行 7 个按钮：属性/浮力体/推进器/流体动力/传感器/保存/删除；
    水域行 3 个；子 world 行 1 个），需收拢为下拉列表；
 3. 子 world 只有保存按钮，缺删除按钮与属性按钮（可修改名称、位姿等加载时填的参数）；删除时应整链删除；
 4. 结构树层次不可调：期望能把模型放入某个子 world、或把子 world A 中的模型移到子 world B；
-5. 模型、水域、子 world 均需复制功能。
+5. 模型、水域、子 world 均需复制功能；
+6. **加载 ksw 后修改模型属性（惯性）确认时模型被 Rebuild，结构树中模型会跑到子 world 之外**
+   （浮力体/推进器/流体动力/传感器编辑器同样受影响）。
 
 ## 2. 关键事实（现状约束）
 
@@ -28,6 +30,12 @@
 - 保存世界 JSON 键名 = `baseName`（同链下必须唯一，复制件 baseName 需加后缀防键冲突）。
 - 删除模型 `DeleteModelInGazeboByName` 内部已清理 `modelSource_`；水区删除需新增
   `ModelManager::RemoveWaterSource(name)`。
+- **问题 6 根因**（`ModelManager.cc` 代码级确认）：`RebuildModelWithAllPlugins`（:3289）保存位姿后
+  调用 `DeleteModelInGazeboByName`（:1522，成功时无条件 `modelSource_.erase`，:1547）→ 重新组装
+  SDF spawn，但**从不恢复 source** → 树分组丢失（跑到顶层）。受影响的 5 个重建路径：
+  `RebuildModelWithAllPlugins`（属性对话框改惯性）、`RebuildModelWithBuoyancy`（:1800）、
+  `RebuildModelWithThrust`（:2600）、`RebuildModelWithHydro`（:2972）、`RebuildModelWithSensors`
+  （:3048）。仅改位姿走 `SetModelPoseByIDInGazebo`（:840）不重建，不受影响。
 
 ## 3. 方案
 
@@ -95,6 +103,16 @@
   - 弹对话框（新链名 = 原名_副本，去重 + 整体位姿偏移）；
   - 链下每个模型/水域套用上述复制流程，path 前缀替换为新链，实体位置 = 原位置 + 偏移。
 
+### 3.6 问题 6 修复：Rebuild 保留来源元数据
+
+- `DeleteModelInGazeboByName(name, bool _preserveSource = false)` 加第二参数：
+  仅 `_preserveSource=true` 时跳过 `modelSource_.erase`；
+- 5 个 Rebuild 函数调用点传 `true`（Buoyancy/Thrust/Hydro/Sensors/AllPlugins）；
+- 真删除路径（`DeleteModelInGazeboByIndex` / `DeleteAllModelsInGazebo` / UI 删除）保持默认
+  `false` 清理语义不变；
+- `sdfCache_` 本就保留（Rebuild 依赖），无回归；修复后载入 ksw → 任何编辑器改动确认
+  → 树仍留在原子 world 链内，保存/载入世界链结构还原一致。
+
 ## 4. 文件改动清单
 
 | 文件 | 改动 |
@@ -105,7 +123,7 @@
 | `src_cpp/gui/keship/editors/MoveToChainDialog.{hh,cc}` | **新增**：目标链选择（下拉 + 新建 + 顶层） |
 | `src_cpp/gui/keship/editors/DuplicateWaterDialog.{hh,cc}` | **新增**：水区复制命名 + 位置微调 |
 | `src_cpp/gui/keship/editors/ModelSettingsDialog.hh/.cc` | 新增 `setPose()` 预填复制位姿 |
-| `src_cpp/utils/ModelManager.hh/.cc` | 新增 `RemoveWaterSource(name)` |
+| `src_cpp/utils/ModelManager.hh/.cc` | 新增 `RemoveWaterSource(name)`；`DeleteModelInGazeboByName` 加 `_preserveSource` 参数 + 5 处 Rebuild 调用点传 true |
 | `CMakeLists.txt` | 注册 3 个新 .cc |
 | `doc/keship_plans.md` | 本方案索引条目 |
 
@@ -119,4 +137,6 @@
    - 移动：模型/水域移到已有链、新建链、移到顶层；子 world 整体移动；同名冲突拦截；
    - 子 world 属性：改名后树更新、保存/载入世界链还原一致；整体偏移生效；
    - 子 world 删除：整链模型+水域删除、树刷新、水面重建；
-3. 保存世界 + 载入世界回归：JSON 无键冲突、链结构还原正确。
+3. 保存世界 + 载入世界回归：JSON 无键冲突、链结构还原正确；
+4. **问题 6 回归**：载入 ksw（含子 world 链）→ 改模型属性（惯性）确认 → 树中模型仍在原子
+   world 内；浮力体/推进器/流体动力/传感器编辑器改动后同样不丢链；保存/载入世界链还原一致。
