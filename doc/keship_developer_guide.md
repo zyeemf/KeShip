@@ -69,7 +69,7 @@ ros2 launch keship keship.launch.py                      # 启动 KeShip 仿真
 |------|------|
 | [keship_architecture.md](keship_architecture.md) | 系统架构 |
 | [BUILD.md](BUILD.md) | 环境安装与编译指南（git clone 后从零配置） |
-| [notes/archive/ma_dart_removal_fix.md](notes/archive/ma_dart_removal_fix.md) | DART 隐式 M_A（`<fluid_added_mass>`）+ 空中抵消 — 根因分析、方案迭代、Gazebo 加速度 API 使用方法 |
+| [keship_plans.md] | 开发计划 |
 
 > **说明**：历史文档（keship_plan / keship_timeline / keship_issues_log / plans/ 系列）未随本仓库分发，相关引用见各笔记内文。
 
