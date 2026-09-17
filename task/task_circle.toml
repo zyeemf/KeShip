@@ -1,0 +1,403 @@
+# KeShip 任务场景
+name = "task_circle"
+time_limit = 300
+
+[task]
+type = "tracking"
+tolerance = 2
+
+[[task.waypoints]]
+x = 85.27
+y = 6.96
+
+[[task.waypoints]]
+x = 85.1713
+y = 10.0995
+
+[[task.waypoints]]
+x = 84.8757
+y = 13.2267
+
+[[task.waypoints]]
+x = 84.3844
+y = 16.3291
+
+[[task.waypoints]]
+x = 83.6992
+y = 19.3945
+
+[[task.waypoints]]
+x = 82.8228
+y = 22.4108
+
+[[task.waypoints]]
+x = 81.7588
+y = 25.3662
+
+[[task.waypoints]]
+x = 80.5114
+y = 28.249
+
+[[task.waypoints]]
+x = 79.0853
+y = 31.0477
+
+[[task.waypoints]]
+x = 77.4864
+y = 33.7513
+
+[[task.waypoints]]
+x = 75.7208
+y = 36.3493
+
+[[task.waypoints]]
+x = 73.7957
+y = 38.8312
+
+[[task.waypoints]]
+x = 71.7184
+y = 41.1874
+
+[[task.waypoints]]
+x = 69.4974
+y = 43.4084
+
+[[task.waypoints]]
+x = 67.1412
+y = 45.4857
+
+[[task.waypoints]]
+x = 64.6593
+y = 47.4108
+
+[[task.waypoints]]
+x = 62.0613
+y = 49.1764
+
+[[task.waypoints]]
+x = 59.3577
+y = 50.7753
+
+[[task.waypoints]]
+x = 56.559
+y = 52.2014
+
+[[task.waypoints]]
+x = 53.6762
+y = 53.4488
+
+[[task.waypoints]]
+x = 50.7208
+y = 54.5128
+
+[[task.waypoints]]
+x = 47.7045
+y = 55.3892
+
+[[task.waypoints]]
+x = 44.6391
+y = 56.0744
+
+[[task.waypoints]]
+x = 41.5367
+y = 56.5657
+
+[[task.waypoints]]
+x = 38.4095
+y = 56.8613
+
+[[task.waypoints]]
+x = 35.27
+y = 56.96
+
+[[task.waypoints]]
+x = 32.1305
+y = 56.8613
+
+[[task.waypoints]]
+x = 29.0033
+y = 56.5657
+
+[[task.waypoints]]
+x = 25.9009
+y = 56.0744
+
+[[task.waypoints]]
+x = 22.8355
+y = 55.3892
+
+[[task.waypoints]]
+x = 19.8192
+y = 54.5128
+
+[[task.waypoints]]
+x = 16.8638
+y = 53.4488
+
+[[task.waypoints]]
+x = 13.981
+y = 52.2014
+
+[[task.waypoints]]
+x = 11.1823
+y = 50.7753
+
+[[task.waypoints]]
+x = 8.47866
+y = 49.1764
+
+[[task.waypoints]]
+x = 5.88074
+y = 47.4108
+
+[[task.waypoints]]
+x = 3.3988
+y = 45.4857
+
+[[task.waypoints]]
+x = 1.04264
+y = 43.4084
+
+[[task.waypoints]]
+x = -1.17843
+y = 41.1874
+
+[[task.waypoints]]
+x = -3.25566
+y = 38.8312
+
+[[task.waypoints]]
+x = -5.18085
+y = 36.3493
+
+[[task.waypoints]]
+x = -6.9464
+y = 33.7513
+
+[[task.waypoints]]
+x = -8.54533
+y = 31.0477
+
+[[task.waypoints]]
+x = -9.97135
+y = 28.249
+
+[[task.waypoints]]
+x = -11.2188
+y = 25.3662
+
+[[task.waypoints]]
+x = -13.8444
+y = 16.3291
+
+[[task.waypoints]]
+x = -14.3357
+y = 13.2267
+
+[[task.waypoints]]
+x = -14.6313
+y = 10.0995
+
+[[task.waypoints]]
+x = -14.73
+y = 6.96
+
+[[task.waypoints]]
+x = -14.6313
+y = 3.82047
+
+[[task.waypoints]]
+x = -14.3357
+y = 0.693338
+
+[[task.waypoints]]
+x = -13.8444
+y = -2.40907
+
+[[task.waypoints]]
+x = -13.1592
+y = -5.47449
+
+[[task.waypoints]]
+x = -12.2828
+y = -8.49085
+
+[[task.waypoints]]
+x = -11.2188
+y = -11.4462
+
+[[task.waypoints]]
+x = -9.97135
+y = -14.329
+
+[[task.waypoints]]
+x = -8.54533
+y = -17.1277
+
+[[task.waypoints]]
+x = -6.9464
+y = -19.8313
+
+[[task.waypoints]]
+x = -5.18085
+y = -22.4293
+
+[[task.waypoints]]
+x = -3.25566
+y = -24.9112
+
+[[task.waypoints]]
+x = -1.17843
+y = -27.2674
+
+[[task.waypoints]]
+x = 1.04264
+y = -29.4884
+
+[[task.waypoints]]
+x = 3.3988
+y = -31.5657
+
+[[task.waypoints]]
+x = 5.88074
+y = -33.4908
+
+[[task.waypoints]]
+x = 8.47866
+y = -35.2564
+
+[[task.waypoints]]
+x = 11.1823
+y = -36.8553
+
+[[task.waypoints]]
+x = 13.981
+y = -38.2814
+
+[[task.waypoints]]
+x = 16.8638
+y = -39.5288
+
+[[task.waypoints]]
+x = 19.8192
+y = -40.5928
+
+[[task.waypoints]]
+x = 22.8355
+y = -41.4692
+
+[[task.waypoints]]
+x = 25.9009
+y = -42.1544
+
+[[task.waypoints]]
+x = 29.0033
+y = -42.6457
+
+[[task.waypoints]]
+x = 32.1305
+y = -42.9413
+
+[[task.waypoints]]
+x = 35.27
+y = -43.04
+
+[[task.waypoints]]
+x = 38.4095
+y = -42.9413
+
+[[task.waypoints]]
+x = 41.5367
+y = -42.6457
+
+[[task.waypoints]]
+x = 44.6391
+y = -42.1544
+
+[[task.waypoints]]
+x = 47.7045
+y = -41.4692
+
+[[task.waypoints]]
+x = 50.7208
+y = -40.5928
+
+[[task.waypoints]]
+x = 53.6762
+y = -39.5288
+
+[[task.waypoints]]
+x = 56.559
+y = -38.2814
+
+[[task.waypoints]]
+x = 59.3577
+y = -36.8553
+
+[[task.waypoints]]
+x = 62.0613
+y = -35.2564
+
+[[task.waypoints]]
+x = 64.6593
+y = -33.4908
+
+[[task.waypoints]]
+x = 67.1412
+y = -31.5657
+
+[[task.waypoints]]
+x = 69.4974
+y = -29.4884
+
+[[task.waypoints]]
+x = 71.7184
+y = -27.2674
+
+[[task.waypoints]]
+x = 73.7957
+y = -24.9112
+
+[[task.waypoints]]
+x = 75.7208
+y = -22.4293
+
+[[task.waypoints]]
+x = 77.4864
+y = -19.8313
+
+[[task.waypoints]]
+x = 79.0853
+y = -17.1277
+
+[[task.waypoints]]
+x = 80.5114
+y = -14.329
+
+[[task.waypoints]]
+x = 81.7588
+y = -11.4462
+
+[[task.waypoints]]
+x = 82.8228
+y = -8.49085
+
+[[task.waypoints]]
+x = 83.6992
+y = -5.47449
+
+[[task.waypoints]]
+x = 84.3844
+y = -2.40907
+
+[[task.waypoints]]
+x = 84.8757
+y = 0.693338
+
+[[task.waypoints]]
+x = 85.1713
+y = 3.82047
+
+[[task.waypoints]]
+x = 85.27
+y = 6.96

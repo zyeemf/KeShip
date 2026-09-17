@@ -49,3 +49,9 @@ models_env/
 .vscode/
 # 个人 AI agent 配置（本地使用，不入库）
 AGENTS.md
+
+# ===== 私人研究资料（论文投稿，不入库）=====
+paper/
+
+# ===== Windows 下载标记（NTFS 数据流），不入库 =====
+*:Zone.Identifier
