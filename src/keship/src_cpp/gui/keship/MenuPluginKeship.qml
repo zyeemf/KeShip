@@ -3,7 +3,14 @@
 /// 2026.5.28 重构：Tab 布局（模型管理 / 虚拟实验）
 
 import QtQuick 2.0
-import QtQuick.Controls 2.0
+/// 版本要求可核查，勿随意升降！
+/// 本文件用到的 QtQuick.Controls 类型引入版本（依据 Controls.2/plugins.qmltypes）：
+///   Menu / MenuItem / Button / GroupBox / TextField / ComboBox / ScrollBar / ScrollIndicator 均为 2.0；
+///   **MenuSeparator（本文件 5 处）为 2.1** ← 决定了本文件的最低要求
+/// 2.0 下会报 "MenuSeparator is not a type" 导致插件加载失败（2026-09-17 实测）。
+/// 若日后加入更高版本的类型/属性，须同步提升此版本号；
+/// 可用 tools/check_qml_versions.sh 自动核对。
+import QtQuick.Controls 2.1
 
 Rectangle {
     id: root
@@ -105,6 +112,10 @@ Rectangle {
         }
     }
 
+    // [2026-09-17 回退] 原 component StyledMenu 已移除此处，见 modules/gui.md 崩溃记录
+
+    // [2026-09-17 回退] 原 component StyledMenuItem 已移除此处，见 modules/gui.md 崩溃记录
+
     /// 实验列表数据模型
     ListModel {
         id: experimentModel
@@ -152,7 +163,7 @@ Rectangle {
             spacing: 6
 
             TitleButton {
-                title: qsTr("模型管理")
+                title: qsTr("自由任务")
                 active: root.tabBarCurrent == 0
                 onClicked: {
                     if (root.collapsed) root.toggleCollapsed();
@@ -161,7 +172,7 @@ Rectangle {
                 onDoubleClicked: root.toggleCollapsed()
             }
             TitleButton {
-                title: qsTr("虚拟实验")
+                title: qsTr("教学实验")
                 active: root.tabBarCurrent == 1
                 onClicked: {
                     if (root.collapsed) root.toggleCollapsed();
@@ -193,6 +204,9 @@ Rectangle {
                     anchors.right: parent.right
                     spacing: 4
 
+                    /// 行1：加载（下拉归拢全部载入/添加入口）+ 保存世界 + 世界设置 + 暂停
+                    /// （2026-09-17 布局评审：载入世界/载入模型/数学船型/圆柱体/两种水域
+                    ///   归入"加载"下拉，避免六个入口平铺两行）
                     Rectangle {
                         color: "#c0d8f0"
                         radius: 4
@@ -202,18 +216,16 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 8
                             CustomButton {
-                                text: qsTr("载入世界")
-                                onClicked: { MenuPluginKeship.OnBtn_LoadWorld(); }
+                                id: loadBtn
+                                text: qsTr("加载 ▾")
+                                bk_normalColor: "#8fd0a8"
+                                bk_pressedColor: "#5eb07e"
+                                onClicked: loadMenu.popup()
                             }
                             CustomButton {
                                 text: qsTr("保存世界")
                                 onClicked: { MenuPluginKeship.OnBtn_SaveWorld(); }
                             }
-                            CustomButton {
-                                text: qsTr("载入模型")
-                                onClicked: { MenuPluginKeship.OnBtn_LoadModel(); }
-                            }             
-                                           
                             CustomButton {
                                 text: qsTr("世界设置")
                                 onClicked: { MenuPluginKeship.OnBtn_WorldSettings(); }
@@ -227,6 +239,26 @@ Rectangle {
                         }
                     }
 
+                    /// "加载"下拉：六种载入/添加入口（保留"添加默认水域"仅无水域时可用的约束）
+                    Menu {
+                        id: loadMenu
+                        MenuItem { text: "载入世界…"
+                            onTriggered: MenuPluginKeship.OnBtn_LoadWorld() }
+                        MenuItem { text: "载入模型（文件）…"
+                            onTriggered: MenuPluginKeship.OnBtn_LoadModel() }
+                        MenuItem { text: "数学船型…"
+                            onTriggered: MenuPluginKeship.OnBtn_NewMathHull() }
+                        MenuItem { text: "圆柱体（含浮力/水动力）…"
+                            onTriggered: MenuPluginKeship.OnBtn_CylinderBuoyancyTest() }
+                        MenuSeparator {}
+                        MenuItem { text: "添加默认水域"
+                            enabled: MenuPluginKeship.customWaterAreaCount === 0
+                            onTriggered: MenuPluginKeship.OnBtn_AddDefaultWaterArea() }
+                        MenuItem { text: "添加自定义水域…"
+                            onTriggered: MenuPluginKeship.OnBtn_AddWaterArea() }
+                    }
+
+                    /// 行2：惯性计算（模型辅助工具）+ 任务（实验/考核基础设施）
                     Rectangle {
                         color: "#c0d8f0"
                         radius: 4
@@ -235,14 +267,6 @@ Rectangle {
                         Row {
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: 8
-                            CustomButton {
-                                text: qsTr("数学船型")
-                                onClicked: { MenuPluginKeship.OnBtn_NewMathHull(); }
-                            }
-                            CustomButton {
-                                text: qsTr("圆柱体")
-                                onClicked: { MenuPluginKeship.OnBtn_CylinderBuoyancyTest(); }
-                            }
                             CustomButton {
                                 text: qsTr("惯性计算")
                                 onClicked: { MenuPluginKeship.OnBtn_InertiaCalculator(); }
@@ -258,6 +282,7 @@ Rectangle {
                         }
                     }
 
+                    /// 行3：维护操作（警示色）
                     Rectangle {
                         color: "#c0d8f0"
                         radius: 4
@@ -265,19 +290,7 @@ Rectangle {
                         height: 44
                         Row {
                             anchors.verticalCenter: parent.verticalCenter
-                            spacing: 12
-                            // 添加默认水域：仅当当前无任何水域时可用
-                            CustomButton {
-                                text: qsTr("添加默认水域")
-                                width: 130
-                                enabled: MenuPluginKeship.customWaterAreaCount === 0
-                                onClicked: MenuPluginKeship.OnBtn_AddDefaultWaterArea()
-                            }
-                            CustomButton {
-                                text: qsTr("添加自定义水域")
-                                width: 130
-                                onClicked: MenuPluginKeship.OnBtn_AddWaterArea()
-                            }
+                            spacing: 8
                             CustomButton {
                                 text: qsTr("清理网格缓存")
                                 width: 130
@@ -287,25 +300,6 @@ Rectangle {
                             }
                         }
                     }
-
-                    // Rectangle {
-                    //     color: "#c0d8f0"
-                    //     radius: 4
-                    //     width: parent.width
-                    //     height: 44
-                    //     Row {
-                    //         anchors.verticalCenter: parent.verticalCenter
-                    //         spacing: 8
-                    //         CustomButton {
-                    //             text: qsTr("任务设定")
-                    //             onClicked: { MenuPluginKeship.OnBtn_TaskSet(); }
-                    //         }
-                    //         CustomButton {
-                    //             text: qsTr("任务执行")
-                    //             onClicked: { MenuPluginKeship.OnBtn_TaskMonitor(); }
-                    //         }
-                    //     }
-                    // }
                 }
 
                 GroupBox {
@@ -390,10 +384,8 @@ Rectangle {
                             }
                             // 输出纯 JS 对象（显式拷贝字段 + 预计算 label），
                             // 避免 QVariantMap 桥接对象动态属性在 model 传递中丢失
-                            var label = (r.kind === "group")
-                                    ? (tab1ModelBox.treeExpanded[
-                                            r.chain + "/" + r.gtype] === false ? "+ " : "- ") + r.text
-                                    : r.text
+                            // 折叠箭头由 delegate 绘制，组行 label 不再拼 +/- 前缀
+                            var label = r.text
                             out.push({ kind: r.kind, gtype: r.gtype, text: r.text,
                                        chain: r.chain, depth: r.depth,
                                        midx: r.midx, widx: r.widx,
@@ -451,14 +443,48 @@ Rectangle {
 
                         delegate: Rectangle {
                             width: modelListView.width
-                            height: 30
-                            color: modelData.kind === "group" ? "#c8d8e8"
-                                   : (index % 2 == 0 ? "#f0f0f0" : "#e8e8e8")
-                            border.color: modelData.kind === "group" ? "#8aa8c8" : "#cccccc"
+                            height: 32
+                            color: modelData.kind === "group"
+                                   ? (modelData.gtype === "sub" ? "#e8d8c8"
+                                      : modelData.gtype === "waters" ? "#c8e8d8"
+                                                                     : "#c8d8e8")
+                                   : (modelListView.currentIndex === index ? "#b8d0f0"
+                                      : (index % 2 == 0 ? "#f8f8f8" : "#ececec"))
+                            border.color: modelData.kind === "group" ? "#8a8a8a" : "#cccccc"
                             border.width: 1
+
+                            // 左侧色条（组行按类型着色）
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: 4
+                                visible: modelData.kind === "group"
+                                color: modelData.gtype === "sub" ? "#c07840"
+                                     : modelData.gtype === "waters" ? "#40a070"
+                                                                    : "#4070b0"
+                            }
+
+                            // 缩进区 + 树连接竖线（叶行按层级逐级绘制）
+                            Item {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                width: 6 + modelData.depth * 14
+                                Repeater {
+                                    model: (modelData.kind === "group") ? 0 : modelData.depth
+                                    Rectangle {
+                                        x: 4 + index * 14
+                                        width: 1
+                                        height: parent.height
+                                        color: "#b8b8b8"
+                                    }
+                                }
+                            }
 
                             MouseArea {
                                 anchors.fill: parent
+                                hoverEnabled: true
                                 onClicked: {
                                     modelListView.currentIndex = index
                                     if (modelData.kind === "group") {
@@ -482,6 +508,32 @@ Rectangle {
                                 anchors.rightMargin: 2
                                 spacing: 4
 
+                                // 类型色块（叶行：模型=蓝、水域=青）
+                                Rectangle {
+                                    width: 8; height: 8
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: modelData.kind !== "group"
+                                    radius: 2
+                                    color: modelData.kind === "model" ? "#4070b0"
+                                                                      : "#40a070"
+                                }
+
+                                // 折叠箭头（组行）
+                                Text {
+                                    text: modelData.kind === "group"
+                                          ? (tab1ModelBox.treeExpanded[
+                                              modelData.chain + "/" + modelData.gtype] === false
+                                             ? "▸ " : "▾ ")
+                                          : ""
+                                    width: 14
+                                    height: parent.height
+                                    verticalAlignment: Text.AlignVCenter
+                                    font.pixelSize: 10
+                                    font.bold: true
+                                    color: "#404040"
+                                }
+
+                                // 名称（组行加粗；水域行预留海况列宽）
                                 Text {
                                     text: String(modelData.label || modelData.text || "")
                                     elide: Text.ElideRight
@@ -490,97 +542,14 @@ Rectangle {
                                     font.pixelSize: 12
                                     font.bold: modelData.kind === "group"
                                     height: 30
-                                    width: modelData.kind === "model"
-                                           ? Math.max(50, modelListView.width - 280 - (modelData.depth || 0) * 14)
-                                           : modelData.kind === "water"
-                                                 ? Math.max(50, modelListView.width - 178 - (modelData.depth || 0) * 14)
-                                                 : Math.max(60, modelListView.width - 40 - (modelData.depth || 0) * 14)
+                                    width: modelData.kind === "water"
+                                           ? Math.max(40, modelListView.width - 130 - (modelData.depth || 0) * 14 - 46)
+                                           : Math.max(40, modelListView.width - 130 - (modelData.depth || 0) * 14)
                                     color: modelData.kind === "group"
                                             ? "#101010" : "black"
                                 }
 
-                                Button {
-                                    text: qsTr("属性"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                    onClicked: MenuPluginKeship.OnBtn_ShowModelSettingsDialogByIndex(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("浮力体"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                             && !modelData.isStatic
-                                             && !modelData.mathHull
-                                    onClicked: MenuPluginKeship.OnBtn_EditBuoyancy(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("推进器"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                             && !modelData.isStatic
-                                    onClicked: MenuPluginKeship.OnBtn_EditThrust(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("流体动力"); width: 40; height: 30
-                                    visible: modelData.kind === "model"
-                                             && !modelData.isStatic
-                                    onClicked: MenuPluginKeship.OnBtn_EditHydro(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("传感器"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                    onClicked: MenuPluginKeship.OnBtn_EditSensor(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("保存"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                    onClicked: MenuPluginKeship.OnBtn_SaveModel(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-                                Button {
-                                    text: qsTr("删除"); width: 36; height: 30
-                                    visible: modelData.kind === "model"
-                                    onClicked: MenuPluginKeship.OnBtn_DeleteModelByIndex(modelData.midx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 9
-                                    }
-                                }
-
+                                // 海况（水域）
                                 Text {
                                     text: modelData.widx >= 0
                                           ? MenuPluginKeship.waterAreaSeaStates[modelData.widx] : ""
@@ -591,54 +560,97 @@ Rectangle {
                                     width: 42
                                     visible: modelData.kind === "water"
                                 }
+
+                                // ⋯ 下拉菜单（按实体类型选择对应菜单，popup 于按钮处）
                                 Button {
-                                    text: qsTr("环境"); width: 40; height: 30
-                                    visible: modelData.kind === "water"
-                                             && modelData.widx >= 0
-                                    onClicked: MenuPluginKeship.OnBtn_ShowWaterEnv(modelData.widx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 10
+                                    width: 28; height: 24
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: "⋯"
+                                    visible: modelData.kind !== "group"
+                                             || (modelData.kind === "group"
+                                                 && modelData.gtype === "sub")
+                                    onClicked: {
+                                        if (modelData.kind === "model")
+                                            modelRowMenu.popup()
+                                        else if (modelData.kind === "water")
+                                            waterRowMenu.popup()
+                                        else if (modelData.kind === "group"
+                                                 && modelData.gtype === "sub")
+                                            subRowMenu.popup()
                                     }
-                                }
-                                Button {
-                                    text: qsTr("编辑"); width: 40; height: 30
-                                    visible: modelData.kind === "water"
-                                             && modelData.widx >= 0
-                                    onClicked: MenuPluginKeship.OnBtn_EditWaterArea(modelData.widx)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 10
+
+                                    background: Rectangle {
+                                        radius: 4
+                                        color: parent.hovered ? "#b8c8e0" : "#e0e0e8"
+                                        border.color: "#909098"
+                                        border.width: 1
                                     }
-                                }
-                                Button {
-                                    text: qsTr("删除"); width: 40; height: 30
-                                    visible: modelData.kind === "water"
-                                             && modelData.widx >= 0
-                                    onClicked: MenuPluginKeship.OnBtn_DeleteWaterArea(modelData.widx)
                                     contentItem: Text {
-                                        text: parent.text; color: '#080808'
+                                        text: parent.text
+                                        color: '#303030'
                                         horizontalAlignment: Text.AlignHCenter
                                         verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 10
+                                        font.pixelSize: 11
+                                        font.bold: true
                                     }
                                 }
 
-                                Button {
-                                    text: qsTr("保存"); width: 40; height: 30
-                                    visible: modelData.kind === "group"
-                                             && modelData.gtype === "sub"
-                                    onClicked: MenuPluginKeship.OnBtn_SaveSubWorld(modelData.chain)
-                                    contentItem: Text {
-                                        text: parent.text; color: '#080808'
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        font.pixelSize: 10
-                                    }
+                                /// 模型操作菜单（仅模型行弹出）
+                                Menu {
+                                    id: modelRowMenu
+                                    MenuItem { text: "属性"
+                                        onTriggered: MenuPluginKeship.OnBtn_ShowModelSettingsDialogByIndex(modelData.midx) }
+                                    MenuItem { text: "复制"
+                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateModelByIndex(modelData.midx) }
+                                    MenuItem { text: "移动到子世界"
+                                        onTriggered: MenuPluginKeship.OnBtn_MoveModelByIndex(modelData.midx) }
+                                    MenuSeparator {}
+                                    MenuItem { text: "浮力体"
+                                        visible: !modelData.isStatic && !modelData.mathHull
+                                        onTriggered: MenuPluginKeship.OnBtn_EditBuoyancy(modelData.midx) }
+                                    MenuItem { text: "推进器"
+                                        visible: !modelData.isStatic
+                                        onTriggered: MenuPluginKeship.OnBtn_EditThrust(modelData.midx) }
+                                    MenuItem { text: "流体动力"
+                                        visible: !modelData.isStatic
+                                        onTriggered: MenuPluginKeship.OnBtn_EditHydro(modelData.midx) }
+                                    MenuItem { text: "传感器"
+                                        onTriggered: MenuPluginKeship.OnBtn_EditSensor(modelData.midx) }
+                                    MenuSeparator {}
+                                    MenuItem { text: "保存"
+                                        onTriggered: MenuPluginKeship.OnBtn_SaveModel(modelData.midx) }
+                                    MenuItem { text: "删除"
+                                        onTriggered: MenuPluginKeship.OnBtn_DeleteModelByIndex(modelData.midx) }
+                                }
+
+                                /// 水域操作菜单（仅水域行弹出）
+                                Menu {
+                                    id: waterRowMenu
+                                    MenuItem { text: "环境"
+                                        onTriggered: MenuPluginKeship.OnBtn_ShowWaterEnv(modelData.widx) }
+                                    MenuItem { text: "编辑"
+                                        onTriggered: MenuPluginKeship.OnBtn_EditWaterArea(modelData.widx) }
+                                    MenuItem { text: "复制"
+                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateWaterArea(modelData.widx) }
+                                    MenuItem { text: "移动到子世界"
+                                        onTriggered: MenuPluginKeship.OnBtn_MoveWaterByIndex(modelData.widx) }
+                                    MenuSeparator {}
+                                    MenuItem { text: "删除"
+                                        onTriggered: MenuPluginKeship.OnBtn_DeleteWaterArea(modelData.widx) }
+                                }
+
+                                /// 子世界操作菜单（仅子世界链组行弹出）
+                                Menu {
+                                    id: subRowMenu
+                                    MenuItem { text: "属性"
+                                        onTriggered: MenuPluginKeship.OnBtn_ShowSubWorldSettings(modelData.chain) }
+                                    MenuItem { text: "保存子世界"
+                                        onTriggered: MenuPluginKeship.OnBtn_SaveSubWorld(modelData.chain) }
+                                    MenuItem { text: "复制"
+                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateSubWorld(modelData.chain) }
+                                    MenuSeparator {}
+                                    MenuItem { text: "删除"
+                                        onTriggered: MenuPluginKeship.OnBtn_DeleteSubWorld(modelData.chain) }
                                 }
                             }
                         }

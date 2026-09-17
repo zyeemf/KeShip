@@ -64,6 +64,9 @@
 #include "editors/SaveWorldDialog.hh"
 #include "editors/SelectWorldDialog.hh"
 #include "editors/SelectKsmDialog.hh"
+#include "editors/SubWorldSettingsDialog.hh"
+#include "editors/MoveToChainDialog.hh"
+#include "editors/DuplicateWaterDialog.hh"
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/SeaState.hh"
 #include "MeshUtils.hh"
@@ -1246,6 +1249,11 @@ void MenuPluginKeship::OnSearchModel(const QString &_searchText)
 void MenuPluginKeship::OnBtn_DeleteModelByName(const QString &_instanceName)
 {
   std::cout << "TODO: keship删除模型文件" << _instanceName.toStdString() << std::endl;
+  /// 删除操作二次确认（2026-09-17 布局评审，下同）
+  if (QMessageBox::question(nullptr, "删除模型",
+      QString("确定删除模型「%1」吗？").arg(_instanceName),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    return;
   bool success = this->modelManager->DeleteModelInGazeboByName(_instanceName.toStdString());
   if (success)
   {
@@ -1266,6 +1274,12 @@ void MenuPluginKeship::OnBtn_DeleteModelByIndex(int _index)
     std::cout << "keship删除选中模型索引无效" << _index << std::endl;
     return;
   }
+  /// 删除操作二次确认：按索引取实例名提示
+  auto nameAndId = this->modelManager->GetModelNameAndIDByIndex(_index);
+  if (QMessageBox::question(nullptr, "删除模型",
+      QString("确定删除模型「%1」吗？").arg(QString::fromStdString(nameAndId.first)),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    return;
   bool success = this->modelManager->DeleteModelInGazeboByIndex(_index);
   if (success)
   {
@@ -1281,6 +1295,11 @@ void MenuPluginKeship::OnBtn_DeleteModelByIndex(int _index)
 void MenuPluginKeship::OnBtn_DeleteAllModels()
 {
   std::cout << "TODO: keship删除所有模型" << std::endl;
+  /// 删除操作二次确认：全部清场属高危操作
+  if (QMessageBox::question(nullptr, "删除所有模型",
+      "确定删除场景中的全部模型吗？\n（不影响水域与子世界结构）",
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    return;
   this->modelManager->DeleteAllModelsInGazebo();
   NotifyModelListChanged(); // 发送信号通知QML更新
 }
@@ -2296,29 +2315,682 @@ void MenuPluginKeship::OnBtn_DeleteWaterArea(int _index)
   if (_index < 0 || _index >= (int)areas.size())
     return;
 
-  // 按名字定位删除
-  int ci = -1;
-  for (size_t i = 0; i < customWaterAreas_.size(); ++i)
-    if (customWaterAreas_[i].name == areas[_index].name) { ci = (int)i; break; }
-  if (ci < 0) return;
+  /// 删除操作二次确认
+  if (QMessageBox::question(nullptr, "删除水域",
+      QString::fromStdString("确定删除水域「" + areas[_index].name + "」吗？\n（其上的波浪/风/流参数将一并移除）"),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    return;
 
-  const std::string victim = customWaterAreas_[ci].name;
+  DeleteWaterAreaByName(areas[_index].name);
+  RebuildWaterAreas();
+  // 删除水区：波浪场由 WavesModel 依据 JSON 移除，无需 PMS（避免误更新其余水区）
+}
+
+void MenuPluginKeship::DeleteWaterAreaByName(const std::string &_name)
+{
   // 按名字删除 customs 中全部同名（与 Areas 重建的"同名全去"保持一致，
   // 防止残留快照导致"添加默认水域"按钮错误置灰）
   customWaterAreas_.erase(
       std::remove_if(customWaterAreas_.begin(), customWaterAreas_.end(),
-          [&](const keship::WaterArea &a) { return a.name == victim; }),
+          [&](const keship::WaterArea &a) { return a.name == _name; }),
       customWaterAreas_.end());
   {
     std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
     auto all = waterAreaMgr_.Areas();
     waterAreaMgr_.Clear();
     for (const auto &a : all)
-      if (a.name != victim)
+      if (a.name != _name)
         waterAreaMgr_.AddArea(a);
-    RebuildWaterAreas();
   }
-  // 删除水区：波浪场由 WavesModel 依据 JSON 移除，无需 PMS（避免误更新其余水区）
+  // 来源元数据一并清理（子世界删除/移动一致性）
+  this->modelManager->RemoveWaterSource(_name);
+}
+
+//-----------------------------------------------------------------------------
+// 结构树交互：复制 / 移动 / 子世界属性与删除
+//-----------------------------------------------------------------------------
+
+std::vector<std::string> MenuPluginKeship::SplitChain(const QString &_chain)
+{
+  std::vector<std::string> segs;
+  for (const QString &s : _chain.split('/', Qt::SkipEmptyParts))
+    segs.push_back(s.toStdString());
+  return segs;
+}
+
+QString MenuPluginKeship::ModelChainOf(
+    const keship::ModelManager::WorldModelSource &_src)
+{
+  QString chain;
+  for (const auto &s : _src.path)
+  {
+    if (!chain.isEmpty()) chain += "/";
+    chain += QString::fromStdString(s);
+  }
+  return chain;
+}
+
+QString MenuPluginKeship::WaterChainOf(
+    const keship::ModelManager::WaterWorldSource &_src)
+{
+  QString chain;
+  for (const auto &s : _src.path)
+  {
+    if (!chain.isEmpty()) chain += "/";
+    chain += QString::fromStdString(s);
+  }
+  return chain;
+}
+
+std::vector<std::string> MenuPluginKeship::CollectChainModels(
+    const QString &_chain) const
+{
+  const auto segs = SplitChain(_chain);
+  std::vector<std::string> out;
+  if (segs.empty()) return out;
+  for (const auto &[name, src] : this->modelManager->GetModelSources())
+  {
+    if (src.path.size() < segs.size()) continue;
+    bool match = true;
+    for (size_t i = 0; i < segs.size(); ++i)
+      if (src.path[i] != segs[i]) { match = false; break; }
+    if (match) out.push_back(name);
+  }
+  return out;
+}
+
+std::vector<std::string> MenuPluginKeship::CollectChainWaters(
+    const QString &_chain) const
+{
+  const auto segs = SplitChain(_chain);
+  std::vector<std::string> out;
+  if (segs.empty()) return out;
+  for (const auto &[name, src] : this->modelManager->GetWaterSources())
+  {
+    if (src.path.size() < segs.size()) continue;
+    bool match = true;
+    for (size_t i = 0; i < segs.size(); ++i)
+      if (src.path[i] != segs[i]) { match = false; break; }
+    if (match) out.push_back(name);
+  }
+  return out;
+}
+
+QStringList MenuPluginKeship::AllExistingChains() const
+{
+  std::set<QString> chains;
+  auto addChain = [&chains](const QString &_chain)
+  {
+    QString cur;
+    for (const QString &seg : _chain.split('/', Qt::SkipEmptyParts))
+    {
+      cur = cur.isEmpty() ? seg : cur + "/" + seg;
+      chains.insert(cur);
+    }
+  };
+  for (const auto &[name, src] : this->modelManager->GetModelSources())
+    addChain(ModelChainOf(src));
+  for (const auto &[name, src] : this->modelManager->GetWaterSources())
+    addChain(WaterChainOf(src));
+  QStringList out;
+  for (const QString &c : chains) out << c;
+  return out;
+}
+
+bool MenuPluginKeship::ChainExists(const QString &_chain) const
+{
+  return AllExistingChains().contains(_chain);
+}
+
+bool MenuPluginKeship::RewriteChain(const QString &_oldChain,
+                                    const QString &_newChain)
+{
+  if (_oldChain.isEmpty() || _oldChain == _newChain) return false;
+  if (ChainExists(_newChain))
+  {
+    QMessageBox::warning(nullptr, "操作失败",
+        "目标链「" + _newChain + "」已存在，无法移动/改名");
+    return false;
+  }
+  const auto oldSegs = SplitChain(_oldChain);
+  const auto newSegs = SplitChain(_newChain);
+  bool any = false;
+  auto modelSources = this->modelManager->GetModelSources();
+  for (auto &[name, src] : modelSources)
+  {
+    if (src.path.size() < oldSegs.size()) continue;
+    bool match = true;
+    for (size_t i = 0; i < oldSegs.size(); ++i)
+      if (src.path[i] != oldSegs[i]) { match = false; break; }
+    if (!match) continue;
+    std::vector<std::string> npath = newSegs;
+    for (size_t i = oldSegs.size(); i < src.path.size(); ++i)
+      npath.push_back(src.path[i]);
+    src.path = npath;
+    this->modelManager->SetModelSource(name, src);
+    any = true;
+  }
+  auto waterSources = this->modelManager->GetWaterSources();
+  for (auto &[name, wsrc] : waterSources)
+  {
+    if (wsrc.path.size() < oldSegs.size()) continue;
+    bool match = true;
+    for (size_t i = 0; i < oldSegs.size(); ++i)
+      if (wsrc.path[i] != oldSegs[i]) { match = false; break; }
+    if (!match) continue;
+    std::vector<std::string> npath = newSegs;
+    for (size_t i = oldSegs.size(); i < wsrc.path.size(); ++i)
+      npath.push_back(wsrc.path[i]);
+    wsrc.path = npath;
+    this->modelManager->SetWaterSource(name, wsrc);
+    any = true;
+  }
+  return any;
+}
+
+QString MenuPluginKeship::UniqueCopyName(const QString &_base,
+                                         const std::set<QString> &_existing)
+{
+  if (_existing.find(_base) == _existing.end()) return _base;
+  int n = 2;
+  while (true)
+  {
+    const QString cand = _base + QString::number(n);
+    if (_existing.find(cand) == _existing.end()) return cand;
+    ++n;
+  }
+}
+
+bool MenuPluginKeship::DuplicateModelCore(const std::string &_name,
+                                          const std::string &_newName,
+                                          const QString &_chain,
+                                          const double _pos[6])
+{
+  std::string sdf = this->modelManager->GetCachedModelSDF(_name);
+  if (sdf.empty())
+  {
+    QMessageBox::warning(nullptr, "复制模型",
+        "无法复制「" + QString::fromStdString(_name) + "」（缺少缓存 SDF）");
+    return false;
+  }
+  keship::BuoyancyConfig bCfg;
+  const bool haveBuoy =
+      this->modelManager->GetCachedBuoyancyConfig(_name, bCfg) && !bCfg.bodies.empty();
+  keship::ThrusterConfig tCfg;
+  const bool haveThrust =
+      this->modelManager->GetCachedThrusterConfig(_name, tCfg) && !tCfg.bodies.empty();
+  keship::HydroConfig hCfg;
+  const bool haveHydro = this->modelManager->GetCachedHydroConfig(_name, hCfg);
+  keship::SensorConfig sCfg;
+  const bool haveSensor = this->modelManager->GetCachedSensorConfig(_name, sCfg);
+
+  // 缓存 SDF 的模型名统一为新实例名（编辑重建 allow_renaming=false 依赖 name 一致）
+  {
+    auto ns_ = sdf.find("model name=\"");
+    if (ns_ != std::string::npos)
+    {
+      ns_ += 12;
+      auto ne = sdf.find("\"", ns_);
+      if (ne != std::string::npos)
+        sdf.replace(ns_, ne - ns_, _newName);
+    }
+  }
+  this->modelManager->CacheModelSDF(_newName, sdf);
+  this->modelManager->CacheBuoyancyConfig(_newName, bCfg);
+  this->modelManager->CacheThrusterConfig(_newName, tCfg);
+  if (haveHydro)
+    this->modelManager->CacheHydroConfig(_newName, hCfg);
+  if (haveSensor)
+    this->modelManager->CacheSensorConfig(_newName, sCfg);
+
+  bool ok = false;
+  if (haveThrust)
+    ok = this->modelManager->SpawnModelWithThrust(_newName, tCfg, _pos);
+  else if (haveBuoy)
+    ok = this->modelManager->SpawnModelWithBuoyancy(_newName, bCfg, _pos);
+  else
+    ok = this->modelManager->SpawnModelInGazeboFromSDFString(_newName, sdf);
+  if (!ok)
+  {
+    QMessageBox::warning(nullptr, "复制模型",
+        "生成副本「" + QString::fromStdString(_newName) + "」失败");
+    return false;
+  }
+
+  // 等待 spawn 完成（与载入世界一致的轮询）
+  {
+    uint32_t id = 0; int tries = 100;
+    while (tries-- > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      if (this->modelManager->GetModelIDByInstanceNameFromGazebo(_newName, id)) break;
+    }
+  }
+
+  // 来源登记：path = 目标链；baseName = 新名（防同链保存时 JSON 键冲突）
+  keship::ModelManager::WorldModelSource src;
+  keship::ModelManager::WorldModelSource orig;
+  if (this->modelManager->GetModelSource(_name, orig))
+  {
+    src.ns = orig.ns;
+    src.kswPath = orig.kswPath;
+  }
+  src.path = SplitChain(_chain);
+  src.baseName = _newName;
+  this->modelManager->SetModelSource(_newName, src);
+  return true;
+}
+
+bool MenuPluginKeship::DuplicateWaterCore(const std::string &_name,
+                                          const std::string &_newName,
+                                          const QString &_chain,
+                                          double _dx, double _dy,
+                                          double _baseHeight)
+{
+  const auto &areas = waterAreaMgr_.Areas();
+  const keship::WaterArea *src = nullptr;
+  for (const auto &a : areas)
+    if (a.name == _name) { src = &a; break; }
+  if (!src) return false;
+
+  keship::WaterArea copy = *src;
+  copy.name = _newName;
+  copy.xMin += _dx; copy.xMax += _dx;
+  copy.yMin += _dy; copy.yMax += _dy;
+  for (auto &v : copy.vertices)
+  {
+    v.first += _dx;
+    v.second += _dy;
+  }
+  copy.baseHeight = src->baseHeight + _baseHeight;
+
+  customWaterAreas_.push_back(copy);
+  {
+    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+    waterAreaMgr_.AddArea(copy);
+  }
+
+  // 来源登记：path = 目标链；baseName = 新名（防同链保存时 JSON 键冲突）
+  keship::ModelManager::WaterWorldSource wsrc;
+  if (this->modelManager->GetWaterSource(_name, wsrc))
+    wsrc.baseName = copy.name;
+  wsrc.path = SplitChain(_chain);
+  this->modelManager->SetWaterSource(copy.name, wsrc);
+  return true;
+}
+
+bool MenuPluginKeship::MoveModelToChain(const std::string &_name,
+                                        const QString &_chain)
+{
+  keship::ModelManager::WorldModelSource src;
+  const bool hasSrc = this->modelManager->GetModelSource(_name, src);
+  const std::string baseName =
+      hasSrc && !src.baseName.empty() ? src.baseName : _name;
+  // 目标链下同名 baseName 冲突检查（保存时 JSON 键冲突防御）
+  for (const auto &[n, s] : this->modelManager->GetModelSources())
+  {
+    if (n == _name) continue;
+    if (s.path == SplitChain(_chain) && s.baseName == baseName)
+    {
+      QMessageBox::warning(nullptr, "移动模型",
+          "目标子世界下已存在同名模型「"
+          + QString::fromStdString(baseName) + "」");
+      return false;
+    }
+  }
+  src.path = SplitChain(_chain);
+  this->modelManager->SetModelSource(_name, src);
+  return true;
+}
+
+bool MenuPluginKeship::MoveWaterToChain(const std::string &_name,
+                                        const QString &_chain)
+{
+  keship::ModelManager::WaterWorldSource wsrc;
+  const bool hasSrc = this->modelManager->GetWaterSource(_name, wsrc);
+  const std::string baseName =
+      hasSrc && !wsrc.baseName.empty() ? wsrc.baseName : _name;
+  for (const auto &[n, s] : this->modelManager->GetWaterSources())
+  {
+    if (n == _name) continue;
+    if (s.path == SplitChain(_chain) && s.baseName == baseName)
+    {
+      QMessageBox::warning(nullptr, "移动水域",
+          "目标子世界下已存在同名水域「"
+          + QString::fromStdString(baseName) + "」");
+      return false;
+    }
+  }
+  wsrc.path = SplitChain(_chain);
+  this->modelManager->SetWaterSource(_name, wsrc);
+  return true;
+}
+
+void MenuPluginKeship::OnBtn_DuplicateModelByIndex(int _midx)
+{
+  auto nameAndId = this->modelManager->GetModelNameAndIDByIndex(_midx);
+  if (nameAndId.first.empty()) return;
+  const std::string orig = nameAndId.first;
+
+  double pose[6] = {0, 0, 0, 0, 0, 0};
+  if (!this->modelManager->GetModelPoseByIDFromGazebo(nameAndId.second, pose))
+  {
+    std::cerr << "复制模型: 获取位姿失败 " << orig << std::endl;
+    return;
+  }
+
+  // 默认名去重（_副本、_副本2…）
+  std::set<QString> existing;
+  for (const auto &[n, id] : this->modelManager->GetModelList())
+    existing.insert(QString::fromStdString(n));
+  const QString defaultName = UniqueCopyName(
+      QString::fromStdString(orig) + "_副本", existing);
+
+  // 弹属性对话框：可命名 + 改位姿（静态/浮力/惯性只读展示）
+  ModelSettingsDialog dialog(this->GetModelNames(), ModelSettingsDialog::Ksm);
+  dialog.setDefaultName(defaultName);
+  dialog.setPose(pose);
+  if (dialog.exec() != QDialog::Accepted) return;
+
+  const std::string newName = dialog.getModelName().toStdString();
+  double pos[6] = {
+      dialog.getPosX(), dialog.getPosY(), dialog.getPosZ(),
+      dialog.getRoll() * M_PI / 180.0,
+      dialog.getPitch() * M_PI / 180.0,
+      dialog.getYaw() * M_PI / 180.0};
+
+  // 目标链 = 原件所在链（副本留在同一子世界内）
+  QString chain;
+  keship::ModelManager::WorldModelSource origSrc;
+  if (this->modelManager->GetModelSource(orig, origSrc))
+    chain = ModelChainOf(origSrc);
+
+  if (DuplicateModelCore(orig, newName, chain, pos))
+    NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_DuplicateWaterArea(int _widx)
+{
+  std::vector<keship::WaterArea> areas;
+  {
+    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+    areas = waterAreaMgr_.Areas();
+  }
+  if (_widx < 0 || _widx >= (int)areas.size()) return;
+  const std::string orig = areas[_widx].name;
+
+  std::set<QString> existing;
+  for (const auto &a : areas) existing.insert(QString::fromStdString(a.name));
+  const QString defaultName = UniqueCopyName(
+      QString::fromStdString(orig) + "_副本", existing);
+
+  DuplicateWaterDialog dlg(defaultName);
+  if (dlg.exec() != QDialog::Accepted) return;
+  const std::string newName = dlg.waterName().toStdString();
+  if (existing.count(QString::fromStdString(newName)))
+  {
+    QMessageBox::warning(nullptr, "复制水域",
+        "同名水域已存在：" + QString::fromStdString(newName));
+    return;
+  }
+
+  // 目标链 = 原件所在链
+  QString chain;
+  keship::ModelManager::WaterWorldSource origSrc;
+  if (this->modelManager->GetWaterSource(orig, origSrc))
+    chain = WaterChainOf(origSrc);
+
+  if (!DuplicateWaterCore(orig, newName, chain,
+                          dlg.dx(), dlg.dy(), dlg.baseHeight()))
+    return;
+
+  RebuildWaterAreas();
+  for (const auto &a : waterAreaMgr_.Areas())
+    if (a.name == newName)
+    {
+      PublishWaveParams(a.waveParams, a.name);
+      break;
+    }
+}
+
+void MenuPluginKeship::OnBtn_DuplicateSubWorld(const QString &_chain)
+{
+  const auto models = CollectChainModels(_chain);
+  const auto waters = CollectChainWaters(_chain);
+  if (models.empty() && waters.empty())
+  {
+    QMessageBox::information(nullptr, "复制子世界", "该子世界内没有可复制的实体");
+    return;
+  }
+
+  // 默认新链名 = 末段 + _副本（去重）；保持父链不变
+  const QString parentChain = _chain.section('/', 0, -2);
+  std::set<QString> existing;
+  const auto chains = AllExistingChains();
+  for (const QString &c : chains) existing.insert(c);
+  const QString baseLeaf = _chain.section('/', -1) + "_副本";
+  const QString fullBase = parentChain.isEmpty()
+      ? baseLeaf : parentChain + "/" + baseLeaf;
+  const QString newChain = UniqueCopyName(fullBase, existing);
+
+  // 实体清单（显示名 = baseName）
+  QStringList mNames, wNames;
+  for (const auto &m : models)
+  {
+    keship::ModelManager::WorldModelSource src;
+    if (this->modelManager->GetModelSource(m, src))
+      mNames << (src.baseName.empty() ? QString::fromStdString(m)
+                                      : QString::fromStdString(src.baseName));
+  }
+  for (const auto &w : waters)
+  {
+    keship::ModelManager::WaterWorldSource wsrc;
+    if (this->modelManager->GetWaterSource(w, wsrc))
+      wNames << (wsrc.baseName.empty() ? QString::fromStdString(w)
+                                       : QString::fromStdString(wsrc.baseName));
+  }
+
+  SubWorldSettingsDialog dlg(newChain.section('/', -1), mNames, wNames);
+  if (dlg.exec() != QDialog::Accepted) return;
+  const QString finalChain = parentChain.isEmpty()
+      ? dlg.chainName() : parentChain + "/" + dlg.chainName();
+  if (existing.count(finalChain))
+  {
+    QMessageBox::warning(nullptr, "复制子世界", "目标链已存在：" + finalChain);
+    return;
+  }
+
+  const double off[6] = {
+      dlg.offsetX(), dlg.offsetY(), dlg.offsetZ(),
+      dlg.offsetRollDeg() * M_PI / 180.0,
+      dlg.offsetPitchDeg() * M_PI / 180.0,
+      dlg.offsetYawDeg() * M_PI / 180.0};
+  const auto chainSegs = SplitChain(_chain);
+
+  // 模型复制：新实例名 = 原名_副本（去重）；目标链 = 新链 + 相对子链
+  std::set<QString> modelNames;
+  for (const auto &[n, id] : this->modelManager->GetModelList())
+    modelNames.insert(QString::fromStdString(n));
+  for (const auto &m : models)
+  {
+    keship::ModelManager::WorldModelSource src;
+    if (!this->modelManager->GetModelSource(m, src)) continue;
+    QString relChain;
+    for (size_t i = chainSegs.size(); i < src.path.size(); ++i)
+    {
+      if (!relChain.isEmpty()) relChain += "/";
+      relChain += QString::fromStdString(src.path[i]);
+    }
+    const QString targetChain = relChain.isEmpty()
+        ? finalChain : finalChain + "/" + relChain;
+    const QString newName = UniqueCopyName(
+        QString::fromStdString(m) + "_副本", modelNames);
+    modelNames.insert(newName);
+
+    // 复制位姿 = 原件位姿 + 整体偏移
+    double pose[6] = {0, 0, 0, 0, 0, 0};
+    uint32_t id = 0;
+    if (this->modelManager->GetModelIDByInstanceNameFromGazebo(m, id))
+      this->modelManager->GetModelPoseByIDFromGazebo(id, pose);
+    pose[0] += off[0]; pose[1] += off[1]; pose[2] += off[2];
+    pose[3] += off[3]; pose[4] += off[4]; pose[5] += off[5];
+
+    DuplicateModelCore(m, newName.toStdString(), targetChain, pose);
+  }
+
+  // 水域复制
+  std::set<QString> waterNames;
+  {
+    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+    for (const auto &a : waterAreaMgr_.Areas())
+      waterNames.insert(QString::fromStdString(a.name));
+  }
+  for (const auto &w : waters)
+  {
+    keship::ModelManager::WaterWorldSource wsrc;
+    if (!this->modelManager->GetWaterSource(w, wsrc)) continue;
+    QString relChain;
+    for (size_t i = chainSegs.size(); i < wsrc.path.size(); ++i)
+    {
+      if (!relChain.isEmpty()) relChain += "/";
+      relChain += QString::fromStdString(wsrc.path[i]);
+    }
+    const QString targetChain = relChain.isEmpty()
+        ? finalChain : finalChain + "/" + relChain;
+    const QString newName = UniqueCopyName(
+        QString::fromStdString(w) + "_副本", waterNames);
+    waterNames.insert(newName);
+
+    DuplicateWaterCore(w, newName.toStdString(), targetChain,
+                       off[0], off[1], off[2]);
+  }
+
+  RebuildWaterAreas();
+  NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_DeleteSubWorld(const QString &_chain)
+{
+  const auto models = CollectChainModels(_chain);
+  const auto waters = CollectChainWaters(_chain);
+  if (models.empty() && waters.empty()) return;
+
+  if (QMessageBox::question(nullptr, "删除子世界",
+      QString("确定删除子世界「%1」吗？\n将删除其下 %2 个模型、%3 个水域。")
+          .arg(_chain).arg((int)models.size()).arg((int)waters.size()),
+      QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+    return;
+
+  for (const auto &m : models)
+    this->modelManager->DeleteModelInGazeboByName(m);
+  for (const auto &w : waters)
+    DeleteWaterAreaByName(w);
+  RebuildWaterAreas();
+  NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_ShowSubWorldSettings(const QString &_chain)
+{
+  auto models = CollectChainModels(_chain);
+  auto waters = CollectChainWaters(_chain);
+  if (models.empty() && waters.empty()) return;
+
+  QStringList mNames, wNames;
+  for (const auto &m : models)
+  {
+    keship::ModelManager::WorldModelSource src;
+    if (this->modelManager->GetModelSource(m, src))
+      mNames << (src.baseName.empty() ? QString::fromStdString(m)
+                                      : QString::fromStdString(src.baseName));
+  }
+  for (const auto &w : waters)
+  {
+    keship::ModelManager::WaterWorldSource wsrc;
+    if (this->modelManager->GetWaterSource(w, wsrc))
+      wNames << (wsrc.baseName.empty() ? QString::fromStdString(w)
+                                       : QString::fromStdString(wsrc.baseName));
+  }
+
+  SubWorldSettingsDialog dlg(_chain.section('/', -1), mNames, wNames);
+  if (dlg.exec() != QDialog::Accepted) return;
+
+  // 1. 改名（纯元数据：遍历更新 path 前缀）
+  const QString parentChain = _chain.section('/', 0, -2);
+  const QString newChain = parentChain.isEmpty()
+      ? dlg.chainName() : parentChain + "/" + dlg.chainName();
+  if (newChain != _chain)
+    RewriteChain(_chain, newChain);
+
+  // 2. 整体位姿偏移（应用到链内全部模型）
+  const double off[6] = {
+      dlg.offsetX(), dlg.offsetY(), dlg.offsetZ(),
+      dlg.offsetRollDeg() * M_PI / 180.0,
+      dlg.offsetPitchDeg() * M_PI / 180.0,
+      dlg.offsetYawDeg() * M_PI / 180.0};
+  const bool hasOff = std::abs(off[0]) > 1e-9 || std::abs(off[1]) > 1e-9 ||
+      std::abs(off[2]) > 1e-9 || std::abs(off[3]) > 1e-9 ||
+      std::abs(off[4]) > 1e-9 || std::abs(off[5]) > 1e-9;
+  if (hasOff)
+  {
+    const QString effChain = (newChain != _chain) ? newChain : _chain;
+    for (const auto &m : CollectChainModels(effChain))
+    {
+      uint32_t id = 0;
+      if (!this->modelManager->GetModelIDByInstanceNameFromGazebo(m, id)) continue;
+      double pose[6] = {0, 0, 0, 0, 0, 0};
+      if (!this->modelManager->GetModelPoseByIDFromGazebo(id, pose)) continue;
+      pose[0] += off[0]; pose[1] += off[1]; pose[2] += off[2];
+      pose[3] += off[3]; pose[4] += off[4]; pose[5] += off[5];
+      this->modelManager->SetModelPoseByIDInGazebo(id, pose);
+    }
+  }
+
+  NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_MoveModelByIndex(int _midx)
+{
+  auto nameAndId = this->modelManager->GetModelNameAndIDByIndex(_midx);
+  if (nameAndId.first.empty()) return;
+
+  MoveToChainDialog dlg(AllExistingChains(), "模型");
+  if (dlg.exec() != QDialog::Accepted) return;
+  if (MoveModelToChain(nameAndId.first, dlg.targetChain()))
+    NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_MoveWaterByIndex(int _widx)
+{
+  std::vector<keship::WaterArea> areas;
+  {
+    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+    areas = waterAreaMgr_.Areas();
+  }
+  if (_widx < 0 || _widx >= (int)areas.size()) return;
+
+  MoveToChainDialog dlg(AllExistingChains(), "水域");
+  if (dlg.exec() != QDialog::Accepted) return;
+  if (MoveWaterToChain(areas[_widx].name, dlg.targetChain()))
+    NotifyModelListChanged();
+}
+
+void MenuPluginKeship::OnBtn_MoveSubWorld(const QString &_chain)
+{
+  // 循环保护：目标父链不能是自己或其子孙链
+  MoveToChainDialog dlg(AllExistingChains(), "子世界");
+  if (dlg.exec() != QDialog::Accepted) return;
+  const QString targetParent = dlg.targetChain();
+  if (targetParent == _chain || targetParent.startsWith(_chain + "/"))
+  {
+    QMessageBox::warning(nullptr, "移动子世界", "不能移动到自身或其子链下");
+    return;
+  }
+  const QString leaf = _chain.section('/', -1);
+  const QString newChain = targetParent.isEmpty()
+      ? leaf : targetParent + "/" + leaf;
+  if (newChain == _chain) return;
+  if (RewriteChain(_chain, newChain))
+    NotifyModelListChanged();
 }
 
 //-----------------------------------------------------------------------------
