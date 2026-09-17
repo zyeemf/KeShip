@@ -44,6 +44,10 @@ public: /// 获取设置的值
   double getRoll() const;
   double getPitch() const;
   double getYaw() const;
+  /// 预填位姿（弧度制 [x y z r p y]，复制模型等场景复用）
+  void setPose(const double _pos[6]);
+  /// 预填模型名称（复制模型等场景复用）
+  void setDefaultName(const QString &_name);
   /// 获取是否静态模型和是否添加浮力项
   bool isStatic() const;
   bool isAddBuoyancy() const;

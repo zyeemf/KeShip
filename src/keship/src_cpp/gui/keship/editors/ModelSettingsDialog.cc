@@ -419,6 +419,21 @@ double ModelSettingsDialog::getPosZ() const { return posZSpinBox->value(); }
 double ModelSettingsDialog::getRoll() const { return rollSpinBox->value(); }
 double ModelSettingsDialog::getPitch() const { return pitchSpinBox->value(); }
 double ModelSettingsDialog::getYaw() const { return yawSpinBox->value(); }
+
+void ModelSettingsDialog::setPose(const double _pos[6])
+{
+  posXSpinBox->setValue(_pos[0]);
+  posYSpinBox->setValue(_pos[1]);
+  posZSpinBox->setValue(_pos[2]);
+  rollSpinBox->setValue(_pos[3] * 180.0 / M_PI);
+  pitchSpinBox->setValue(_pos[4] * 180.0 / M_PI);
+  yawSpinBox->setValue(_pos[5] * 180.0 / M_PI);
+}
+
+void ModelSettingsDialog::setDefaultName(const QString &_name)
+{
+  instanceNameEdit->setText(_name);
+}
 bool ModelSettingsDialog::isStatic() const { return staticCheckBox->isChecked(); }
 bool ModelSettingsDialog::isAddBuoyancy() const { return addBuoyancyCheckBox->isChecked(); }
 bool ModelSettingsDialog::isAddInertia() const { return setInertiaCheckBox->isChecked(); }

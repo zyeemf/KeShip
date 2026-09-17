@@ -120,6 +120,9 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/editors/SaveWorldDialog.cc
   src_cpp/gui/keship/editors/SelectWorldDialog.cc
   src_cpp/gui/keship/editors/SelectKsmDialog.cc
+  src_cpp/gui/keship/editors/SubWorldSettingsDialog.cc
+  src_cpp/gui/keship/editors/MoveToChainDialog.cc
+  src_cpp/gui/keship/editors/DuplicateWaterDialog.cc
   src_cpp/utils/TaskTomlParser.cc
   src_cpp/utils/TaskScoring.cc
   ${menu_plugin_resources}

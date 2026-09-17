@@ -260,7 +260,8 @@ namespace keship
      * @return true 成功
      * @return false 失败
      */
-    bool DeleteModelInGazeboByName(const std::string &_instanceName);
+    bool DeleteModelInGazeboByName(const std::string &_instanceName,
+        bool _preserveSource = false);
     bool DeleteModelInGazeboByIndex(int _index);
     std::pair<std::string, uint32_t> GetModelNameAndIDByIndex(int _index);
     bool GetModelPoseByIndex(int _index, gz::msgs::Pose &_pose);
@@ -393,6 +394,8 @@ namespace keship
     bool GetWaterSource(const std::string &_instanceName,
         WaterWorldSource &_out) const;
     void ClearWaterSources();
+    /// @brief 按实例名移除单个水域来源元数据
+    void RemoveWaterSource(const std::string &_instanceName);
     const std::map<std::string, WaterWorldSource> &GetWaterSources() const
     { return waterSource_; }
 
@@ -410,8 +413,10 @@ namespace keship
     /// NormalizeMeshToSDFCache 规范化为 Z-UP 标准 OBJ，使视觉/碰撞/预览
     /// 与物理配置（CoG/浮力体/传感器）一致。非 file:// 与白名单外 uri 原样保留。
     /// @param _sdf 含 <mesh><uri>file://... 的 SDF 字符串
+    /// @param _sdfBaseDir SDF 文件所在目录，用于解析相对路径（可为空）
     /// @return 替换后的 SDF
-    std::string NormalizeMeshUrisInSDF(const std::string &_sdf);
+    std::string NormalizeMeshUrisInSDF(const std::string &_sdf,
+                                       const std::string &_sdfBaseDir = "");
 
     /// @brief 从 SDF 字符串中解析惯性参数（独立于缓存）
     static bool ParseInertiaFromSDF(const std::string &_sdf, InertiaParams &_out);

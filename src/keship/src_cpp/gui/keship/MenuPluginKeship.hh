@@ -21,6 +21,7 @@
 
 #include <QDialog>
 #include <QStandardItemModel>
+#include <set>
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -112,6 +113,22 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnSearchModel(const QString &_searchText);
   /// \brief 显示模型属性对话框
   protected slots: void OnBtn_ShowModelSettingsDialogByIndex(int _index);
+  /// \brief 复制模型（弹属性对话框，可命名与改位姿）
+  protected slots: void OnBtn_DuplicateModelByIndex(int _midx);
+  /// \brief 复制水域（弹命名/微调对话框）
+  protected slots: void OnBtn_DuplicateWaterArea(int _widx);
+  /// \brief 复制子世界（弹命名/整体偏移对话框）
+  protected slots: void OnBtn_DuplicateSubWorld(const QString &_chain);
+  /// \brief 删除子世界（整链模型+水域，弹确认框）
+  protected slots: void OnBtn_DeleteSubWorld(const QString &_chain);
+  /// \brief 子世界属性（改名 + 整体位姿偏移 + 实体清单）
+  protected slots: void OnBtn_ShowSubWorldSettings(const QString &_chain);
+  /// \brief 移动模型到目标子世界链（弹目标链选择对话框，可新建链）
+  protected slots: void OnBtn_MoveModelByIndex(int _midx);
+  /// \brief 移动水域到目标子世界链（弹目标链选择对话框）
+  protected slots: void OnBtn_MoveWaterByIndex(int _widx);
+  /// \brief 移动子世界（弹目标父链选择对话框，整链挂到目标父链下）
+  protected slots: void OnBtn_MoveSubWorld(const QString &_chain);
   /// \brief 圆柱体浮力测试
   protected slots: void OnBtn_CylinderBuoyancyTest();
   /// \brief SP-02 漂浮圆柱体初稳性
@@ -200,6 +217,45 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: mutable std::recursive_mutex waterAreaMutex_;
   private: void WriteWaterAreasJson(const std::string &_path = keship::KeshipWaterAreasFile());
   private: void RebuildWaterAreas();
+  /// \brief 按名删除单个水域（customs + 管理 + waterSource 清理；不重建视觉）
+  private: void DeleteWaterAreaByName(const std::string &_name);
+  /// \brief 收集链（含嵌套子链）下全部模型实例名
+  private: std::vector<std::string> CollectChainModels(const QString &_chain) const;
+  /// \brief 收集链（含嵌套子链）下全部水区实例名
+  private: std::vector<std::string> CollectChainWaters(const QString &_chain) const;
+  /// \brief 全部现有子世界链（去重排序；含父前缀，如 A、A/B）
+  private: QStringList AllExistingChains() const;
+  /// \brief 链是否存在（= 是否有实体位于该链或其子链）
+  private: bool ChainExists(const QString &_chain) const;
+  /// \brief 链前缀重写（改名/整体移动共用）：oldChain 下全部实体 path 前缀替换为 newChain
+  /// @return false = 新链已存在冲突或未改动
+  private: bool RewriteChain(const QString &_oldChain, const QString &_newChain);
+  /// \brief 复制模型核心：缓存全部配置到新名并 spawn，登记来源（baseName=新名防 JSON 键冲突）
+  /// @param _chain 目标链（空 = 顶层）；_pos 目标位姿（弧度）
+  private: bool DuplicateModelCore(const std::string &_name,
+                                   const std::string &_newName,
+                                   const QString &_chain,
+                                   const double _pos[6]);
+  /// \brief 复制水域核心：拷贝 WaterArea + 微调 + 来源登记
+  private: bool DuplicateWaterCore(const std::string &_name,
+                                   const std::string &_newName,
+                                   const QString &_chain,
+                                   double _dx, double _dy, double _baseHeight);
+  /// \brief 移动模型核心：更新 source.path（含同名 baseName 冲突检查）
+  private: bool MoveModelToChain(const std::string &_name, const QString &_chain);
+  /// \brief 移动水域核心：更新 waterSource.path（含同名 baseName 冲突检查）
+  private: bool MoveWaterToChain(const std::string &_name, const QString &_chain);
+  /// \brief 副本名去重（base_副本、base_副本2、…）
+  private: static QString UniqueCopyName(const QString &_base,
+                                         const std::set<QString> &_existing);
+  /// \brief 拆分链串 → 段列表
+  private: static std::vector<std::string> SplitChain(const QString &_chain);
+  /// \brief 实体所在链（模型：source.path）
+  private: static QString ModelChainOf(
+      const keship::ModelManager::WorldModelSource &_src);
+  /// \brief 实体所在链（水域：source.path）
+  private: static QString WaterChainOf(
+      const keship::ModelManager::WaterWorldSource &_src);
   /// \brief 通过 PMS 控制 topic 下发波浪参数（KSPlugin_WavesModel 应用；
   ///        _areaName 空 = 更新全部水区）
   private: void PublishWaveParams(const keship::WaveParams &_wp,

@@ -9,6 +9,7 @@
 #include "keship/utils/KeshipPaths.hh"
 #include "WaterAreaSerializer.hh"
 
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <functional>
@@ -279,6 +280,124 @@ void WriteTree(std::ostream &_os, const JsonValue &_node, int _indent)
   _os << closer << "}";
 }
 
+/// @brief 按优先级查找 model://<name> 所属的模型根目录
+/// 顺序：models_all/robot_model → GZ_SIM_RESOURCE_PATH → GAZEBO_MODEL_PATH
+std::string ResolveModelBase(const std::string &_modelName)
+{
+  if (_modelName.empty())
+    return "";
+
+  std::vector<std::string> roots;
+  roots.push_back(keship::KeshipRobotModelDir());
+
+  auto addEnv = [&](const char *_envName) {
+    const char *v = std::getenv(_envName);
+    if (!v || !*v)
+      return;
+    std::string s(v);
+    size_t start = 0;
+    while (true)
+    {
+      size_t pos = s.find(':', start);
+      std::string part = s.substr(start, pos == std::string::npos ? pos : pos - start);
+      if (!part.empty())
+        roots.push_back(part);
+      if (pos == std::string::npos)
+        break;
+      start = pos + 1;
+    }
+  };
+  addEnv("GZ_SIM_RESOURCE_PATH");
+  addEnv("GAZEBO_MODEL_PATH");
+
+  for (const auto &root : roots)
+  {
+    std::error_code ec;
+    std::filesystem::path modelPath =
+        std::filesystem::path(root) / _modelName;
+    if (std::filesystem::is_directory(modelPath, ec))
+      return root;
+  }
+  return "";
+}
+
+/// @brief 把 SDF 里的 mesh uri 解析成本地绝对路径
+/// 支持 model://、file://、相对路径（相对 SDF 目录或 keship 自定义目录）。
+/// 解析不到/不安全返回空串。
+std::string ResolveMeshUriToPath(const std::string &_uri,
+                                 const std::string &_sdfBaseDir)
+{
+  if (_uri.empty())
+    return "";
+
+  // file:///abs/path 或 file://relative
+  if (_uri.rfind("file://", 0) == 0)
+  {
+    std::string p = _uri.substr(7);
+    if (p.empty())
+      return "";
+    std::error_code ec;
+    if (std::filesystem::exists(p, ec))
+      return p;
+    // 相对 file:// 也尝试相对 SDF 目录
+    std::filesystem::path cand = std::filesystem::path(_sdfBaseDir) / p;
+    if (std::filesystem::exists(cand, ec))
+      return cand.lexically_normal().string();
+    return "";
+  }
+
+  // model://name/rel
+  if (_uri.rfind("model://", 0) == 0)
+  {
+    std::string body = _uri.substr(8);
+    auto slash = body.find('/');
+    if (slash == std::string::npos)
+      return "";
+    std::string modelName = body.substr(0, slash);
+    std::string relPath = body.substr(slash + 1);
+    if (modelName.empty() || relPath.empty())
+      return "";
+    if (relPath[0] == '/' || relPath[0] == '\\')
+      return "";                    // model://name//abs 形式拒绝
+    if (relPath.find("..") != std::string::npos)
+      return "";                    // 路径穿越拒绝
+    std::string base = ResolveModelBase(modelName);
+    if (base.empty())
+      return "";
+    std::filesystem::path cand = std::filesystem::path(base) / modelName / relPath;
+    return cand.lexically_normal().string();
+  }
+
+  // 绝对路径
+  if (_uri[0] == '/' || _uri[0] == '\\')
+    return _uri;
+
+  // 有协议（http:// 等）不支持
+  if (_uri.find("://") != std::string::npos)
+    return "";
+
+  // 相对路径
+  // 1) keship 自定义前缀：data/ 或 models_all/ → 相对 keship_ws
+  if (_uri.rfind("data/", 0) == 0 || _uri.rfind("models_all/", 0) == 0)
+  {
+    std::filesystem::path cand =
+        std::filesystem::path(keship::KeshipHomeWsDir()) / _uri;
+    return cand.lexically_normal().string();
+  }
+  // 2) robot_model/ 等直接相对 models_all
+  // 3) 其他相对路径 → 相对 SDF 所在目录（标准 SDF 行为）
+  std::string p;
+  std::error_code ec;
+  std::filesystem::path candModel = std::filesystem::path(keship::KeshipAllModelsDir()) / _uri;
+  if (std::filesystem::exists(candModel, ec))
+    return candModel.lexically_normal().string();
+  std::filesystem::path candSdf = std::filesystem::path(_sdfBaseDir) / _uri;
+  if (std::filesystem::exists(candSdf, ec))
+    return candSdf.lexically_normal().string();
+  // 都不存在则返回 models_all 形式的候选（交由上层判断/兜底）
+  return candModel.lexically_normal().string();
+}
+
 } // namespace
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -537,7 +656,13 @@ bool ModelManager::SpawnModelInGazeboFromFile(
       sdfContent = oss.str();
     }
     /// 统一坐标系：mesh uri → 规范化缓存（与 dae/obj/stl 分支一致）
-    sdfContent = this->NormalizeMeshUrisInSDF(sdfContent);
+    /// 相对路径优先相对 SDF 文件所在目录解析
+    {
+      std::filesystem::path sdfPath(_filePath);
+      std::string sdfBaseDir = sdfPath.has_parent_path()
+          ? sdfPath.parent_path().string() : "";
+      sdfContent = this->NormalizeMeshUrisInSDF(sdfContent, sdfBaseDir);
+    }
     /// SDF 内模型名统一为实例名（allow_renaming=false 依赖 name 一致；兼容双/单引号）
     {
       const char *needle = "model name=\"";
@@ -752,7 +877,8 @@ bool ModelManager::SetModelPoseByIDInGazebo(uint32_t _id, double _pose[6])
 
 /////////////////////////////////////////////////
 /// 统一加载层坐标系：SDF 中文件 mesh uri → 规范化缓存 OBJ
-std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf)
+std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf,
+                                                 const std::string &_sdfBaseDir)
 {
   static const char *kMeshExts[] = {
       ".dae", ".obj", ".stl", ".gltf", ".glb", ".fbx"};
@@ -771,7 +897,8 @@ std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf)
 
     std::string uri = out.substr(start, end - start);
     std::string repl;
-    std::string path;
+
+    // 只处理网格扩展名
     bool isMeshExt = false;
     {
       std::string low = boost::to_lower_copy(uri);
@@ -785,27 +912,41 @@ std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf)
         }
       }
     }
-    if (uri.rfind("file://", 0) == 0)
+    if (!isMeshExt)
     {
-      path = uri.substr(7);
+      pos = end;
+      continue;
     }
-    else if (uri.find("://") == std::string::npos
-             && !uri.empty() && uri[0] != '/' && uri[0] != '\\')
+
+    std::string path = ResolveMeshUriToPath(uri, _sdfBaseDir);
+    if (path.empty())
     {
-      /// 相对路径（keship 自定义格式）：data/ 或 models_all/ 前缀 → 相对 keship_ws；
-      /// 其余（如 robot_model/...）→ 相对 models_all
-      if (uri.rfind("data/", 0) == 0 || uri.rfind("models_all/", 0) == 0)
-        path = keship::KeshipHomeWsDir() + "/" + uri;
-      else
-        path = keship::KeshipAllModelsDir() + "/" + uri;
+      std::cerr << "NormalizeMeshUrisInSDF: 无法解析 mesh uri: "
+                << uri << std::endl;
+      pos = end;
+      continue;
     }
-    if (!path.empty() && isMeshExt)
+
+    std::string cachePath = NormalizeMeshToSDFCache(path);
+    if (!cachePath.empty())
     {
-      std::string cachePath = NormalizeMeshToSDFCache(path);
-      if (!cachePath.empty())
+      meshCacheToSrcUri_[cachePath] = uri;
+      repl = "file://" + cachePath;
+    }
+    else
+    {
+      // 规范化失败：若原始文件存在则直接使用原始路径兜底
+      std::error_code ec;
+      if (std::filesystem::exists(path, ec))
       {
-        meshCacheToSrcUri_[cachePath] = uri;
-        repl = "file://" + cachePath;
+        std::cerr << "NormalizeMeshUrisInSDF: 规范化失败，使用原始文件: "
+                  << path << std::endl;
+        repl = "file://" + path;
+      }
+      else
+      {
+        std::cerr << "NormalizeMeshUrisInSDF: 模型文件不存在: "
+                  << path << " (uri=" << uri << ")" << std::endl;
       }
     }
 
@@ -1379,7 +1520,7 @@ bool ModelManager::SpawnModelInGazeboFromSDFString(
 
 /////////////////////////////////////////////////
 bool ModelManager::DeleteModelInGazeboByName(
-    const std::string &_instanceName)
+    const std::string &_instanceName, bool _preserveSource)
 {
   // TODO: 实现删除模型功能
   // this->worldName = _worldName;
@@ -1403,7 +1544,9 @@ bool ModelManager::DeleteModelInGazeboByName(
   {
     this->modelList.erase(_instanceName);
     this->modelBBoxCache_.erase(_instanceName);
-    this->modelSource_.erase(_instanceName);
+    // _preserveSource=true（Rebuild 系列）：保留来源元数据，重建后树分组不丢失
+    if (!_preserveSource)
+      this->modelSource_.erase(_instanceName);
     NotifyModelDeleted(_instanceName);
     std::cout << "服务调用成功，rep.data()=" << rep.data() << std::endl;
   }
@@ -1682,7 +1825,7 @@ bool ModelManager::RebuildModelWithBuoyancy(
   }
 
   /// 2. 删除旧模型 + 等待确认删除完毕
-  if (!DeleteModelInGazeboByName(_instanceName))
+  if (!DeleteModelInGazeboByName(_instanceName, true))
   {
     std::cerr << "RebuildModelWithBuoyancy: 删除模型失败" << std::endl;
     return false;
@@ -2476,7 +2619,7 @@ bool ModelManager::RebuildModelWithThrust(
   }
 
   /// 2. 删除旧模型
-  if (!DeleteModelInGazeboByName(_instanceName))
+  if (!DeleteModelInGazeboByName(_instanceName, true))
   {
     std::cerr << "RebuildModelWithThrust: 删除模型失败" << std::endl;
     return false;
@@ -2839,7 +2982,7 @@ bool ModelManager::RebuildModelWithHydro(
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
-  if (!DeleteModelInGazeboByName(_instanceName))
+  if (!DeleteModelInGazeboByName(_instanceName, true))
     return false;
 
   { int retries = 20; uint32_t sid = 0;
@@ -2921,7 +3064,7 @@ bool ModelManager::RebuildModelWithSensors(
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
-  if (!DeleteModelInGazeboByName(_instanceName))
+  if (!DeleteModelInGazeboByName(_instanceName, true))
     return false;
 
   { int retries = 20; uint32_t sid = 0;
@@ -3154,7 +3297,7 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
-  if (!DeleteModelInGazeboByName(_instanceName)) return false;
+  if (!DeleteModelInGazeboByName(_instanceName, true)) return false;
 
   { int retries = 20; uint32_t sid = 0;
     while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -3417,6 +3560,11 @@ bool ModelManager::GetWaterSource(const std::string &_instanceName,
 void ModelManager::ClearWaterSources()
 {
   waterSource_.clear();
+}
+
+void ModelManager::RemoveWaterSource(const std::string &_instanceName)
+{
+  waterSource_.erase(_instanceName);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
