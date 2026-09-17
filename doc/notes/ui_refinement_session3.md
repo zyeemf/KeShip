@@ -1,6 +1,6 @@
 # 交互界面修改优化（第三批，2026-08-12）
 
-> 本文件为 [ui_refinement_session2.md](archive/ui_refinement_session2.md)（2026-08-01~03）的续篇。
+> 本文件为 `ui_refinement_session2.md`（已于 2026-09-17 移出仓库，见留底 doc_old）（2026-08-01~03）的续篇。
 
 ---
 

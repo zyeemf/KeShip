@@ -1,6 +1,6 @@
 # Issue 2 根治方案 — DART 隐式 M_A + 空中抵消
 
-> 更新 (2026-07-29)：重构方案见 [added_mass_cmd_plan.md](../added_mass_cmd_plan.md) — 化简为阻尼-only
+> 更新 (2026-07-29)：重构方案见 [added_mass_cmd_plan.md](added_mass_cmd_plan.md) — 化简为阻尼-only
 
 > 日期：2026-07-28（第三次修订）
 > 关键字：`<fluid_added_mass>`、Fossen、空中抵消、数值稳定性、`WorldLinearAcceleration`

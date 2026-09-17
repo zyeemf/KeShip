@@ -1,5 +1,9 @@
 # KeShip 系统架构
 - 本文档包含文件组织架构（目录树）、项目设计架构、数据流、专题文档笔记 
+
+> **唯一权威文档位置**：`keship_ws/doc/` — 导航见 [README.md](README.md)，更新规则见 [DOC_WORKFLOW.md](DOC_WORKFLOW.md)。
+> **增删源码文件后必须更新下方目录树与专题笔记表**，否则体检脚本 `tools/check_docs.py` 会报错。
+
 ## 文件组织结构
 ```
 keship/（ROS2 功能包，源码根 = src/keship/）
@@ -207,53 +211,32 @@ GUI (QML) ──gz-transport──→ Gazebo ECM ──→ Physics Systems ─�
 | 文档 | 内容 |
 |------|------|
 | [notes/keship_physics_design.md](notes/keship_physics_design.md) | 物理设计：6-DOF Fossen 水动力学模型（坐标系、运动方程、矩阵分解）+ Wavefield–Buoyancy 集成（Gerstner 波浪、浮力算法、线程安全） |
-| [notes/archive/wavefield_buoyancy_integration.md](notes/archive/wavefield_buoyancy_integration.md) | Wavefield–Buoyancy Phase 1 实现细节：代码路径、SDF 配置、时间处理、性能分析、Phase 2 展望 |
 | [notes/ui_refinement_session.md](notes/ui_refinement_session.md) | UI 交互优化记录 (2026-05-26~27)：ModelSettingsDialog 布局重构、KSM 模式置灰、信号泄漏修复、BuoyancyEditor 删除按钮修复 |
-| [notes/archive/virtual_experiment_framework.md](notes/archive/virtual_experiment_framework.md) | 虚拟仿真实验框架：船舶原理/智能控制/结构与制图三门课程 × 三个层级（观察/操作/设计），共 28 个实验及依赖链 |
-| [notes/wave_system_changes_2026-06-16_17.md](notes/wave_system_changes_2026-06-16_17.md) | 波浪系统变更记录（2026-06-16~17）：所有新建/修改文件按时间顺序整理 |
-| [notes/archive/wave_code_reading.md](notes/archive/wave_code_reading.md) | Wave 代码阅读笔记：Wavefield/WaveVisual/Buoyancy 数据流、shader uniforms、重构关键清单 |
-| [notes/archive/wave_optimization_notes.md](notes/archive/wave_optimization_notes.md) | Wave 内部逻辑优化记录（3 性能 + 3 健壮性，2026-06；部分已由后续重构解决，状态待更新） |
-| [notes/archive/water_area_implementation_plan.md](notes/archive/water_area_implementation_plan.md) | **多水区场景实施方案**：4 步实施计划（初始无水、地图驱动、局部水区） |
-| [notes/archive/water_area_step2_plan.md](notes/archive/water_area_step2_plan.md) | **Step 2 详细方案**：per-area Plane Waves 模型，替代全局 6km mesh |
-| [notes/archive/water_area_step1_plan.md](notes/archive/water_area_step1_plan.md) | **Step 1 详细方案**：浮力插件（旧 KSPlugin_Buoyancy）集成 WaterAreaManager |
-| [notes/archive/multi_water_areas_design.md](notes/archive/multi_water_areas_design.md) | **方案已修订**：场景驱动水区方案（初始无水、水域随地图加载、水区外无浮力） |
-| [notes/archive/wavevisual_sdf_warning_analysis.md](notes/archive/wavevisual_sdf_warning_analysis.md) | WaveVisual SDF 警告分析：`<include>` vs EntityFactory 加载差异、visual search BFS 路径 |
+| [notes/virtual_experiment_framework.md](notes/virtual_experiment_framework.md) | 虚拟仿真实验框架：船舶原理/智能控制/结构与制图三门课程 × 三个层级（观察/操作/设计），共 28 个实验及依赖链 |
+| [notes/wavevisual_sdf_warning_analysis.md](notes/wavevisual_sdf_warning_analysis.md) | WaveVisual SDF 警告分析：`<include>` vs EntityFactory 加载差异、visual search BFS 路径 |
 | [notes/math_hull_redesign_plan.md](notes/math_hull_redesign_plan.md) | 数学船型重构方案：Gazebo Z_UP 直接生成、OBJ 法线、DART 碰撞修复 |
 | [notes/buoyancy_mesh_theory.md](notes/buoyancy_mesh_theory.md) | 浮力网格理论：Catto 算法、三角形裁剪、浸没体积计算 |
-| [notes/archive/phase_d_student_programming.md](notes/archive/phase_d_student_programming.md) | Phase D 学生编程模块设计 |
-| [notes/archive/map_model_2d_preview_plan.md](notes/archive/map_model_2d_preview_plan.md) | 2D 地图模型预览方案：ModelFootprint + Pose_V 订阅 + MapWidget 场景模型渲染层 |
-| [notes/archive/map_model_render_schemes_plan.md](notes/archive/map_model_render_schemes_plan.md) | 多算法渲染方案：Rect/ConvexHull/AlphaShape/SubMeshHulls 四种轮廓算法 |
-| [notes/map_model_texture_preview_plan.md](notes/map_model_texture_preview_plan.md) | ProjectedImage 纹理映射方案：纹理采样（主）+ 法向着色（兜底） |
 | [notes/water_area_polygon_mesh.md](notes/water_area_polygon_mesh.md) | **水面多边形网格修复**：`MakeSurfaceSdf` 多边形分支、网格采样、OBJ 生成、OGRE 缓存突破 |
-| [notes/archive/water_area_toml_persistence.md](notes/archive/water_area_toml_persistence.md) | **水域 TOML 持久化**：随世界保存/加载、polygon vertices 序列化、追加合并策略 |
 | [notes/water_area_ipc_refactor.md](notes/water_area_ipc_refactor.md) | **水域 IPC 重构 (2026-07)**：TOML→JSON，修复轮询 bug，gz-transport 尝试记录 |
 | [notes/fossen_physics_refactor.md](notes/fossen_physics_refactor.md) | **Fossen 物理重构 (2026-07)**：惯性校验、阻尼通用化、M_A 6×6 UI、D 矩阵预览 |
 | [notes/wind_wave_current_design.md](notes/wind_wave_current_design.md) | **风浪流设计 (2026-07)**：Gerstner 波浪、PMS 频谱、GPU 渲染、风/流参数、UI 编辑器 |
-| [notes/archive/gz_transport_shutdown_fix.md](notes/archive/gz_transport_shutdown_fix.md) | **gz‑transport 安全关闭 (2026-07)**：malloc_consolidate 根因、13 个订阅点扫描、两阶段关闭方案 |
 | [notes/waves_global_refactor.md](notes/waves_global_refactor.md) | **波浪场全局化重构 (2026-08)**：gz-waves ECM 组件模式、KSPlugin_WavesModel、波浪参数 gain 时序 bug 根治、多水域 per-area |
 | [notes/cylinder_hydro_physics.md](notes/cylinder_hydro_physics.md) | **圆柱体水动力物理化 (2026-08)**：fossen/pose-based 物理评估、垂荡 ζ 修正、M_A 转动单位 bug、pose-based 补 M_A |
-| [notes/archive/ui_refinement_session2.md](notes/archive/ui_refinement_session2.md) | **UI 优化 (2026-08-01~03)**：Tab 折叠、SP 注释修正；C8 编辑器单例化、C9 水区编辑去波浪参数、D12 世界原点设置 |
-| [notes/archive/sp01_experiment_report_design.md](notes/archive/sp01_experiment_report_design.md) | SP-02 实验设计方案（教学定位、前置知识，已归档） |
 | [notes/sp02_experiment_guide.md](notes/sp02_experiment_guide.md) | SP-02 实验指导书（GM 三要素、临界条件 D/L=√(8s(1−s)) 验证） |
 | [notes/sp03_experiment_guide.md](notes/sp03_experiment_guide.md) | SP-03 实验指导书（矩形驳船、倾斜实验法测 GM） |
-| [notes/archive/sp03_experiment_guide.md](notes/archive/sp03_experiment_guide.md) | SP-04 实验指导书（船型系数对稳性影响，已归档） |
-| [notes/archive/sp03_bug_analysis.md](notes/archive/sp03_bug_analysis.md) | SP-03 三层几何体 bug 分析（视觉/碰撞/浮力，mesh 碰撞体 DART 不支持） |
-| [notes/archive/water_area_step3_plan.md](notes/archive/water_area_step3_plan.md) | Step 3 方案：GUI 水区编辑器 + 默认/自定义双模式 |
-| [notes/water_area_step4_plan.md](notes/water_area_step4_plan.md) | Step 4.1 方案：多边形绘制 UX 增强 |
+| [notes/sp03_bug_analysis.md](notes/sp03_bug_analysis.md) | SP-03 三层几何体 bug 分析（视觉/碰撞/浮力，mesh 碰撞体 DART 不支持） |
 | [notes/圆柱体稳性分析.md](notes/圆柱体稳性分析.md) | 圆柱体可倾斜稳定理论推导（竖直/倾斜/水平三态精确解） |
 | [notes/inertia_calculator_tool.md](notes/inertia_calculator_tool.md) | 惯性计算工具（mesh 四面体分解法） |
 | [notes/fluid_added_mass_migration.md](notes/fluid_added_mass_migration.md) | Plugin M_A → DART `<fluid_added_mass>` 迁移方案 |
-| [notes/archive/buoyancy_drag_fix.md](notes/archive/buoyancy_drag_fix.md) | 浮力阻尼迁移方案（**已归档**，旧双插件架构） |
 | [notes/fluid_added_mass_research.md](notes/fluid_added_mass_research.md) | `<fluid_added_mass>` 技术调研（SDF→ECM→DART 全链路） |
 | [notes/added_mass_cmd_plan.md](notes/added_mass_cmd_plan.md) | 水动力重构方案 A（M_A 常驻 DART、阻尼-only，已实施） |
-| [notes/archive/cylinder_damping_plan.md](notes/archive/cylinder_damping_plan.md) | 圆柱体 Pose-Based 阻尼重构（SP-02 振荡不收敛根因） |
+| [notes/ma_dart_removal_fix.md](notes/ma_dart_removal_fix.md) | **M_A 注入 DART 决策依据 (2026-07)**：显式 Fossen 数值发散实测证据（λ=1.975>1）、空中抵消方案迭代、Gazebo 加速度 API 用法 |
 | [notes/ksw_v4_save_load_fix.md](notes/ksw_v4_save_load_fix.md) | KSW 0.0.4 保存/载入链路修复（树结构定稿） |
 | [notes/water_area_tree_env_fixes.md](notes/water_area_tree_env_fixes.md) | 水域 UI 系列：层次树/按钮链路/环境参数入口/海况等级一致 |
-| [notes/archive/gazebo解算fossen模型隐式显式方案.md](notes/archive/gazebo解算fossen模型隐式显式方案.md) | Fossen 模型在 Gazebo 求解的隐式/显式方案讨论 |
 | [notes/water_area_edit_and_polygon_fix.md](notes/water_area_edit_and_polygon_fix.md) | 水域编辑体验（形状统一/交互简化）与多边形判定修复 |
 | [notes/ui_refinement_session3.md](notes/ui_refinement_session3.md) | **UI 第三批优化 (2026-08-12)**：推进器名称可编辑、地图提示词统一、窗口开关不影响暂停状态 |
 | [notes/data_arch_refactor_2026-08-12.md](notes/data_arch_refactor_2026-08-12.md) | **数据架构整理 (2026-08-12)**：data 纯运行时化、ksm 源路径持久化、网格缓存随源同目录、波浪场载入竞态修复、日志收敛 |
 | [notes/keBoat04_hydro_params_check_2026-08-14.md](notes/keBoat04_hydro_params_check_2026-08-14.md) | **KeBoat04 惯性/水动力参数检查 (2026-08-14)**：薄壳模型验证惯性张量、切片理论验证 M_A 符号与量级（DART 正号约定）、阻尼比/稳性/1 级海况波浪参数全项物理自洽 |
 
-
-
+| [notes/dynamics_audit_2026-08-14.md](notes/dynamics_audit_2026-08-14.md) | **动力学模型代码与理论检查报告 (2026-08-14)**：对 Fossen 六自由度链路的代码—公式一致性逐项审计 |
+| [notes/sp04_experiment_guide.md](notes/sp04_experiment_guide.md) | SP-04 数学船型稳性对比实验 — 实验指导书（水线面系数 C_wp / C_i 与 GM 验证） |

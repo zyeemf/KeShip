@@ -53,12 +53,12 @@ Gerstner vertex shader (`GerstnerWaves_vs_330.glsl`) 使用 `in vec4 vertex`（�
 ## 已知局限
 
 1. 网格边界 stair-step 误差（≤ 半个格间距），Gerstner 位移可部分平滑
-2. TOML 不持久化多边形顶点（待单独修复，见 [water_area_toml_persistence.md](archive/water_area_toml_persistence.md)）
+2. TOML 不持久化多边形顶点（待单独修复，见 water_area_toml_persistence（已于 2026-09-17 移出仓库））
 3. 临时 OBJ 留存 `/tmp/keship/waves/`，进程结束后不自动清理（非 WSL 重启则自动回收）
 4. OGRE MeshManager 以文件路径为 key 全局缓存网格，同名 OBJ 只加载一次。通过 `GetTempMeshPath` 全局递增 ID 突破
 5. OBJ 缺 `o` 对象名导致 OBJLoader 材质警告，已加 `o water_surface` 声明
 
 ## 关联文档
 
-- [水域 TOML 持久化](archive/water_area_toml_persistence.md)
-- [Step 2 方案：per-area Plane Waves](archive/water_area_step2_plan.md)
+- 水域 TOML 持久化（已于 2026-09-17 移出仓库）
+- Step 2 方案：per-area Plane Waves（已于 2026-09-17 移出仓库）
