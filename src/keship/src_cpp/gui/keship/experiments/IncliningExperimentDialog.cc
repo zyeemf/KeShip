@@ -5,6 +5,7 @@
 /// 2026.5.28
 
 #include "IncliningExperimentDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -517,11 +518,11 @@ void IncliningExperimentDialog::updateTheoryDisplay()
   gmTheoryLabel_->setText(QString::number(gm, 'f', 4) + " m");
 
   if (gm > 0.01)
-    gmTheoryLabel_->setStyleSheet("font-weight: bold; color: green;");
+    gmTheoryLabel_->setStyleSheet(QString("font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   else if (gm < -0.01)
-    gmTheoryLabel_->setStyleSheet("font-weight: bold; color: red;");
+    gmTheoryLabel_->setStyleSheet(QString("font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
   else
-    gmTheoryLabel_->setStyleSheet("font-weight: bold; color: orange;");
+    gmTheoryLabel_->setStyleSheet(QString("font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
 }
 
 void IncliningExperimentDialog::updateStatusDisplay()
@@ -530,13 +531,13 @@ void IncliningExperimentDialog::updateStatusDisplay()
 
   if (quiescent_ && std::abs(currentHeelDeg_) < 5.0)
     heelLabel_->setStyleSheet(
-        "font-size:18px; font-weight:bold; color:green;");
+        QString("font-size:18px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   else if (quiescent_)
     heelLabel_->setStyleSheet(
-        "font-size:18px; font-weight:bold; color:orange;");
+        QString("font-size:18px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
   else
     heelLabel_->setStyleSheet(
-        "font-size:18px; font-weight:bold; color:gray;");
+        QString("font-size:18px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kDisabled)));
 
   double deltaY = weightY_;
   double wDy = kWeightForce * std::abs(deltaY);

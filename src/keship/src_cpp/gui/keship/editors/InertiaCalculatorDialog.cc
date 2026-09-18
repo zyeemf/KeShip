@@ -5,6 +5,7 @@
 /// ZhangYu 创建 2026.7.18
 
 #include "InertiaCalculatorDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -330,12 +331,12 @@ void InertiaCalculatorDialog::showResult(const keship::InertiaCalcResult &_r)
       status << "计算通过，惯量张量满足三角不等式";
     else
       status << "惯量张量不满足三角不等式，请检查网格质量";
-    statusLabel_->setStyleSheet("color: #228822; font-size: 12px;");
+    statusLabel_->setStyleSheet(QString("color: %1; font-size: 12px;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   }
   else
   {
     status << _r.message;
-    statusLabel_->setStyleSheet("color: #cc2222; font-size: 12px;");
+    statusLabel_->setStyleSheet(QString("color: %1; font-size: 12px;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
   }
   statusLabel_->setText(QString::fromStdString(status.str()));
 }

@@ -5,6 +5,7 @@
 /// 2026.5.27 重构
 
 #include "StabilityExperimentDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -507,11 +508,11 @@ void StabilityExperimentDialog::updateTheoryDisplay()
 
   /// GM 正负着色
   if (gm > 0.01)
-    gmLabel_->setStyleSheet("color: green; font-weight: bold;");
+    gmLabel_->setStyleSheet(QString("color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   else if (gm < -0.01)
-    gmLabel_->setStyleSheet("color: red; font-weight: bold;");
+    gmLabel_->setStyleSheet(QString("color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
   else
-    gmLabel_->setStyleSheet("color: orange; font-weight: bold;");
+    gmLabel_->setStyleSheet(QString("color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
 }
 
 void StabilityExperimentDialog::updateStatusDisplay()
@@ -521,33 +522,33 @@ void StabilityExperimentDialog::updateStatusDisplay()
 
   /// 横倾角着色
   if (std::abs(currentHeelDeg_) < 3.0)
-    heelLabel_->setStyleSheet("font-size: 16px; font-weight: bold; color: green;");
+    heelLabel_->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   else if (std::abs(currentHeelDeg_) > 45.0)
-    heelLabel_->setStyleSheet("font-size: 16px; font-weight: bold; color: red;");
+    heelLabel_->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
   else
-    heelLabel_->setStyleSheet("font-size: 16px; font-weight: bold; color: orange;");
+    heelLabel_->setStyleSheet(QString("font-size: 16px; font-weight: bold; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
 
   /// 稳定判定
   switch (stabilityResult_)
   {
   case 1:
     statusLabel_->setText("● 竖直稳定");
-    statusLabel_->setStyleSheet("font-size: 14px; color: green; font-weight: bold;");
+    statusLabel_->setStyleSheet(QString("font-size: 14px; color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
     break;
   case 2:
     statusLabel_->setText("● 倾倒（水平稳定）");
-    statusLabel_->setStyleSheet("font-size: 14px; color: red; font-weight: bold;");
+    statusLabel_->setStyleSheet(QString("font-size: 14px; color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
     break;
   case 3:
     statusLabel_->setText("● 临界状态");
-    statusLabel_->setStyleSheet("font-size: 14px; color: orange; font-weight: bold;");
+    statusLabel_->setStyleSheet(QString("font-size: 14px; color: %1; font-weight: bold;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
     break;
   default:
     if (observing_)
     {
       statusLabel_->setText(
           QString("观测中...(%1/150)").arg(observeCounter_));
-      statusLabel_->setStyleSheet("font-size: 14px; color: gray;");
+      statusLabel_->setStyleSheet(QString("font-size: 14px; color: %1;").arg(UiTheme::statusColor(UiTheme::Status::kDisabled)));
     }
     else
     {

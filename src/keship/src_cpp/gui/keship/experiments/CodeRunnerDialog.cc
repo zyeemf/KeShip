@@ -4,6 +4,7 @@
 /* Phase D: 学生编程模块对话框实现 */
 
 #include "CodeRunnerDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -351,13 +352,13 @@ void CodeRunnerDialog::onProcessFinished(int _exitCode, QProcess::ExitStatus _st
             .arg(studentVal, 0, 'f', 4).arg(err, 0, 'f', 2));
         if (err < 5.0) {
           verdictLabel_->setText("通过");
-          verdictLabel_->setStyleSheet("font-size:14px; font-weight:bold; color:green;");
+          verdictLabel_->setStyleSheet(QString("font-size:14px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
         } else if (err < 10.0) {
           verdictLabel_->setText("接近");
-          verdictLabel_->setStyleSheet("font-size:14px; font-weight:bold; color:orange;");
+          verdictLabel_->setStyleSheet(QString("font-size:14px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
         } else {
           verdictLabel_->setText("不通过");
-          verdictLabel_->setStyleSheet("font-size:14px; font-weight:bold; color:red;");
+          verdictLabel_->setStyleSheet(QString("font-size:14px; font-weight:bold; color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kFail)));
         }
       } else {
         resultLabel_->setText("无法解析输出数值");

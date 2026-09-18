@@ -2,6 +2,7 @@
  * Copyright (C) 2024–2026 KeShip Team
  */
 #include "HydrodynamicsEditorDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include "../shared/FlowLayout.hh"
 
@@ -212,7 +213,7 @@ HydrodynamicsEditorDialog::HydrodynamicsEditorDialog(
       else
       {
         amSpins_[idx]->setEnabled(false);
-        amSpins_[idx]->setStyleSheet("color: gray; background-color: #f0f0f0;");
+        amSpins_[idx]->setStyleSheet(QString("color: %1; background-color: #f0f0f0;").arg(UiTheme::statusColor(UiTheme::Status::kDisabled)));
       }
       grid->addWidget(amSpins_[idx], i + 1, j + 1);
     }

@@ -4,6 +4,7 @@
 /* SP-04 数学船型稳性对比 — 对话框实现 */
 
 #include "HullStabilityDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -327,17 +328,20 @@ void HullStabilityDialog::updateHydroDisplay() {
   bmLabel_->setText(QString::number(hydro_.BM,'f',4)+" m");
   double GM = hydro_.GM;
   gmLabel_->setText(QString::number(GM,'f',4)+" m");
-  gmLabel_->setStyleSheet(GM>0.01?"font-weight:bold;color:green;":"font-weight:bold;color:red;");
+  gmLabel_->setStyleSheet(
+      QString("font-weight:bold;color:%1;")
+          .arg(UiTheme::statusColor(GM > 0.01 ? UiTheme::Status::kOk
+                                              : UiTheme::Status::kFail)));
 }
 
 void HullStabilityDialog::updateStatusDisplay() {
   heelLabel_->setText(QString::number(currentHeelDeg_,'f',2)+" °");
   if (quiescent_&&std::abs(currentHeelDeg_)<5.0)
-    heelLabel_->setStyleSheet("font-size:18px;font-weight:bold;color:green;");
+    heelLabel_->setStyleSheet(QString("font-size:18px;font-weight:bold;color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kOk)));
   else if (quiescent_)
-    heelLabel_->setStyleSheet("font-size:18px;font-weight:bold;color:orange;");
+    heelLabel_->setStyleSheet(QString("font-size:18px;font-weight:bold;color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kWarn)));
   else
-    heelLabel_->setStyleSheet("font-size:18px;font-weight:bold;color:gray;");
+    heelLabel_->setStyleSheet(QString("font-size:18px;font-weight:bold;color:%1;").arg(UiTheme::statusColor(UiTheme::Status::kDisabled)));
   double wDy = kWeightForce*std::abs(weightY_);
   deltaYLabel_->setText(QString::number(weightY_,'f',3)+" m");
   wDyLabel_->setText(QString::number(wDy,'f',1)+" Nm");

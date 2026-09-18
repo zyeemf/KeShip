@@ -4,6 +4,7 @@
 /* 数学船型参数输入对话框实现 */
 
 #include "ShipHullDialog.hh"
+#include "UiTheme.hh"
 #include "LinesPlanDialog.hh"
 
 #include <QVBoxLayout>
@@ -134,8 +135,10 @@ void ShipHullDialog::updateHydroDisplay() {
   kbLabel_->setText(QString::number(hp.KB, 'f', 3) + " m");
   bmLabel_->setText(QString::number(hp.BM, 'f', 4) + " m");
   gmLabel_->setText(QString::number(hp.GM, 'f', 4) + " m");
-  gmLabel_->setStyleSheet(hp.GM > 0.01 ? "font-weight:bold;color:green;"
-                                        : "font-weight:bold;color:red;");
+  gmLabel_->setStyleSheet(
+      QString("font-weight:bold;color:%1;")
+          .arg(UiTheme::statusColor(hp.GM > 0.01 ? UiTheme::Status::kOk
+                                                  : UiTheme::Status::kFail)));
 }
 
 void ShipHullDialog::onSpawn() {
