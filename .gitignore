@@ -55,3 +55,4 @@ paper/
 
 # ===== Windows 下载标记（NTFS 数据流），不入库 =====
 *:Zone.Identifier
+tools/qml_smoke/qml_smoke
