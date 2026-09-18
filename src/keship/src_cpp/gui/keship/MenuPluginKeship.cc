@@ -45,6 +45,7 @@
 #include "experiments/IncliningExperimentDialog.hh"
 #include "experiments/HullStabilityDialog.hh"
 #include "shared/ShipHullDialog.hh"
+#include "shared/UiTheme.hh"
 #include "experiments/DisplacementVerifyDialog.hh"
 #include "experiments/CodeRunnerDialog.hh"
 #include "tasks/TaskSetDialog.hh"
@@ -102,6 +103,10 @@ namespace
 MenuPluginKeship::MenuPluginKeship()
     : gz::gui::Plugin()
 {
+  /// 应用 KeShip 对话框统一主题（2026-09-18 批次 2 · 阶段①：颜色 + 字体）
+  /// 作用域限定 QDialog 及其后代，不影响 gz-gui 主界面；幂等，重复构造无副作用
+  UiTheme::applyGlobalDialogStyle();
+
   /// 设置主窗口标题
   auto topLevelWindows = QApplication::topLevelWindows();
   for (auto window : topLevelWindows)
