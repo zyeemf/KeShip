@@ -24,5 +24,5 @@ Gazebo Harmonic（gz-gui8）主菜单插件。提供"模型管理 / 虚拟实验
 插件经 Gazebo GUI 配置注入（`config/MenuPluginKeship.Config`）。
 
 ## 参考
-- 系统架构：`doc/keship_architecture.md`
-- 开发指南：`doc/keship_developer_guide.md`
+- 环境安装：`doc/BUILD.md`
+- 实验指南：`doc/experiments/`

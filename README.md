@@ -17,7 +17,7 @@ keship_ws/
 │   ├── models_normalized/   # 网格规范化缓存（自动生成，不入库）
 │   └── experiments/         # 实验临时目录（不入库）
 ├── task/                    # 实验任务（.toml，入库）
-├── doc/                     # 文档（架构 / 开发指南 / 专题笔记）
+├── doc/                     # 文档（环境安装 BUILD / 实验指南 experiments）
 └── scripts/                 # 运维脚本（含目录迁移脚本）
 ```
 
