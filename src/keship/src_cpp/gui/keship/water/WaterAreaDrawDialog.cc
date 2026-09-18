@@ -5,6 +5,7 @@
 
 #include "WaterAreaDrawDialog.hh"
 #include "../tasks/MapWidget.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -39,18 +40,28 @@ WaterAreaDrawDialog::WaterAreaDrawDialog(QWidget *parent)
   auto *btnRow = new QHBoxLayout;
   auto *closeBtn = new QPushButton("完成", this);
   connect(closeBtn, &QPushButton::clicked, this, [this]() {
-    if (map_->polygonVertices().size() >= 3)
+    if (map_->polygonVertices().size() >= 3) {
       onPolygonFinished();
+      return;
+    }
+    /// 顶点不足时**必须给出反馈**：原先此处静默返回，用户点击后毫无反应，
+    /// 会误以为程序卡住（2026-09-18 修复）
+    QMessageBox::information(this, QString::fromUtf8("无法完成"),
+        QString::fromUtf8("至少需要 3 个顶点才能构成水域，当前已放置 %1 个。\n\n"
+                          "操作：左键放置顶点 · 拖拽移动 · 右键删除 · 双击闭合")
+            .arg(map_->polygonVertices().size()));
   });
 
   auto *cancelBtn = new QPushButton("取消", this);
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 
   btnRow->addStretch();
-  btnRow->addWidget(closeBtn);
   btnRow->addWidget(cancelBtn);
+  btnRow->addWidget(closeBtn);
   btnRow->addStretch();
   for (QPushButton *b : {closeBtn, cancelBtn}) b->setMinimumHeight(30);
+  UiTheme::setButtonIcon(closeBtn, UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   layout->addLayout(btnRow);
 
   connect(map_, &MapWidget::polygonFinished,

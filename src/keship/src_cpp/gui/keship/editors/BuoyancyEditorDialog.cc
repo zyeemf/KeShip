@@ -61,7 +61,7 @@ BuoyancyEditorDialog::BuoyancyEditorDialog(
 
   auto *btnLayout = new QHBoxLayout();
   auto *addBtn = new QPushButton("+ 添加", this);
-  auto *delBtn = new QPushButton("× 删除", this);
+  auto *delBtn = new QPushButton("删除", this);
   btnLayout->addWidget(addBtn);
   btnLayout->addWidget(delBtn);
   listVLayout->addLayout(btnLayout);

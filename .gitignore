@@ -59,3 +59,4 @@ tools/qml_smoke/qml_smoke
 tools/ui_theme_probe/ui_theme_probe
 tools/map_layout_probe/map_layout_probe
 tools/map_layout_probe/moc_MapWidget.cpp
+tools/icon_probe/icon_probe

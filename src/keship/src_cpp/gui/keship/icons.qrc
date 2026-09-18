@@ -1,0 +1,10 @@
+<!DOCTYPE RCC><RCC version="1.0">
+  <qresource prefix="KeShipIcons/">
+    <file alias="add.svg">icons/add.svg</file>
+    <file alias="cancel.svg">icons/cancel.svg</file>
+    <file alias="close.svg">icons/close.svg</file>
+    <file alias="delete.svg">icons/delete.svg</file>
+    <file alias="ok.svg">icons/ok.svg</file>
+    <file alias="save.svg">icons/save.svg</file>
+  </qresource>
+</RCC>

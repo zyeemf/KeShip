@@ -40,7 +40,7 @@ SensorEditorDialog::SensorEditorDialog(
 
   auto *addDelLayout = new QHBoxLayout();
   auto *addBtn = new QPushButton("+ 添加");
-  auto *delBtn = new QPushButton("× 删除");
+  auto *delBtn = new QPushButton("删除");
   addDelLayout->addWidget(addBtn);
   addDelLayout->addWidget(delBtn);
   leftPanel->addLayout(addDelLayout);

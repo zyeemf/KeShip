@@ -5,7 +5,10 @@
 
 #include <QColor>
 #include <QDialog>
+#include <QIcon>
 #include <QPalette>
+#include <QPushButton>
+#include <QSize>
 #include <QString>
 
 namespace
@@ -80,4 +83,28 @@ void UiTheme::applyToDialog(QDialog *dialog)
   pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(kTextDim));
 
   dialog->setPalette(pal);  // 仅作用于该对话框（调色板会向子控件传播）
+}
+
+void UiTheme::setButtonIcon(QPushButton *btn, Icon which)
+{
+  if (nullptr == btn)
+    return;
+
+  /// 自绘 SVG 图标（2026-09-18，张老师定"图标来自自绘 SVG"）
+  /// 实体文件：`gui/keship/icons/*.svg`，由 `gui/keship/icons.qrc` 以
+  /// prefix `KeShipIcons/` 注册。**路径只在此处出现一次**。
+  static const char *kPath[] = {
+    ":/KeShipIcons/ok.svg",
+    ":/KeShipIcons/cancel.svg",
+    ":/KeShipIcons/close.svg",
+    ":/KeShipIcons/add.svg",
+    ":/KeShipIcons/delete.svg",
+    ":/KeShipIcons/save.svg",
+  };
+  const int idx = static_cast<int>(which);
+  if (idx < 0 || idx >= static_cast<int>(sizeof(kPath) / sizeof(kPath[0])))
+    return;
+
+  btn->setIcon(QIcon(QString::fromLatin1(kPath[idx])));
+  btn->setIconSize(QSize(16, 16));
 }

@@ -19,7 +19,8 @@
 
 #include <QString>
 
-class QDialog;  // 前置声明：仅在接口中出现指针，无需完整定义
+class QDialog;      // 前置声明：仅在接口中出现指针，无需完整定义
+class QPushButton;
 
 class UiTheme
 {
@@ -33,6 +34,17 @@ public:
     kDisabled  ///< 未启用 / 待开发
   };
 
+  /// 按钮图标语义（2026-09-18 起为**自绘 SVG**，资源 prefix `KeShipIcons/`）
+  enum class Icon
+  {
+    kOk,      ///< 确定 / 完成 / 载入（绿勾）
+    kCancel,  ///< 取消（红叉）
+    kClose,   ///< 关闭（中性叉，区别于"取消"）
+    kAdd,     ///< 添加（绿加号）
+    kDelete,  ///< 删除（红垃圾桶）
+    kSave     ///< 保存（蓝软盘）
+  };
+
   /// 返回状态语义对应的色值
   static QString statusColor(Status s);
 
@@ -42,6 +54,11 @@ public:
   /// ⚠️ 注意：调色板会覆盖原生 style 对按钮 / 边框的细节绘制，可能让控件观感变平。
   ///    仅在确有必要时使用，且必须逐个截图核对。
   static void applyToDialog(QDialog *dialog);
+
+  /// 给按钮设置 KeShip 自绘图标，并固定图标尺寸 16×16。
+  /// **图标路径集中在 UiTheme.cc** —— 日后换图标或改尺寸只改一处，
+  /// 避免 `":/KeShipIcons/xxx.svg"` 散落到几十个对话框里。
+  static void setButtonIcon(QPushButton *btn, Icon which);
 };
 
 #endif  // KESHIP_UI_THEME_HH_

@@ -89,7 +89,10 @@ ament_environment_hooks("hooks/resource_paths.dsv.in")
 ############### Gazebo GUI 插件 - 编译 ###############
 # 添加资源文件：
 # src_cpp/gui/keship/menu.qrc：Qt 资源文件，包含插件的 UI 资源
-qt_add_resources(menu_plugin_resources src_cpp/gui/keship/menu.qrc)
+# src_cpp/gui/keship/icons.qrc：自绘 SVG 图标（prefix KeShipIcons/，见 gui/keship/icons/）
+qt_add_resources(menu_plugin_resources
+  src_cpp/gui/keship/menu.qrc
+  src_cpp/gui/keship/icons.qrc)
 add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/MenuPluginKeship.cc
   src_cpp/gui/keship/editors/ModelSettingsDialog.cc

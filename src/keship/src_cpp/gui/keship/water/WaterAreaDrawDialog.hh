@@ -24,7 +24,12 @@ public:
       { nameEdit_->setText(_name); }
   /// 注入被编辑水域完整数据（几何/风浪流参数），编辑完成后 getWaterArea
   /// 保留其参数，仅几何与名称可按用户操作变化（修复编辑重置风浪参数 bug）
-  void setInitialArea(const keship::WaterArea &_area) { result_ = _area; }
+  /// 该方法**仅在编辑既有水域时调用**，故一并区分窗口标题（新建为"绘制水域"）
+  void setInitialArea(const keship::WaterArea &_area)
+  {
+    result_ = _area;
+    setWindowTitle(QString::fromUtf8("编辑水域"));
+  }
   void setPolygonVertices(
       const std::vector<std::pair<double,double>> &_verts);
   void setSceneModels(const std::vector<keship::ModelFootprint> &_models);
