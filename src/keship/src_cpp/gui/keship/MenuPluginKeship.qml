@@ -112,9 +112,66 @@ Rectangle {
         }
     }
 
-    // [2026-09-17 回退] 原 component StyledMenu 已移除此处，见 modules/gui.md 崩溃记录
+    // [2026-09-17 菜单外观统一]
+    // 红线：禁止用 Menu.delegate 定制样式 —— 与 Menu 内部 contentItem: ListView 的实例化
+    // 机制冲突，曾导致 QML 创建期 SIGSEGV（见 modules/gui.md）。
+    // 正确做法：样式走各 Control 自身属性（background / contentItem / padding / font）。
+    // 验证方式：bash tools/qml_smoke/run.sh <本文件>（创建期冒烟测试 + 弹出截图）。
+    component StyledMenu: Menu {
+        topPadding: 4
+        bottomPadding: 4
+        // 隐式尺寸必须写在 background 上：Menu 的宽度由背景 implicitWidth 推导
+        // （原生背景自带 200；不写则弹窗宽度退化为 0，条目宽度也随之为 0）
+        background: Rectangle {
+            implicitWidth: 200
+            implicitHeight: 32
+            color: "#ffffff"
+            border.color: "#9aa0b4"
+            border.width: 1
+            radius: 4
+        }
+    }
 
-    // [2026-09-17 回退] 原 component StyledMenuItem 已移除此处，见 modules/gui.md 崩溃记录
+    component StyledMenuItem: MenuItem {
+        id: mi
+        leftPadding: 12
+        rightPadding: 12
+        topPadding: 6
+        bottomPadding: 6
+        font.pixelSize: 12
+        // 最小尺寸写在 background 上（经 background 与 contentItem 取大者推导）；
+        // 直接写 implicitWidth 会覆盖 Qt 的隐式尺寸推导，使 Menu 弹窗宽度退化为 0
+        background: Rectangle {
+            implicitWidth: 150
+            implicitHeight: 30
+            radius: 3
+            color: !mi.enabled   ? "#f4f4f7" :
+                   mi.highlighted ? "#7384e4" :
+                   mi.hovered     ? "#dde4f7" : "#ffffff"
+        }
+        contentItem: Text {
+            text: mi.text
+            font: mi.font
+            color: !mi.enabled     ? "#a8a8b0" :
+                   mi.highlighted   ? "#ffffff" : "#20202a"
+            horizontalAlignment: Text.AlignLeft
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+    }
+
+    component StyledSeparator: MenuSeparator {
+        leftPadding: 8
+        rightPadding: 8
+        topPadding: 4
+        bottomPadding: 4
+        background: Rectangle { color: "#ffffff" }
+        contentItem: Rectangle {
+            implicitWidth: 150
+            implicitHeight: 1
+            color: "#c8c8d8"
+        }
+    }
 
     /// 实验列表数据模型
     ListModel {
@@ -166,7 +223,8 @@ Rectangle {
                 title: qsTr("自由任务")
                 active: root.tabBarCurrent == 0
                 onClicked: {
-                    if (root.collapsed) root.toggleCollapsed();
+                    // 单击只切 Tab；折叠/展开交给双击
+                    // 若单击也展开，双击会先展开再折叠、互相抵消，表现为双击折叠失效
                     root.tabBarCurrent = 0;
                 }
                 onDoubleClicked: root.toggleCollapsed()
@@ -175,7 +233,8 @@ Rectangle {
                 title: qsTr("教学实验")
                 active: root.tabBarCurrent == 1
                 onClicked: {
-                    if (root.collapsed) root.toggleCollapsed();
+                    // 单击只切 Tab；折叠/展开交给双击
+                    // 若单击也展开，双击会先展开再折叠、互相抵消，表现为双击折叠失效
                     root.tabBarCurrent = 1;
                 }
                 onDoubleClicked: root.toggleCollapsed()
@@ -240,22 +299,22 @@ Rectangle {
                     }
 
                     /// "加载"下拉：六种载入/添加入口（保留"添加默认水域"仅无水域时可用的约束）
-                    Menu {
+                    StyledMenu {
                         id: loadMenu
-                        MenuItem { text: "载入世界…"
-                            onTriggered: MenuPluginKeship.OnBtn_LoadWorld() }
-                        MenuItem { text: "载入模型（文件）…"
-                            onTriggered: MenuPluginKeship.OnBtn_LoadModel() }
-                        MenuItem { text: "数学船型…"
-                            onTriggered: MenuPluginKeship.OnBtn_NewMathHull() }
-                        MenuItem { text: "圆柱体（含浮力/水动力）…"
-                            onTriggered: MenuPluginKeship.OnBtn_CylinderBuoyancyTest() }
-                        MenuSeparator {}
-                        MenuItem { text: "添加默认水域"
+                        StyledMenuItem { text: "载入世界…"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadWorld(); } }
+                        StyledMenuItem { text: "载入模型（文件）…"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadModel(); } }
+                        StyledMenuItem { text: "数学船型…"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_NewMathHull(); } }
+                        StyledMenuItem { text: "圆柱体（含浮力/水动力）…"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_CylinderBuoyancyTest(); } }
+                        StyledSeparator {}
+                        StyledMenuItem { text: "添加默认水域"
                             enabled: MenuPluginKeship.customWaterAreaCount === 0
-                            onTriggered: MenuPluginKeship.OnBtn_AddDefaultWaterArea() }
-                        MenuItem { text: "添加自定义水域…"
-                            onTriggered: MenuPluginKeship.OnBtn_AddWaterArea() }
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddDefaultWaterArea(); } }
+                        StyledMenuItem { text: "添加自定义水域…"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddWaterArea(); } }
                     }
 
                     /// 行2：惯性计算（模型辅助工具）+ 任务（实验/考核基础设施）
@@ -596,61 +655,61 @@ Rectangle {
                                 }
 
                                 /// 模型操作菜单（仅模型行弹出）
-                                Menu {
+                                StyledMenu {
                                     id: modelRowMenu
-                                    MenuItem { text: "属性"
-                                        onTriggered: MenuPluginKeship.OnBtn_ShowModelSettingsDialogByIndex(modelData.midx) }
-                                    MenuItem { text: "复制"
-                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateModelByIndex(modelData.midx) }
-                                    MenuItem { text: "移动到子世界"
-                                        onTriggered: MenuPluginKeship.OnBtn_MoveModelByIndex(modelData.midx) }
-                                    MenuSeparator {}
-                                    MenuItem { text: "浮力体"
+                                    StyledMenuItem { text: "属性"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_ShowModelSettingsDialogByIndex(modelData.midx); } }
+                                    StyledMenuItem { text: "复制"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_DuplicateModelByIndex(modelData.midx); } }
+                                    StyledMenuItem { text: "移动到子世界"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_MoveModelByIndex(modelData.midx); } }
+                                    StyledSeparator {}
+                                    StyledMenuItem { text: "浮力体"
                                         visible: !modelData.isStatic && !modelData.mathHull
-                                        onTriggered: MenuPluginKeship.OnBtn_EditBuoyancy(modelData.midx) }
-                                    MenuItem { text: "推进器"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditBuoyancy(modelData.midx); } }
+                                    StyledMenuItem { text: "推进器"
                                         visible: !modelData.isStatic
-                                        onTriggered: MenuPluginKeship.OnBtn_EditThrust(modelData.midx) }
-                                    MenuItem { text: "流体动力"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditThrust(modelData.midx); } }
+                                    StyledMenuItem { text: "流体动力"
                                         visible: !modelData.isStatic
-                                        onTriggered: MenuPluginKeship.OnBtn_EditHydro(modelData.midx) }
-                                    MenuItem { text: "传感器"
-                                        onTriggered: MenuPluginKeship.OnBtn_EditSensor(modelData.midx) }
-                                    MenuSeparator {}
-                                    MenuItem { text: "保存"
-                                        onTriggered: MenuPluginKeship.OnBtn_SaveModel(modelData.midx) }
-                                    MenuItem { text: "删除"
-                                        onTriggered: MenuPluginKeship.OnBtn_DeleteModelByIndex(modelData.midx) }
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditHydro(modelData.midx); } }
+                                    StyledMenuItem { text: "传感器"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditSensor(modelData.midx); } }
+                                    StyledSeparator {}
+                                    StyledMenuItem { text: "保存"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_SaveModel(modelData.midx); } }
+                                    StyledMenuItem { text: "删除"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_DeleteModelByIndex(modelData.midx); } }
                                 }
 
                                 /// 水域操作菜单（仅水域行弹出）
-                                Menu {
+                                StyledMenu {
                                     id: waterRowMenu
-                                    MenuItem { text: "环境"
-                                        onTriggered: MenuPluginKeship.OnBtn_ShowWaterEnv(modelData.widx) }
-                                    MenuItem { text: "编辑"
-                                        onTriggered: MenuPluginKeship.OnBtn_EditWaterArea(modelData.widx) }
-                                    MenuItem { text: "复制"
-                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateWaterArea(modelData.widx) }
-                                    MenuItem { text: "移动到子世界"
-                                        onTriggered: MenuPluginKeship.OnBtn_MoveWaterByIndex(modelData.widx) }
-                                    MenuSeparator {}
-                                    MenuItem { text: "删除"
-                                        onTriggered: MenuPluginKeship.OnBtn_DeleteWaterArea(modelData.widx) }
+                                    StyledMenuItem { text: "环境"
+                                        onTriggered: { waterRowMenu.close(); MenuPluginKeship.OnBtn_ShowWaterEnv(modelData.widx); } }
+                                    StyledMenuItem { text: "编辑"
+                                        onTriggered: { waterRowMenu.close(); MenuPluginKeship.OnBtn_EditWaterArea(modelData.widx); } }
+                                    StyledMenuItem { text: "复制"
+                                        onTriggered: { waterRowMenu.close(); MenuPluginKeship.OnBtn_DuplicateWaterArea(modelData.widx); } }
+                                    StyledMenuItem { text: "移动到子世界"
+                                        onTriggered: { waterRowMenu.close(); MenuPluginKeship.OnBtn_MoveWaterByIndex(modelData.widx); } }
+                                    StyledSeparator {}
+                                    StyledMenuItem { text: "删除"
+                                        onTriggered: { waterRowMenu.close(); MenuPluginKeship.OnBtn_DeleteWaterArea(modelData.widx); } }
                                 }
 
                                 /// 子世界操作菜单（仅子世界链组行弹出）
-                                Menu {
+                                StyledMenu {
                                     id: subRowMenu
-                                    MenuItem { text: "属性"
-                                        onTriggered: MenuPluginKeship.OnBtn_ShowSubWorldSettings(modelData.chain) }
-                                    MenuItem { text: "保存子世界"
-                                        onTriggered: MenuPluginKeship.OnBtn_SaveSubWorld(modelData.chain) }
-                                    MenuItem { text: "复制"
-                                        onTriggered: MenuPluginKeship.OnBtn_DuplicateSubWorld(modelData.chain) }
-                                    MenuSeparator {}
-                                    MenuItem { text: "删除"
-                                        onTriggered: MenuPluginKeship.OnBtn_DeleteSubWorld(modelData.chain) }
+                                    StyledMenuItem { text: "属性"
+                                        onTriggered: { subRowMenu.close(); MenuPluginKeship.OnBtn_ShowSubWorldSettings(modelData.chain); } }
+                                    StyledMenuItem { text: "保存子世界"
+                                        onTriggered: { subRowMenu.close(); MenuPluginKeship.OnBtn_SaveSubWorld(modelData.chain); } }
+                                    StyledMenuItem { text: "复制"
+                                        onTriggered: { subRowMenu.close(); MenuPluginKeship.OnBtn_DuplicateSubWorld(modelData.chain); } }
+                                    StyledSeparator {}
+                                    StyledMenuItem { text: "删除"
+                                        onTriggered: { subRowMenu.close(); MenuPluginKeship.OnBtn_DeleteSubWorld(modelData.chain); } }
                                 }
                             }
                         }
