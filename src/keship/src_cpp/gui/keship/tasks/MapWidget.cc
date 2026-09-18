@@ -708,16 +708,18 @@ void MapWidget::paintEvent(QPaintEvent *) {
   p.restore();
 
   // ---- 动作提示（地图下方，不遮挡地图内容；操作说明不随模式误显示"双击设航向"）----
+  // 注意：X 轴刻度数字画在 ph+4~ph+16，故提示必须从 ph+18 起，否则两者重叠
   if (!hintText_.isEmpty()) {
     p.setPen(Qt::darkGray);
     QFont hf; hf.setPointSize(8); p.setFont(hf);
-    p.drawText(QRect(ml(), mt() + ph + 2, pw, 14), Qt::AlignCenter, hintText_);
+    p.drawText(QRect(ml(), mt() + ph + 18, pw, 14), Qt::AlignCenter, hintText_);
   }
 
-  // ---- 底部信息 ----
+  // ---- 底部信息（紧跟提示行之后；无提示时上移一行）----
   {
+    const int infoTop = mt() + ph + (hintText_.isEmpty() ? 18 : 34);
     QFont rf; rf.setPointSize(7); p.setFont(rf); p.setPen(Qt::darkGray);
-    p.drawText(QRect(ml(), mt() + ph + 18, pw, 14), Qt::AlignCenter,
+    p.drawText(QRect(ml(), infoTop, pw, 14), Qt::AlignCenter,
                QString("范围 X:%1~%2 Y:%3~%4 | 滚轮缩放 中键平移")
                .arg(viewXMin_,0,'f',0).arg(viewXMax_,0,'f',0)
                .arg(viewYMin_,0,'f',0).arg(viewYMax_,0,'f',0));

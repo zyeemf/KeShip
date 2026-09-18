@@ -98,7 +98,10 @@ class MapWidget : public QWidget {
   int ml() const { return 40; }
   int mr() const { return 20; }
   int mt() const { return 15; }
-  int mb() const { return 35; }
+  /// 底部留白：绘图区下方要依次容纳「X 轴刻度 → 操作提示 → 范围信息」
+  /// 三行文字。提示为空时只需两行（刻度 + 范围信息），故动态取值，
+  /// 避免无谓压缩绘图区高度（2026-09-18 修复刻度与提示重叠）。
+  int mb() const { return hintText_.isEmpty() ? 35 : 50; }
   int plotW() const { return width() - ml() - mr(); }
   int plotH() const { return height() - mt() - mb(); }
 
