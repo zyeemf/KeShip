@@ -547,13 +547,29 @@ Rectangle {
                         anchors.leftMargin: 8
                         anchors.right: parent.right
                         anchors.rightMargin: 8
-                        height: 30
+                        // 2026-09-18 修复"输入文本显示不全"：原写死 height: 30 与 TextField
+                        // 内建上下 padding 叠加，文字被顶到上沿、下半截发虚。
+                        // 改用 implicitHeight 由内容推导，并显式声明垂直居中。
+                        implicitHeight: theme.hStandard
+                        verticalAlignment: TextInput.AlignVCenter
                         placeholderText: qsTr("搜索模型 / 水域 / 子世界")
-                        font.pixelSize: 11
-                        onTextEdited: {
-                            MenuPluginKeship.OnSearchModel(searchField.text)
-                            treeFilter = searchField.text
-                        }
+                        font.pixelSize: theme.fontSmall
+                        // 搜索实际由 QML 侧完成（treeFilter → buildRows() 过滤），
+                        // 原调用的 OnSearchModel 只是 C++ 侧一个打印空壳，误导性，已移除。
+                        rightPadding: 58   // 给右侧"命中数"留位，避免文字压在一处
+                        onTextEdited: treeFilter = searchField.text
+                    }
+
+                    // 搜索命中数：原先过滤其实在跑，但界面上没有任何反馈，
+                    // 加上输入文字显示不全，让人以为"没有搜索功能"。此处补上计数。
+                    Label {
+                        anchors.right: searchField.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: searchField.verticalCenter
+                        text: searchField.text.length > 0
+                              ? qsTr("%1 项").arg(modelListView.count) : ""
+                        font.pixelSize: theme.fontTiny
+                        color: theme.textDim
                     }
 
                     ListView {
@@ -578,7 +594,10 @@ Rectangle {
                         }
 
                         Label {
-                            text: qsTr("暂无模型 / 水域 / 子世界")
+                            // 有搜索词时给"无匹配"提示，与空场景区分开
+                            text: searchField.text.length > 0
+                                  ? qsTr("没有匹配「%1」的项").arg(searchField.text)
+                                  : qsTr("暂无模型 / 水域 / 子世界")
                             anchors.centerIn: parent
                             font.pixelSize: theme.fontBody
                             color: theme.textDim
@@ -849,9 +868,31 @@ Rectangle {
 
             /// Tab 2：虚拟实验
             Item {
+                id: tab2Root
                 visible: root.tabBarCurrent == 1
                 anchors.fill: parent
 
+                /// 课程折叠状态：course 名 → true 表示该课程已折叠
+                /// （做法与 tab1 层次树的 treeExpanded 一致）
+                property var collapsedCourses: ({})
+
+                function isCourseCollapsed(c) {
+                    return collapsedCourses[c] === true;
+                }
+
+                function toggleCourse(c) {
+                    // JS 对象成员直接改不会触发绑定重估 → 整体替换
+                    var e = {};
+                    var ks = Object.keys(collapsedCourses);
+                    for (var i = 0; i < ks.length; ++i)
+                        e[ks[i]] = collapsedCourses[ks[i]];
+                    e[c] = !(collapsedCourses[c] === true);
+                    collapsedCourses = e;
+                }
+
+                // 实现说明：折叠**不**过滤 model —— 若把该课程的行从 model 里剔掉，
+                // 分组头会随之消失，折叠后就再也点不开它了。改为 delegate 高度归零：
+                // 行不可见、但 section 头仍在，随时可点击展开。
                 ListView {
                     id: expListView
                     anchors.fill: parent
@@ -867,15 +908,26 @@ Rectangle {
                         policy: ScrollBar.AsNeeded
                     }
 
-                    /// 课程分组头部
+                    /// 课程分组头部（2026-09-18 新增：单击折叠/展开该课程的全部实验）
                     section.property: "course"
                     section.criteria: ViewSection.FullString
                     section.delegate: Rectangle {
                         width: expListView.width
                         height: 28
-                        color: theme.headerBg
+                        // 悬停高亮，提示"此处可点击"
+                        color: sectionMouse.containsMouse ? theme.surfaceIdle : theme.headerBg
+
+                        MouseArea {
+                            id: sectionMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: tab2Root.toggleCourse(section)
+                        }
+
                         Text {
-                            text: "▎" + section
+                            // ▾ 展开 / ▸ 折叠
+                            text: (tab2Root.isCourseCollapsed(section) ? "▸ " : "▾ ")
+                                  + "▎" + section
                             color: theme.textLabel
                             font.pixelSize: 13
                             font.bold: true
@@ -887,7 +939,9 @@ Rectangle {
 
                     delegate: Rectangle {
                         width: expListView.width
-                        height: theme.hStandard
+                        // 该课程折叠时高度归零（行隐藏，分组头仍在、可再次点击展开）
+                        height: tab2Root.isCourseCollapsed(course) ? 0 : theme.hStandard
+                        visible: height > 0
                         color: bgColor
                         border.color: theme.borderStrong
                         border.width: 1

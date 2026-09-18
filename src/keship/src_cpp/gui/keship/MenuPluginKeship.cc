@@ -1246,9 +1246,15 @@ void MenuPluginKeship::OnBtn_LoadShape(const QString &_shapeType)
 
 
 /////////////////////////////////////////////////
+/// 说明（2026-09-18）：搜索实际由 QML 侧完成（treeFilter → buildRows() 过滤），
+/// 本槽**当前未被 QML 调用** —— 原先 QML 调用它却毫无作用，反而让人误以为
+/// "搜索已实现"，故已移除该调用。此处保留本槽，作为将来需要跨层检索
+/// （如按 KSM 属性搜索、命中结果跳转）时的接入点；若无此需求，
+/// 可连同 .hh 中的声明一并删除。
 void MenuPluginKeship::OnSearchModel(const QString &_searchText)
 {
-  std::cout << "keship搜索模型：" << _searchText.toStdString() << std::endl;
+  std::cout << "keship搜索模型（预留，当前 QML 未调用）："
+            << _searchText.toStdString() << std::endl;
 }
 
 /////////////////////////////////////////////////
