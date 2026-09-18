@@ -3,16 +3,13 @@
  */
 #include "UiTheme.hh"
 
-#include <QApplication>
 #include <QColor>
+#include <QDialog>
 #include <QPalette>
 #include <QString>
 
 namespace
 {
-/// 阶段① 是否已应用（QPalette 无"标记"可查，用静态标志保证幂等）
-bool gStage1Applied = false;
-
 /// 设计令牌（与 QML 侧 MenuPluginKeship.qml 的 QtObject{ id: theme } 保持一致）
 const char *kSurface      = "#ffffff";
 const char *kSurfaceAlt   = "#f4f6fa";
@@ -35,29 +32,25 @@ QString UiTheme::statusColor(Status s)
   return QStringLiteral("#20202a");
 }
 
-/// 阶段①：对话框统一配色
+/// 把设计令牌应用到**单个**对话框。
 ///
-/// ⚠️ 为何用 QPalette 而不是 QSS（2026-09-18 探针实测结论）：
-///   QSS **无法做到"只改颜色、不改尺寸"** —— 一旦某类控件被 QSS 规则匹配，
-///   Qt 便改用 QStyleSheetStyle 接管它，其默认 padding / border 推导与原生
-///   style 不同，控件尺寸必然变化。实测（仅写颜色属性、不含任何尺寸/字体）：
-///   QLineEdit 高 27→23、QDoubleSpinBox 30→29、QGroupBox 256→252 …… 10 个类出现差异。
-///   QPalette 只参与**绘制取色**、不参与布局盒模型，因此可稳定做到零尺寸变化。
+/// 背景（2026-09-18 实测）：曾用 QApplication::setPalette(pal, "QDialog") 做**全局**统一，
+/// 但那会把原生按钮 / 边框的细节绘制拉平 —— 一套配色套到全部对话框上观感并不合适，
+/// 已经撤销（张老师拍板："不适合统一风格，逐个修改"）。本函数保留为**逐个修改**时
+/// 可选的手段，仅作用于传入的那一个对话框。
 ///
-/// 作用域：Qt 支持按类名设置调色板，故只作用于 `QDialog` 及其后代，
-///         不影响 gz-gui 主界面与面板。
-///
-/// 精细样式（如单个控件类型的外观差异）以及**字体与尺寸统一**留待阶段②，
-/// 届时改用 QSS 并逐个对话框截图核对（阶段② 必然带来尺寸变化，属预期）。
-void UiTheme::applyGlobalDialogStyle()
+/// 两条实测结论值得留存：
+///   1. **QSS 无法"只改颜色、不改尺寸"** —— 某类控件一旦被 QSS 规则匹配，Qt 即改用
+///      QStyleSheetStyle 接管，其默认 padding / border 推导与原生 style 不同，尺寸必然变化
+///      （样板实测 10 个类变化，如 QLineEdit 高 27→23，即便只写颜色属性、不含尺寸与字体）。
+///   2. **QPalette 不参与布局盒模型** —— 尺寸零变化（探针实测指纹逐项一致），
+///      但代价是覆盖 style 的细节绘制、观感偏平。是否采用取决于具体对话框。
+void UiTheme::applyToDialog(QDialog *dialog)
 {
-  QApplication *app = qApp;
-  if (nullptr == app)
+  if (nullptr == dialog)
     return;
-  if (gStage1Applied)
-    return;  // 幂等
 
-  QPalette pal = app->palette();
+  QPalette pal = dialog->palette();
 
   // 容器 / 背景
   pal.setColor(QPalette::Window,          QColor(kSurfaceAlt));   // 对话框底
@@ -86,6 +79,5 @@ void UiTheme::applyGlobalDialogStyle()
   pal.setColor(QPalette::Disabled, QPalette::Text,       QColor(kTextDim));
   pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(kTextDim));
 
-  QApplication::setPalette(pal, "QDialog");  // 仅作用于 QDialog 及其后代
-  gStage1Applied = true;
+  dialog->setPalette(pal);  // 仅作用于该对话框（调色板会向子控件传播）
 }

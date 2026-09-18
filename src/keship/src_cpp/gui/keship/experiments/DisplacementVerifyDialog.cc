@@ -5,6 +5,8 @@
 
 #include "DisplacementVerifyDialog.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGroupBox>
@@ -344,7 +346,12 @@ void DisplacementVerifyDialog::updateStatusDisplay() {
     thVolLabel_->setText(QString::number(vTh, 'f', 3) + " m³");
     double err = vTh > 1e-6 ? std::abs(vMeas - vTh) / vTh * 100 : 0;
     errLabel_->setText(QString::number(err, 'f', 2) + "%");
-    errLabel_->setStyleSheet(err < 5 ? "color:green;font-weight:bold;" : "color:red;font-weight:bold;");
+    // 2026-09-18（逐个修改 · 试点）：原直接写 green / red 英文色名，与项目其他位置的
+    // #448844 / #d9534f 不一致；改用 UiTheme 统一状态语义色（判定阈值 5% 不变）
+    errLabel_->setStyleSheet(
+        QString("color:%1;font-weight:bold;")
+            .arg(err < 5.0 ? UiTheme::statusColor(UiTheme::Status::kOk)
+                           : UiTheme::statusColor(UiTheme::Status::kFail)));
   }
 }
 

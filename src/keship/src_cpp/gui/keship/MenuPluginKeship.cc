@@ -103,9 +103,10 @@ namespace
 MenuPluginKeship::MenuPluginKeship()
     : gz::gui::Plugin()
 {
-  /// 应用 KeShip 对话框统一主题（2026-09-18 批次 2 · 阶段①：颜色 + 字体）
-  /// 作用域限定 QDialog 及其后代，不影响 gz-gui 主界面；幂等，重复构造无副作用
-  UiTheme::applyGlobalDialogStyle();
+  /// 说明（2026-09-18）：此处曾全局应用"对话框统一主题"，实测该做法会把原生
+  /// 按钮 / 边框的细节绘制拉平（调色板覆盖 style 的细节绘制），观感并不合适，
+  /// 已撤销 —— 改为**逐个对话框**按需调整（见 doc/plans/ui_improvement_plan.md）。
+  /// UiTheme::statusColor() 供逐个修改时统一状态语义色；applyToDialog() 备用。
 
   /// 设置主窗口标题
   auto topLevelWindows = QApplication::topLevelWindows();

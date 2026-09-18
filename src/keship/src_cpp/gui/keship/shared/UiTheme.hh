@@ -7,13 +7,19 @@
  * 两者共同构成"界面颜色的唯一来源"。改色时**两处都要改**——
  * 完整令牌表见 doc/plans/ui_improvement_plan.md §3。
  *
- * 2026-09-18 批次 2 · 阶段①：对话框统一风格，**仅颜色 + 字体，不含任何尺寸属性**。
+ * 策略（2026-09-18 张老师拍板）：
+ *   **不采用"一套样式套用全部对话框"的全局统一方案** —— 实测会把原生按钮 / 边框的
+ *   细节绘制拉平，观感不合适。改为**逐个对话框**按需调整：
+ *     · statusColor()   —— 统一状态语义色（原先混用 green/orange/red/gray）
+ *     · applyToDialog() —— 可选的「单对话框」调色板应用，仅在确有必要时使用
  */
 
 #ifndef KESHIP_UI_THEME_HH_
 #define KESHIP_UI_THEME_HH_
 
 #include <QString>
+
+class QDialog;  // 前置声明：仅在接口中出现指针，无需完整定义
 
 class UiTheme
 {
@@ -30,11 +36,12 @@ public:
   /// 返回状态语义对应的色值
   static QString statusColor(Status s);
 
-  /// 把 KeShip 对话框统一样式应用到整个 Qt 应用。
-  /// - **幂等**：重复调用只生效一次（按样式表标记判断）
-  /// - **追加式**：不覆盖应用既有样式表
-  /// - **作用域**：限定 `QDialog` 及其后代，不影响 gz-gui 主界面
-  static void applyGlobalDialogStyle();
+  /// 把设计令牌作为调色板应用到**单个**对话框（调色板会向子控件传播），
+  /// 不影响其他窗口 —— 「逐个修改」策略可选的基础设施。
+  ///
+  /// ⚠️ 注意：调色板会覆盖原生 style 对按钮 / 边框的细节绘制，可能让控件观感变平。
+  ///    仅在确有必要时使用，且必须逐个截图核对。
+  static void applyToDialog(QDialog *dialog);
 };
 
 #endif  // KESHIP_UI_THEME_HH_

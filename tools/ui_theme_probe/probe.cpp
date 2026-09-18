@@ -1,9 +1,13 @@
 /*
- * ui_theme_probe.cpp — QSS 阶段① 验证探针
+ * ui_theme_probe.cpp — 对话框主题工具验证探针
  *
- * 验证两件事：
- *   1. QSS 确实生效（样式表已含标记）
- *   2. **尺寸零变化** —— 阶段① 的硬约束：仅颜色，不得触及布局盒模型
+ * 用途：验证 UiTheme::applyToDialog() 是否**只改颜色、不动布局**。
+ * 做法：构造含各类控件的样板对话框，在应用前后记录全部控件尺寸指纹并截图；
+ *       尺寸指纹必须逐项一致，截图应大面积变化（说明颜色确已改变）。
+ *
+ * 来历：本探针为"全局统一配色"方案（已废弃，见 doc/plans/ui_improvement_plan.md）而写，
+ *       但结论仍必要且有效 —— 调色板**不参与**布局盒模型，而 QSS **会**
+ *       （控件一旦被 QSS 规则匹配即切换 QStyleSheetStyle，尺寸必然变化）。
  *
  * 口径说明：QSS 一旦作用于某类控件，Qt 会为其启用 QSS 代理并**懒创建内部私有控件**
  * （如 QComboBoxListView / QComboBoxPrivateContainer），控件总数会变。
@@ -156,8 +160,7 @@ int main(int argc, char **argv)
   qInfo().noquote() << QString("[1] 应用前：%1 个控件 / %2 个类")
                            .arg(totalWidgets(before)).arg(before.size());
 
-  UiTheme::applyGlobalDialogStyle();
-  UiTheme::applyGlobalDialogStyle();  // 幂等检查：第二次应被跳过
+  UiTheme::applyToDialog(&dlg);  // 单个对话框（逐个修改策略）
   app.processEvents();
   app.processEvents();
 
@@ -221,7 +224,7 @@ int main(int argc, char **argv)
                            .arg(checkedClasses).arg(checkedWidgets);
   if (0 == diffClasses)
     qInfo().noquote() << QString::fromUtf8(
-        "[6] 结论：共有类尺寸**逐项一致** —— 阶段①（QPalette 配色）未触及布局盒模型 ✓");
+        "[6] 结论：共有类尺寸**逐项一致** —— applyToDialog() 未触及布局盒模型 ✓");
   else
     qInfo().noquote() << QString("[6] 结论：%1 个类存在尺寸差异 ✗").arg(diffClasses);
 
