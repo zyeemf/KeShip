@@ -45,6 +45,9 @@ sudo apt install -y \
 - `ros-jazzy-ros-gz-bridge`：运行必需（launch 中 `parameter_bridge` 动态桥接）。
 - `libassimp-dev` / `libeigen3-dev` / Qt5 相关：通常随 `ros-jazzy-desktop` 与 `gz-harmonic` 自动安装，此处显式列出以确保完整。
 - `fonts-noto-cjk`：中文字体。WSL 默认无中文字体，缺失会导致 GUI 标题/界面中文显示为方框或空白。
+- `rclcpp` / `geometry_msgs` / `sensor_msgs` / `ament_*` 随 `ros-jazzy-desktop` 与 colcon 提供；
+  `gz-gui8` / `gz-rendering8` / `gz-common5` 随 `gz-harmonic` 提供——2026-09-18 已与
+  `CMakeLists.txt` 的 `find_package` 清单逐项核对，无遗漏。
 
 ## 5. 编译
 ```bash
@@ -67,3 +70,4 @@ ros2 launch keship keship.launch.py
 - 修正：`README.md` 原 `source /usr/share/gz/setup.sh` 为过时命令，已移除。
 - 编译验证：`colcon build --packages-select keship --merge-install` 通过，生成 6 个插件库（libKSPlugin_HydroBuoyancy / Thrust / VariableMass / WavesModel / WaveVisual / MenuPluginKeship）+ 脚本 + 资源。
 - 代码修复：`CMakeLists.txt` 测试 target 以 `if(EXISTS src_cpp/test)` 保护（测试源码不入库）；移除指向不存在 `urdf/` 的 install 段。
+- 2026-09-18 复核：依赖清单与 `CMakeLists.txt` `find_package` 逐项对照一致；本文件**随仓库分发并随 git 提交**，用户 clone 后即可按此配置环境。
