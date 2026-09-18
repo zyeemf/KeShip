@@ -120,6 +120,7 @@ InertiaCalculatorDialog::InertiaCalculatorDialog(QWidget *_parent)
   btnLayout->addWidget(calcBtn_);
   btnLayout->addWidget(copyBtn_);
   btnLayout->addStretch();
+  for (QPushButton *b : {calcBtn_, copyBtn_}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnLayout);
 
   // ===== 计算结果 =====

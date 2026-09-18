@@ -405,6 +405,7 @@ void IncliningExperimentDialog::setupUI()
   btnRow->addWidget(resetBtn_);
   btnRow->addWidget(deleteBtn);
   btnRow->addWidget(clearBtn_);
+  for (QPushButton *b : {recordBtn_, resetBtn_, deleteBtn, clearBtn_}) b->setMinimumHeight(30);
   btnRow->addStretch();
   mainLayout->addLayout(btnRow);
 

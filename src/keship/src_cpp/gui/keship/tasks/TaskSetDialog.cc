@@ -157,9 +157,10 @@ void TaskSetDialog::setupUI() {
   // ---- 按钮 ----
   auto *btnRow = new QHBoxLayout();
   btnRow->setContentsMargins(2, 0, 2, 0);
-  auto *saveBtn = new QPushButton("保存任务 (TOML)", this); saveBtn->setMinimumHeight(28);
-  auto *closeBtn = new QPushButton("关闭", this); closeBtn->setMinimumHeight(28);
+  auto *saveBtn = new QPushButton("保存任务 (TOML)", this); saveBtn->setMinimumHeight(30);
+  auto *closeBtn = new QPushButton("关闭", this); closeBtn->setMinimumHeight(30);
   btnRow->addStretch(); btnRow->addWidget(saveBtn); btnRow->addWidget(closeBtn);
+  btnRow->addStretch();
   mainLayout->addLayout(btnRow);
 
   // ---- 信号 ----

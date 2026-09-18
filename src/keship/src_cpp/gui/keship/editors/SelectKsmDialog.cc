@@ -59,6 +59,7 @@ SelectKsmDialog::SelectKsmDialog(const QString &_dir,
   btnRow->addStretch();
   btnRow->addWidget(okBtn_);
   btnRow->addWidget(cancelBtn);
+  for (QPushButton *b : {rawBtn, okBtn_, cancelBtn}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnRow);
 
   dirEdit_->setText(parentDir_);

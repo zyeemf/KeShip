@@ -16,7 +16,6 @@ DuplicateWaterDialog::DuplicateWaterDialog(const QString &_defaultName,
     : QDialog(parent)
 {
   setWindowTitle("复制水域");
-  setModal(true);
   resize(320, 200);
 
   auto *mainLayout = new QVBoxLayout(this);

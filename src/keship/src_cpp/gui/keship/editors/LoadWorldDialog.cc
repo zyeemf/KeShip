@@ -124,8 +124,11 @@ LoadWorldDialog::LoadWorldDialog(const QString &_suggestedNamespace,
   mainLayout->addWidget(treeGroup, 1);
 
   auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  buttons->setCenterButtons(true);
   auto *okBtn = buttons->button(QDialogButtonBox::Ok);
   okBtn->setText("载入");
+  okBtn->setMinimumHeight(30);
+  buttons->button(QDialogButtonBox::Cancel)->setMinimumHeight(30);
   connect(buttons, &QDialogButtonBox::accepted, this, &LoadWorldDialog::onAccept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   mainLayout->addWidget(buttons);

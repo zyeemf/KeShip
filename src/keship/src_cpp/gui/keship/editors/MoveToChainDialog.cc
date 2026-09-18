@@ -18,7 +18,6 @@ MoveToChainDialog::MoveToChainDialog(const QStringList &_chains,
     : QDialog(parent)
 {
   setWindowTitle("移动到子世界");
-  setModal(true);
   resize(340, 140);
 
   auto *mainLayout = new QVBoxLayout(this);

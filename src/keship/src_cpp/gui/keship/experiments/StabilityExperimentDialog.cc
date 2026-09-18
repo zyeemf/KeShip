@@ -420,6 +420,7 @@ void StabilityExperimentDialog::setupUI()
   btnRow->addWidget(recordBtn_);
   btnRow->addWidget(delSelBtn);
   btnRow->addWidget(clearBtn_);
+  for (QPushButton *b : {recordBtn_, delSelBtn, clearBtn_}) b->setMinimumHeight(30);
   btnRow->addStretch();
   mainLayout->addLayout(btnRow);
 

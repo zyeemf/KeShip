@@ -29,7 +29,6 @@ void EnvironmentParamsDialog::setupUi()
 {
   setWindowTitle(QString("水域环境参数 — %1")
       .arg(QString::fromStdString(area_.name)));
-  setModal(true);
   resize(360, 600);
 
   auto *mainLayout = new QVBoxLayout(this);
@@ -160,6 +159,8 @@ void EnvironmentParamsDialog::setupUi()
   btnLayout->addStretch();
   btnLayout->addWidget(applyBtn);
   btnLayout->addWidget(cancelBtn);
+  btnLayout->addStretch();
+  for (QPushButton *b : {applyBtn, cancelBtn}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnLayout);
 
   connect(applyBtn, &QPushButton::clicked, this, &QDialog::accept);

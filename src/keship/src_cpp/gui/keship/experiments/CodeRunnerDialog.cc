@@ -105,9 +105,9 @@ void CodeRunnerDialog::setupUI() {
 
   // 按钮行
   auto *btnRow = new QHBoxLayout();
-  runBtn_ = new QPushButton("运行代码", this); runBtn_->setMinimumHeight(32);
-  hintBtn_ = new QPushButton("查看提示", this); hintBtn_->setMinimumHeight(32);
-  resetBtn_ = new QPushButton("重置模板", this); resetBtn_->setMinimumHeight(32);
+  runBtn_ = new QPushButton("运行代码", this); runBtn_->setMinimumHeight(30);
+  hintBtn_ = new QPushButton("查看提示", this); hintBtn_->setMinimumHeight(30);
+  resetBtn_ = new QPushButton("重置模板", this); resetBtn_->setMinimumHeight(30);
   btnRow->addWidget(runBtn_); btnRow->addWidget(hintBtn_);
   btnRow->addWidget(resetBtn_); btnRow->addStretch();
   mainLayout->addLayout(btnRow);

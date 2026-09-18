@@ -933,7 +933,6 @@ void MapWidget::mouseDoubleClickEvent(QMouseEvent *_event) {
         // 一个对话框同时编辑 X/Y（两个独立 QInputDialog 的体验不直观）
         QDialog dlg(this);
         dlg.setWindowTitle(QString("编辑顶点 %1").arg(hitIdx + 1));
-        dlg.setModal(true);
         auto *form = new QFormLayout(&dlg);
         auto *sx = new QDoubleSpinBox(&dlg);
         sx->setRange(-9999, 9999); sx->setDecimals(1);

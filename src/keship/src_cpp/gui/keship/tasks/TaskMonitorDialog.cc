@@ -145,6 +145,7 @@ void TaskMonitorDialog::setupUI() {
   btnRow->addWidget(endBtn_);
   btnRow->addStretch();
   btnRow->addWidget(closeBtn_);
+  for (QPushButton *b : {loadBtn_, startBtn_, endBtn_, closeBtn_}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnRow);
 
   // ---- 信号连接 ----

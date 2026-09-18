@@ -14,7 +14,6 @@ WorldSettingsDialog::WorldSettingsDialog(QWidget *parent)
     : QDialog(parent)
 {
   setWindowTitle("世界原点设置");
-  setModal(true);
   resize(320, 200);
 
   auto *mainLayout = new QVBoxLayout(this);

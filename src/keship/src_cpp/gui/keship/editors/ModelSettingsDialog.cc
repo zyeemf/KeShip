@@ -8,7 +8,9 @@
 
 #include <iostream>
 
+#include <QDialogButtonBox>
 #include <QMessageBox>
+#include <QPushButton>
 
 #include "../utils/FossenModel.hh"
 #include <math.h>
@@ -25,7 +27,6 @@ ModelSettingsDialog::ModelSettingsDialog(QWidget *parent)
 
   // 窗口设置
   setWindowTitle("模型设置");
-  setModal(true);
   resize(650, 600);
 
   /// 外层垂直布局：上方表单 | 下方按钮
@@ -289,6 +290,8 @@ ModelSettingsDialog::ModelSettingsDialog(QWidget *parent)
 
   { /// --- 下方按钮 ---
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    buttonBox->button(QDialogButtonBox::Ok)->setMinimumHeight(30);
+    buttonBox->button(QDialogButtonBox::Cancel)->setMinimumHeight(30);
     QHBoxLayout *btnLayout = new QHBoxLayout();
     btnLayout->setContentsMargins(0, 0, 0, 0);
     btnLayout->addStretch();

@@ -21,7 +21,6 @@ SubWorldSettingsDialog::SubWorldSettingsDialog(const QString &_chainName,
     : QDialog(parent)
 {
   setWindowTitle("子世界属性");
-  setModal(true);
   resize(360, 480);
 
   auto *mainLayout = new QVBoxLayout(this);

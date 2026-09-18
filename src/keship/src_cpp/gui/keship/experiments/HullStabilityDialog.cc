@@ -251,6 +251,7 @@ void HullStabilityDialog::setupUI() {
   clearBtn_ = new QPushButton("清除全部", this);
   btnRow->addWidget(recordBtn_); btnRow->addWidget(resetBtn_);
   btnRow->addWidget(delBtn); btnRow->addWidget(clearBtn_); btnRow->addStretch();
+  for (QPushButton *b : {recordBtn_, resetBtn_, delBtn, clearBtn_}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnRow);
 
   dataTable_ = new QTableWidget(0, 5, this);

@@ -46,8 +46,11 @@ WaterAreaDrawDialog::WaterAreaDrawDialog(QWidget *parent)
   auto *cancelBtn = new QPushButton("取消", this);
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 
+  btnRow->addStretch();
   btnRow->addWidget(closeBtn);
   btnRow->addWidget(cancelBtn);
+  btnRow->addStretch();
+  for (QPushButton *b : {closeBtn, cancelBtn}) b->setMinimumHeight(30);
   layout->addLayout(btnRow);
 
   connect(map_, &MapWidget::polygonFinished,

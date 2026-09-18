@@ -56,6 +56,8 @@ SelectWorldDialog::SelectWorldDialog(const QString &_dir,
   btnRow->addStretch();
   btnRow->addWidget(okBtn_);
   btnRow->addWidget(cancelBtn);
+  btnRow->addStretch();
+  for (QPushButton *b : {okBtn_, cancelBtn}) b->setMinimumHeight(30);
   mainLayout->addLayout(btnRow);
 
   dirEdit_->setText(parentDir_);
