@@ -2488,6 +2488,32 @@ bool MenuPluginKeship::RewriteChain(const QString &_oldChain,
   return any;
 }
 
+/// @brief 复制默认名的 ASCII 基名：ROS 2 话题名不允许中文字符（会失配/报错），
+///        所以"复制"生成的默认模型名必须是纯 ASCII —— 只保留原名的 ASCII 可见字符，
+///        其余（中文等）折叠为一个下划线；若没有任何可用字符则回退为 "model"。
+static QString AsciiCopyBase(const QString &_orig)
+{
+  QString base;
+  for (const QChar &ch : _orig)
+  {
+    const ushort u = ch.unicode();
+    const bool ok = (u >= 'a' && u <= 'z') || (u >= 'A' && u <= 'Z') ||
+                    (u >= '0' && u <= '9') || u == '_' || u == '-';
+    if (ok)
+    {
+      base += ch;
+    }
+    else if (!base.isEmpty() && !base.endsWith('_') && !base.endsWith('-'))
+    {
+      base += '_';
+    }
+  }
+  while (!base.isEmpty() && (base.endsWith('_') || base.endsWith('-'))) base.chop(1);
+  while (!base.isEmpty() && (base.startsWith('_') || base.startsWith('-'))) base.remove(0, 1);
+  if (base.isEmpty()) base = QStringLiteral("model");
+  return base;
+}
+
 QString MenuPluginKeship::UniqueCopyName(const QString &_base,
                                          const std::set<QString> &_existing)
 {
@@ -2679,12 +2705,13 @@ void MenuPluginKeship::OnBtn_DuplicateModelByIndex(int _midx)
     return;
   }
 
-  // 默认名去重（_副本、_副本2…）
+  // 默认名去重（_copy、_copy2…）
   std::set<QString> existing;
   for (const auto &[n, id] : this->modelManager->GetModelList())
     existing.insert(QString::fromStdString(n));
+  // 默认名必须全 ASCII：ROS 2 话题名不接受中文，复制名含中文会使传感器话题失配
   const QString defaultName = UniqueCopyName(
-      QString::fromStdString(orig) + "_副本", existing);
+      AsciiCopyBase(QString::fromStdString(orig)) + "_copy", existing);
 
   // 弹属性对话框：可命名 + 改位姿（静态/浮力/惯性只读展示）
   ModelSettingsDialog dialog(this->GetModelNames(), ModelSettingsDialog::Ksm);
@@ -2721,8 +2748,10 @@ void MenuPluginKeship::OnBtn_DuplicateWaterArea(int _widx)
 
   std::set<QString> existing;
   for (const auto &a : areas) existing.insert(QString::fromStdString(a.name));
+  // 后缀统一为 ASCII（_copy）；水域名本身保留（系统默认名即中文"默认水域"/"水域N"，
+  // 强剥离会退化成无意义名，且水域名不参与 ROS 话题构造，无失配风险）
   const QString defaultName = UniqueCopyName(
-      QString::fromStdString(orig) + "_副本", existing);
+      QString::fromStdString(orig) + "_copy", existing);
 
   DuplicateWaterDialog dlg(defaultName);
   if (dlg.exec() != QDialog::Accepted) return;
@@ -2763,12 +2792,15 @@ void MenuPluginKeship::OnBtn_DuplicateSubWorld(const QString &_chain)
     return;
   }
 
-  // 默认新链名 = 末段 + _副本（去重）；保持父链不变
+  // 默认新链名 = 末段 + _copy（去重）；保持父链不变
   const QString parentChain = _chain.section('/', 0, -2);
   std::set<QString> existing;
   const auto chains = AllExistingChains();
   for (const QString &c : chains) existing.insert(c);
-  const QString baseLeaf = _chain.section('/', -1) + "_副本";
+  // 链名末段同样 ASCII 化：SubWorldSettingsDialog 的校验只接受 [A-Za-z0-9_]，
+  // 原先的「xxx_副本」默认值本身就不合法，用户被迫手动改
+  const QString baseLeaf =
+      AsciiCopyBase(_chain.section('/', -1)) + "_copy";
   const QString fullBase = parentChain.isEmpty()
       ? baseLeaf : parentChain + "/" + baseLeaf;
   const QString newChain = UniqueCopyName(fullBase, existing);
@@ -2807,7 +2839,7 @@ void MenuPluginKeship::OnBtn_DuplicateSubWorld(const QString &_chain)
       dlg.offsetYawDeg() * M_PI / 180.0};
   const auto chainSegs = SplitChain(_chain);
 
-  // 模型复制：新实例名 = 原名_副本（去重）；目标链 = 新链 + 相对子链
+  // 模型复制：新实例名 = 原名_copy（去重）；目标链 = 新链 + 相对子链
   std::set<QString> modelNames;
   for (const auto &[n, id] : this->modelManager->GetModelList())
     modelNames.insert(QString::fromStdString(n));
@@ -2823,8 +2855,9 @@ void MenuPluginKeship::OnBtn_DuplicateSubWorld(const QString &_chain)
     }
     const QString targetChain = relChain.isEmpty()
         ? finalChain : finalChain + "/" + relChain;
+    // 同上：子世界内复制的模型名也必须全 ASCII
     const QString newName = UniqueCopyName(
-        QString::fromStdString(m) + "_副本", modelNames);
+        AsciiCopyBase(QString::fromStdString(m)) + "_copy", modelNames);
     modelNames.insert(newName);
 
     // 复制位姿 = 原件位姿 + 整体偏移
@@ -2857,8 +2890,9 @@ void MenuPluginKeship::OnBtn_DuplicateSubWorld(const QString &_chain)
     }
     const QString targetChain = relChain.isEmpty()
         ? finalChain : finalChain + "/" + relChain;
+    // 水域名保留原名，仅后缀 ASCII 化（同单水域复制）
     const QString newName = UniqueCopyName(
-        QString::fromStdString(w) + "_副本", waterNames);
+        QString::fromStdString(w) + "_copy", waterNames);
     waterNames.insert(newName);
 
     DuplicateWaterCore(w, newName.toStdString(), targetChain,
