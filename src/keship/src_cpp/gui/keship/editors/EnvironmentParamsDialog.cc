@@ -4,6 +4,7 @@
 /* 风浪流环境参数编辑对话框实现 */
 
 #include "EnvironmentParamsDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -155,7 +156,9 @@ void EnvironmentParamsDialog::setupUi()
   // ── 按钮 ──
   auto *btnLayout = new QHBoxLayout();
   auto *applyBtn = new QPushButton("应用", this);
+  UiTheme::setButtonIcon(applyBtn, UiTheme::Icon::kOk);
   auto *cancelBtn = new QPushButton("取消", this);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   btnLayout->addStretch();
   btnLayout->addWidget(applyBtn);
   btnLayout->addWidget(cancelBtn);

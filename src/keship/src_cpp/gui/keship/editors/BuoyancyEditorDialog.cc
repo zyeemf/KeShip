@@ -5,6 +5,7 @@
 /// ZhangYu 创建 2026.5.6, marker 2026.5.7
 
 #include "BuoyancyEditorDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -61,7 +62,9 @@ BuoyancyEditorDialog::BuoyancyEditorDialog(
 
   auto *btnLayout = new QHBoxLayout();
   auto *addBtn = new QPushButton("+ 添加", this);
+  UiTheme::setButtonIcon(addBtn, UiTheme::Icon::kAdd);
   auto *delBtn = new QPushButton("删除", this);
+  UiTheme::setButtonIcon(delBtn, UiTheme::Icon::kDelete);
   btnLayout->addWidget(addBtn);
   btnLayout->addWidget(delBtn);
   listVLayout->addLayout(btnLayout);

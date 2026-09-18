@@ -3,6 +3,7 @@
  */
 #include "HydrodynamicsEditorDialog.hh"
 #include "../shared/UiTheme.hh"
+#include "../shared/UiTheme.hh"
 
 #include "../shared/FlowLayout.hh"
 
@@ -234,6 +235,7 @@ HydrodynamicsEditorDialog::HydrodynamicsEditorDialog(
   dampLayout->addWidget(scrollArea);
 
   auto *addBtn = new QPushButton("+ 添加阻尼项", this);
+  UiTheme::setButtonIcon(addBtn, UiTheme::Icon::kAdd);
   connect(addBtn, &QPushButton::clicked, this, &HydrodynamicsEditorDialog::addDampingTerm);
   dampLayout->addWidget(addBtn);
 

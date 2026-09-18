@@ -4,6 +4,7 @@
 /* 载入世界对话框实现 */
 
 #include "LoadWorldDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QGroupBox>
 #include <QLabel>
@@ -129,6 +130,8 @@ LoadWorldDialog::LoadWorldDialog(const QString &_suggestedNamespace,
   okBtn->setText("载入");
   okBtn->setMinimumHeight(30);
   buttons->button(QDialogButtonBox::Cancel)->setMinimumHeight(30);
+  UiTheme::setButtonIcon(okBtn, UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Cancel), UiTheme::Icon::kCancel);
   connect(buttons, &QDialogButtonBox::accepted, this, &LoadWorldDialog::onAccept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   mainLayout->addWidget(buttons);

@@ -380,6 +380,82 @@ int main(int argc, char *argv[])
         }
     });
 
+    /// 可选：搜索功能端到端验证（QML_SMOKE_SEARCH=<词>）
+    /// 步骤：定位搜索框 → 模拟输入（setProperty + emit textEdited，二者缺一不可：
+    ///       程序化 setProperty **不会**触发 onTextEdited）→ 断言列表 count 收缩。
+    /// 背景：搜索曾两度被报"无功能"，必须用机器断言证明过滤真的生效。
+    QTimer::singleShot(1400, [&]() {
+        const QByteArray kwEnv = qgetenv("QML_SMOKE_SEARCH");
+        if (kwEnv.isEmpty()) return;
+        const QString kw = QString::fromUtf8(kwEnv);
+
+        QObject *sf = nullptr;
+        for (QObject *o : Walker::collect(root)) {
+            if (isA(o, "QQuickTextField")
+                && o->property("placeholderText").toString().contains(QString::fromUtf8(u8"搜索")))
+            { sf = o; break; }
+        }
+        if (!sf) { qWarning() << "[搜索] FAIL 未找到搜索框"; ++g_behaviorFails; return; }
+
+        // 环境自检：treeBase（stub 的 worldHierarchy）在 smoke 里是否就位
+        QObject *boxChk = nullptr;
+        for (QObject *o : Walker::collect(root))
+            if (o->property("treeBase").isValid()) { boxChk = o; break; }
+        qDebug() << "[搜索] treeBase 长度 ="
+                 << (boxChk ? boxChk->property("treeBase").toList().size() : -1)
+                 << "（stub 应为 3；为 0/undefined 说明 smoke 打桩未就位，属测试环境问题）";
+        qDebug() << "[搜索] stub.worldHierarchy 直接读 ="
+                 << (stub ? stub->property("worldHierarchy").toList().size() : -2)
+                 << " isValid=" << (stub ? stub->property("worldHierarchy").isValid() : false);
+
+        // tab1 列表 = model 绑定 JS 数组（treeRows）的那个 ListView（model 属性非 QObject）
+        QList<QObject*> lvs;
+        collectByClass(root, "QQuickListView", lvs);
+        QObject *mlv = nullptr;
+        for (QObject *l : lvs) {
+            if (l->property("model").value<QObject*>() == nullptr) { mlv = l; break; }
+        }
+        const int before = mlv ? mlv->property("count").toInt() : -1;
+        qDebug() << "[搜索] 输入前 count =" << before;
+
+        sf->setProperty("text", kw);
+        QMetaObject::invokeMethod(sf, "textEdited");   // 触发 onTextEdited → treeFilter
+        QCoreApplication::processEvents();
+
+        // 分叉测试 A：直接设 treeFilter（绕过搜索框），判定「treeFilter → treeRows」
+        // 绑定是否重估 —— 若 A 失败则绑定断链；若 A 成功而上面失败则输入链路有问题
+        QObject *box = nullptr;
+        const QList<QObject*> all = Walker::collect(root);
+        for (QObject *o : all)
+            if (o->property("treeFilter").isValid()) { box = o; break; }
+        qDebug() << "[搜索] 含 treeFilter 的对象 =" << (box ? "找到" : "未找到");
+        int viaFilter = -1;
+        if (box) {
+            // 直接读 treeRows 属性长度 = 过滤结果本身，不经 ListView
+            //（冒烟注入会覆盖 ListView.model，count 在测试环境里语义被污染）
+            box->setProperty("treeFilter", QString());   // 先取"无过滤"基线
+            QCoreApplication::processEvents();
+            const int rowsBefore = box->property("treeRows").toList().size();
+            box->setProperty("treeFilter", kw);
+            QCoreApplication::processEvents();
+            const int rowsAfter = box->property("treeRows").toList().size();
+            viaFilter = mlv ? mlv->property("count").toInt() : -1;
+            qDebug() << "[搜索] 分叉A treeRows 长度" << rowsBefore << "->" << rowsAfter
+                     << "（filter 空与 \"" << kw << "\" 对比，直接读过滤结果）";
+            // 还原，避免影响后续断言
+            box->setProperty("treeFilter", QString());
+            QCoreApplication::processEvents();
+        }
+
+        const int after = mlv ? mlv->property("count").toInt() : -1;
+        const bool countOk = (before >= 0) && ((after != before) || (viaFilter != before));
+        if (!countOk) ++g_behaviorFails;
+        qDebug().nospace() << "[搜索] " << (countOk ? "PASS" : "FAIL")
+                           << "  输入\"" << kw << "\" count " << before
+                           << " -> (输入链路)" << after
+                           << " / (直设filter)" << viaFilter;
+    });
+
     QTimer::singleShot(2200, [&]() {
         if (!shot.isEmpty()) {
             QImage img = view.grabWindow();

@@ -4,6 +4,7 @@
 /* 选择模型对话框实现 */
 
 #include "SelectKsmDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QLineEdit>
 #include <QListWidget>
@@ -51,9 +52,11 @@ SelectKsmDialog::SelectKsmDialog(const QString &_dir,
   auto *rawBtn = new QPushButton("从其他目录选择原始模型...", this);
   connect(rawBtn, &QPushButton::clicked, this, &SelectKsmDialog::browseRawFile);
   okBtn_ = new QPushButton("确定", this);
+  UiTheme::setButtonIcon(okBtn_, UiTheme::Icon::kOk);
   okBtn_->setEnabled(false);
   connect(okBtn_, &QPushButton::clicked, this, &QDialog::accept);
   auto *cancelBtn = new QPushButton("取消", this);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
   btnRow->addWidget(rawBtn);
   btnRow->addStretch();

@@ -5,6 +5,7 @@
 
 #include "ShipHullDialog.hh"
 #include "UiTheme.hh"
+#include "UiTheme.hh"
 #include "LinesPlanDialog.hh"
 
 #include <QVBoxLayout>
@@ -93,7 +94,8 @@ void ShipHullDialog::setupUI() {
   spawnBtn_ = new QPushButton("生成模型", this);
   spawnBtn_->setMinimumHeight(32);
   closeBtn_ = new QPushButton("关闭", this);
-  closeBtn_->setMinimumHeight(32);
+  closeBtn_->setMinimumHeight(30);
+  UiTheme::setButtonIcon(closeBtn_, UiTheme::Icon::kClose);
   btnRow->addWidget(linesBtn);
   btnRow->addWidget(spawnBtn_);
   btnRow->addWidget(closeBtn_);

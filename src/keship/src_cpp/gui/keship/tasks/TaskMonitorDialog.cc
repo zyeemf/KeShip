@@ -4,6 +4,7 @@
 /* Phase 10: 任务监控面板实现 */
 
 #include "TaskMonitorDialog.hh"
+#include "../shared/UiTheme.hh"
 #include "TopicUtil.hh"
 
 #include <QVBoxLayout>
@@ -140,6 +141,7 @@ void TaskMonitorDialog::setupUI() {
   startBtn_ = new QPushButton("开始监控", this);
   endBtn_ = new QPushButton("结束并评分", this);
   closeBtn_ = new QPushButton("关闭", this);
+  UiTheme::setButtonIcon(closeBtn_, UiTheme::Icon::kClose);
   btnRow->addWidget(loadBtn_);
   btnRow->addWidget(startBtn_);
   btnRow->addWidget(endBtn_);

@@ -464,8 +464,15 @@ Rectangle {
                     property var treeRows: buildRows()
 
                     function buildRows() {
+                        // ★ 绑定依赖收集铁律：函数内访问的全部响应式属性必须**无条件地**
+                        //   在任何 return 之前读取。否则创建期（worldHierarchy 未就绪）
+                        //   提前返回的那次求值，会让绑定永久失去对后续属性的依赖 ——
+                        //   表现为 treeFilter 变化后列表不再重估，即"搜索无功能"的根因。
                         var base = treeBase
                         var f = treeFilter.trim()
+                        var ex = treeExpanded
+                        // 创建期 worldHierarchy 可能尚未就绪，返回空行避免 TypeError
+                        if (!base || !base.length) return []
                         // 组键：chain + "/" + gtype（models/waters/sub）；未记录 = 默认展开
                         var parentSubKeyOf = function(r) {
                             if (!r.chain.length) return ""
@@ -479,12 +486,18 @@ Rectangle {
                             for (var i = 0; i < base.length; ++i)
                                 if (base[i].kind === "group" && base[i].gtype === "sub")
                                     subIdx[base[i].chain] = i
+                            // 2026-09-18：改为**大小写不敏感**匹配 —— 模型名多为全小写
+                            //（如 aas_0），而用户习惯输入大写缩写（AAS），原先的严格
+                            // indexOf 匹配会永远搜不到，表现为"搜索没反应"
+                            var fl = f.toLowerCase()
                             for (i = 0; i < base.length; ++i) {
                                 var r = base[i]
-                                if ((r.text && r.text.indexOf(f) >= 0)
-                                        || (r.chain && r.chain.indexOf(f) >= 0)) {
+                                if ((r.text && r.text.toLowerCase().indexOf(fl) >= 0)
+                                        || (r.chain && r.chain.toLowerCase().indexOf(fl) >= 0)) {
                                     kept[i] = true
-                                    if (r.chain.length) {
+                                    // r.chain 可能为 undefined（数据行缺字段），
+                                    // text 命中而 chain 缺失时原先会抛 TypeError 使过滤中断
+                                    if (r.chain && r.chain.length) {
                                         var segs = r.chain.split("/")
                                         var cur = ""
                                         for (var k = 0; k < segs.length - 1; ++k) {
@@ -507,12 +520,12 @@ Rectangle {
                                 if (r.kind === "model" || r.kind === "water") {
                                     var gk = r.chain + "/"
                                             + (r.kind === "model" ? "models" : "waters")
-                                    if (treeExpanded[gk] === false) continue
+                                    if (ex[gk] === false) continue
                                     // 祖先链任一 sub 组折叠 → 隐藏（沿 chain 逐级向上检查）
                                     var anc = r.chain
                                     var ancCollapsed = false
                                     while (anc.length && !ancCollapsed) {
-                                        if (treeExpanded[anc + "/sub"] === false)
+                                        if (ex[anc + "/sub"] === false)
                                             ancCollapsed = true
                                         var idx = anc.lastIndexOf("/")
                                         anc = (idx < 0 ? "" : anc.substr(0, idx))
@@ -520,10 +533,10 @@ Rectangle {
                                     if (ancCollapsed) continue
                                 } else if (r.kind === "group" && r.gtype === "sub") {
                                     var psk = parentSubKeyOf(r)
-                                    if (psk.length && treeExpanded[psk] === false) continue
+                                    if (psk.length && ex[psk] === false) continue
                                 } else if (r.kind === "group") {
                                     // 模型/水域组行：受其所在链的 sub 组展开态控制（顶层链恒显示）
-                                    if (treeExpanded[r.chain + "/sub"] === false) continue
+                                    if (ex[r.chain + "/sub"] === false) continue
                                 }
                             }
                             // 输出纯 JS 对象（显式拷贝字段 + 预计算 label），
@@ -556,26 +569,31 @@ Rectangle {
                         font.pixelSize: theme.fontSmall
                         // 搜索实际由 QML 侧完成（treeFilter → buildRows() 过滤），
                         // 原调用的 OnSearchModel 只是 C++ 侧一个打印空壳，误导性，已移除。
-                        rightPadding: 58   // 给右侧"命中数"留位，避免文字压在一处
                         onTextEdited: treeFilter = searchField.text
                     }
 
-                    // 搜索命中数：原先过滤其实在跑，但界面上没有任何反馈，
-                    // 加上输入文字显示不全，让人以为"没有搜索功能"。此处补上计数。
+                    // 搜索命中数：放在搜索框**正下方**的独立信息行。
+                    // 2026-09-18 修正：原先为把它塞进框内而设 rightPadding:58，
+                    // 输入较长文字时可见宽度被压缩、光标滚动后文字"看起来被吃掉"，
+                    // 这正是"显示不全"的来源；移出后文本恢复全宽。
                     Label {
-                        anchors.right: searchField.right
+                        id: searchHint
+                        anchors.top: searchField.bottom
+                        anchors.topMargin: 2
+                        anchors.right: parent.right
                         anchors.rightMargin: 8
-                        anchors.verticalCenter: searchField.verticalCenter
+                        height: searchField.text.length > 0 ? 14 : 0
+                        visible: height > 0
                         text: searchField.text.length > 0
-                              ? qsTr("%1 项").arg(modelListView.count) : ""
+                              ? qsTr("命中 %1 项").arg(modelListView.count) : ""
                         font.pixelSize: theme.fontTiny
                         color: theme.textDim
                     }
 
                     ListView {
                         id: modelListView
-                        anchors.top: searchField.bottom
-                        anchors.topMargin: 6
+                        anchors.top: searchHint.bottom
+                        anchors.topMargin: 2
                         anchors.bottom: deleteAllBtn.top
                         anchors.bottomMargin: 6
                         anchors.left: parent.left

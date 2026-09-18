@@ -4,6 +4,7 @@
 /* 模型设置对话框实现 */
 /// Zhangyu 创建 2026.1.16
 #include "ModelSettingsDialog.hh"
+#include "../shared/UiTheme.hh"
 #include "../shared/Buoyancy3DView.hh"
 
 #include <iostream>
@@ -292,6 +293,8 @@ ModelSettingsDialog::ModelSettingsDialog(QWidget *parent)
     QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     buttonBox->button(QDialogButtonBox::Ok)->setMinimumHeight(30);
     buttonBox->button(QDialogButtonBox::Cancel)->setMinimumHeight(30);
+    UiTheme::setButtonIcon(buttonBox->button(QDialogButtonBox::Ok), UiTheme::Icon::kOk);
+    UiTheme::setButtonIcon(buttonBox->button(QDialogButtonBox::Cancel), UiTheme::Icon::kCancel);
     QHBoxLayout *btnLayout = new QHBoxLayout();
     btnLayout->setContentsMargins(0, 0, 0, 0);
     btnLayout->addStretch();

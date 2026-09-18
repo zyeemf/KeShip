@@ -5,6 +5,7 @@
 /// ZhangYu 创建 2026.5.11
 
 #include "ThrusterEditorDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -62,7 +63,9 @@ ThrusterEditorDialog::ThrusterEditorDialog(
 
   auto *btnLayout = new QHBoxLayout();
   auto *addBtn = new QPushButton("+ 添加", this);
+  UiTheme::setButtonIcon(addBtn, UiTheme::Icon::kAdd);
   auto *delBtn = new QPushButton("删除", this);
+  UiTheme::setButtonIcon(delBtn, UiTheme::Icon::kDelete);
   btnLayout->addWidget(addBtn);
   btnLayout->addWidget(delBtn);
   listVLayout->addLayout(btnLayout);

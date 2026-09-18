@@ -4,6 +4,7 @@
 /* 选择世界对话框实现 */
 
 #include "SelectWorldDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QLineEdit>
 #include <QListWidget>
@@ -49,9 +50,11 @@ SelectWorldDialog::SelectWorldDialog(const QString &_dir,
   // 按钮
   auto *btnRow = new QHBoxLayout;
   okBtn_ = new QPushButton("确定", this);
+  UiTheme::setButtonIcon(okBtn_, UiTheme::Icon::kOk);
   okBtn_->setEnabled(false);
   connect(okBtn_, &QPushButton::clicked, this, &QDialog::accept);
   auto *cancelBtn = new QPushButton("取消", this);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
   btnRow->addStretch();
   btnRow->addWidget(okBtn_);

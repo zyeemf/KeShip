@@ -6,6 +6,7 @@
 
 #include "StabilityExperimentDialog.hh"
 #include "../shared/UiTheme.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -416,6 +417,7 @@ void StabilityExperimentDialog::setupUI()
   auto *btnRow = new QHBoxLayout();
   recordBtn_ = new QPushButton("记录数据", this);
   auto *delSelBtn = new QPushButton("删除选中", this);
+  UiTheme::setButtonIcon(delSelBtn, UiTheme::Icon::kDelete);
   clearBtn_ = new QPushButton("清除全部", this);
   btnRow->addWidget(recordBtn_);
   btnRow->addWidget(delSelBtn);

@@ -5,6 +5,7 @@
 /// ZhangYu 创建 2026.5.16
 
 #include "SensorEditorDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -40,7 +41,9 @@ SensorEditorDialog::SensorEditorDialog(
 
   auto *addDelLayout = new QHBoxLayout();
   auto *addBtn = new QPushButton("+ 添加");
+  UiTheme::setButtonIcon(addBtn, UiTheme::Icon::kAdd);
   auto *delBtn = new QPushButton("删除");
+  UiTheme::setButtonIcon(delBtn, UiTheme::Icon::kDelete);
   addDelLayout->addWidget(addBtn);
   addDelLayout->addWidget(delBtn);
   leftPanel->addLayout(addDelLayout);

@@ -4,6 +4,7 @@
 /* Phase 10: 任务设定对话框 — waypoint / tracking 轨迹编辑器 / dp */
 
 #include "TaskSetDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -158,7 +159,9 @@ void TaskSetDialog::setupUI() {
   auto *btnRow = new QHBoxLayout();
   btnRow->setContentsMargins(2, 0, 2, 0);
   auto *saveBtn = new QPushButton("保存任务 (TOML)", this); saveBtn->setMinimumHeight(30);
+  UiTheme::setButtonIcon(saveBtn, UiTheme::Icon::kSave);
   auto *closeBtn = new QPushButton("关闭", this); closeBtn->setMinimumHeight(30);
+  UiTheme::setButtonIcon(closeBtn, UiTheme::Icon::kClose);
   btnRow->addStretch(); btnRow->addWidget(saveBtn); btnRow->addWidget(closeBtn);
   btnRow->addStretch();
   mainLayout->addLayout(btnRow);

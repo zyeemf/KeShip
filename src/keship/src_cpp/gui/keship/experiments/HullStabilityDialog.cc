@@ -5,6 +5,7 @@
 
 #include "HullStabilityDialog.hh"
 #include "../shared/UiTheme.hh"
+#include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -248,6 +249,7 @@ void HullStabilityDialog::setupUI() {
   recordBtn_ = new QPushButton("记录数据", this);
   resetBtn_ = new QPushButton("压载归零", this);
   auto *delBtn = new QPushButton("删除选中", this);
+  UiTheme::setButtonIcon(delBtn, UiTheme::Icon::kDelete);
   clearBtn_ = new QPushButton("清除全部", this);
   btnRow->addWidget(recordBtn_); btnRow->addWidget(resetBtn_);
   btnRow->addWidget(delBtn); btnRow->addWidget(clearBtn_); btnRow->addStretch();

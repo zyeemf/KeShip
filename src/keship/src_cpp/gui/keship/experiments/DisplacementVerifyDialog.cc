@@ -4,6 +4,7 @@
 /* Phase C: 排水量验证实验对话框实现 */
 
 #include "DisplacementVerifyDialog.hh"
+#include "../shared/UiTheme.hh"
 
 #include "../shared/UiTheme.hh"
 
@@ -249,6 +250,7 @@ void DisplacementVerifyDialog::setupUI() {
   recordBtn_ = new QPushButton("记录数据", this);
   clearBtn_ = new QPushButton("清除全部", this);
   auto *delBtn = new QPushButton("删除选中", this);
+  UiTheme::setButtonIcon(delBtn, UiTheme::Icon::kDelete);
   btnRow->addWidget(recordBtn_); btnRow->addWidget(delBtn);
   btnRow->addWidget(clearBtn_); btnRow->addStretch();
   for (QPushButton *b : {recordBtn_, delBtn, clearBtn_}) b->setMinimumHeight(30);
