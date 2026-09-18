@@ -15,12 +15,97 @@ import QtQuick.Controls 2.1
 Rectangle {
     id: root
     anchors.fill: parent
-    color: "#d0d0d8c0"
+    color: theme.panelBg
 
     /// 当前激活 Tab（0=模型管理, 1=虚拟实验）
     property int tabBarCurrent: 0
     /// 面板收起状态（双击标题切换，收起时仅显示标题栏）
     property bool collapsed: false
+
+    /// ═══════════════════════════════════════════════════════════════
+    /// 设计令牌（2026-09-18 建立｜颜色与尺寸的**唯一来源**）
+    /// 规则：本文件任何控件不得再写十六进制色值，一律引用 theme.*
+    /// 本轮为**纯令牌化重构**：所有色值与建立前**逐字节相同**，零视觉变化。
+    /// 归并相近色 / 调整配色属后续批次（见 doc/plans/ui_improvement_plan.md）。
+    /// ═══════════════════════════════════════════════════════════════
+    QtObject {
+        id: theme
+
+        // ---- 品牌 / 主色 ----
+        readonly property color primary:        "#7384e4"   // 选中、激活、强调
+        readonly property color primaryHover:   "#dde4f7"   // 条目悬停底
+        readonly property color accent:         "#66c4e9"   // 普通按钮底
+        readonly property color accentLoad:     "#8fd0a8"   // 载入类按钮底
+        readonly property color accentLoadDown: "#5eb07e"   // 载入类按钮按下
+        readonly property color warn:           "#f2c14e"   // 警示 / 维护类操作
+        readonly property color warnDown:       "#d9a62e"   // 警示类按下
+        readonly property color danger:         "#d9534f"   // 危险操作（删除类）
+        readonly property color dangerDown:     "#bf4440"   // 危险操作按下
+        readonly property color ok:             "#448844"   // 通过 / 启用
+
+        // ---- 面板 / 容器 ----
+        readonly property color panelBg:        "#d0d0d8c0" // 插件面板底（含 alpha，原值保留）
+        readonly property color sectionBg:      "#c0d8f0"   // 按钮区行容器
+        readonly property color headerBg:       "#b8b8c8"   // 实验列表课程分组头
+        readonly property color surface:        "#ffffff"   // 弹层 / 条目底
+        readonly property color surfaceIdle:    "#e8e8ee"   // 标题按钮未激活底
+        readonly property color rowEven:        "#f8f8f8"   // 树行斑马纹（偶）
+        readonly property color rowOdd:         "#ececec"   // 树行斑马纹（奇）
+        readonly property color rowSelected:    "#b8d0f0"   // 树行选中
+        readonly property color expRowBg:       "#e8e8ec"   // 实验行底
+        readonly property color disabledBg:     "#f4f4f7"   // 条目禁用底
+
+        // ---- 文字 ----
+        readonly property color text:           "#20202a"   // 主文字
+        readonly property color textStrong:     "#101010"   // 组行文字
+        readonly property color textOnDark:     "#ffffff"   // 深底上的文字
+        readonly property color textOnBlack:    "#000000"   // 按钮常态文字
+        readonly property color textDark:       "#202020"   // 实验行文字
+        readonly property color textLabel:      "#303030"   // 紧凑控件 / 分组头文字
+        readonly property color textMid:        "#404040"   // 标题按钮未激活文字
+        readonly property color textSub:        "#555555"   // 次要说明
+        readonly property color textSub2:       "#666666"   // 次要说明（2）
+        readonly property color textDim:        "#888888"   // 空态提示 / 按钮禁用文字
+        readonly property color textMuted:      "#999999"   // 实验行未启用文字
+        readonly property color textFaint:      "#a8a8b0"   // 条目禁用文字
+        readonly property color textDisabled:   "#b0b0c0"   // 控件禁用文字
+        readonly property color infoText:       "#0055aa"   // 海况等提示信息
+        readonly property color okText:         "#338833"   // 启用标记
+
+        // ---- 边框 / 分隔 ----
+        readonly property color border:         "#c8c8d8"   // 通用浅边框 / 分隔线
+        readonly property color borderStrong:   "#444444"   // 强调边框（按钮悬停 / 实验行）
+        readonly property color borderMenu:     "#9aa0b4"   // 弹层描边
+        readonly property color borderRow:      "#cccccc"   // 树叶行描边
+        readonly property color borderRowGroup: "#8a8a8a"   // 树组行描边
+        readonly property color treeLine:       "#b8b8b8"   // 树层级连接线
+
+        // ---- 树 / 分组专用 ----
+        readonly property color groupSubBg:     "#e8d8c8"
+        readonly property color groupWaterBg:   "#c8e8d8"
+        readonly property color groupModelBg:   "#c8d8e8"
+        readonly property color groupSubBar:    "#c07840"
+        readonly property color groupWaterBar:  "#40a070"
+        readonly property color groupModelBar:  "#4070b0"
+
+        // ---- 行内紧凑控件（⋯ 按钮）----
+        readonly property color miniBg:         "#e0e0e8"
+        readonly property color miniBgHover:    "#b8c8e0"
+        readonly property color miniBorder:     "#909098"
+
+        // ---- 尺寸阶梯 ----
+        readonly property int hPrimary:         40          // 主操作按钮高
+        readonly property int hStandard:        32          // 标准控件高
+        readonly property int hCompact:         24          // 行内紧凑控件高
+        readonly property int radiusCtl:        8           // 按钮圆角
+        readonly property int radiusPanel:      4           // 面板 / 弹层圆角
+        readonly property int radiusMenu:       3           // 菜单条目圆角
+        readonly property int radiusMini:       2           // 类型色块圆角
+        readonly property int fontTitle:        14
+        readonly property int fontBody:         12
+        readonly property int fontSmall:        11
+        readonly property int fontTiny:         10
+    }
 
     /// 收起/展开卡片本体（优先复用 gz-gui 原生折叠动画，结构异常时直接改高度兜底）
     function toggleCollapsed() {
@@ -48,17 +133,17 @@ Rectangle {
 
     /// 自定义按钮组件
     component CustomButton: Button {
-        property color bk_normalColor: '#66c4e9'
-        property color bk_pressedColor: '#7384e4'
-        property color bk_disabledColor: '#b0b0c0'
-        property color borderColor: "#444444"
-        property int btnRadius: 8
+        property color bk_normalColor: theme.accent
+        property color bk_pressedColor: theme.primary
+        property color bk_disabledColor: theme.textDisabled
+        property color borderColor: theme.borderStrong
+        property int btnRadius: theme.radiusCtl
         property int btnWidth: 80
-        property int btnHeight: 40
-        property color text_normalColor: "black"
-        property color text_pressedColor: "white"
-        property color text_disabledColor: "#888888"
-        property int textSize: 14
+        property int btnHeight: theme.hPrimary
+        property color text_normalColor: theme.textOnBlack
+        property color text_pressedColor: theme.textOnDark
+        property color text_disabledColor: theme.textDim
+        property int textSize: theme.fontTitle
 
         implicitWidth: btnWidth
         implicitHeight: btnHeight
@@ -89,19 +174,19 @@ Rectangle {
         signal clicked()
         signal doubleClicked()
         width: 100
-        height: 32
+        height: theme.hStandard
 
         Rectangle {
             anchors.fill: parent
-            radius: 4
-            color: parent.active ? "#7384e4" : "#e8e8ee"
-            border.color: parent.active ? "#7384e4" : "#b0b0c0"
+            radius: theme.radiusPanel
+            color: parent.active ? theme.primary : theme.surfaceIdle
+            border.color: parent.active ? theme.primary : theme.textDisabled
             border.width: 1
         }
         Text {
             anchors.centerIn: parent
             text: parent.title
-            color: parent.active ? "white" : "#404040"
+            color: parent.active ? theme.textOnDark : theme.textMid
             font.pixelSize: 13
             font.bold: true
         }
@@ -124,11 +209,11 @@ Rectangle {
         // （原生背景自带 200；不写则弹窗宽度退化为 0，条目宽度也随之为 0）
         background: Rectangle {
             implicitWidth: 200
-            implicitHeight: 32
-            color: "#ffffff"
-            border.color: "#9aa0b4"
+            implicitHeight: theme.hStandard
+            color: theme.surface
+            border.color: theme.borderMenu
             border.width: 1
-            radius: 4
+            radius: theme.radiusPanel
         }
     }
 
@@ -144,16 +229,16 @@ Rectangle {
         background: Rectangle {
             implicitWidth: 150
             implicitHeight: 30
-            radius: 3
-            color: !mi.enabled   ? "#f4f4f7" :
-                   mi.highlighted ? "#7384e4" :
-                   mi.hovered     ? "#dde4f7" : "#ffffff"
+            radius: theme.radiusMenu
+            color: !mi.enabled   ? theme.disabledBg :
+                   mi.highlighted ? theme.primary :
+                   mi.hovered     ? theme.primaryHover : theme.surface
         }
         contentItem: Text {
             text: mi.text
             font: mi.font
-            color: !mi.enabled     ? "#a8a8b0" :
-                   mi.highlighted   ? "#ffffff" : "#20202a"
+            color: !mi.enabled     ? theme.textFaint :
+                   mi.highlighted   ? theme.textOnDark : theme.text
             horizontalAlignment: Text.AlignLeft
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
@@ -165,11 +250,11 @@ Rectangle {
         rightPadding: 8
         topPadding: 4
         bottomPadding: 4
-        background: Rectangle { color: "#ffffff" }
+        background: Rectangle { color: theme.surface }
         contentItem: Rectangle {
             implicitWidth: 150
             implicitHeight: 1
-            color: "#c8c8d8"
+            color: theme.border
         }
     }
 
@@ -248,8 +333,8 @@ Rectangle {
             /// 底部锚定控件（传感器查看等）随高度变化滑移；超出部分由卡片 content 裁切
             height: 550
             visible: !root.collapsed
-            color: "#d0d0d8c0"
-            radius: 4
+            color: theme.panelBg
+            radius: theme.radiusPanel
 
             /// Tab 1：模型管理
             Item {
@@ -267,8 +352,8 @@ Rectangle {
                     /// （2026-09-17 布局评审：载入世界/载入模型/数学船型/圆柱体/两种水域
                     ///   归入"加载"下拉，避免六个入口平铺两行）
                     Rectangle {
-                        color: "#c0d8f0"
-                        radius: 4
+                        color: theme.sectionBg
+                        radius: theme.radiusPanel
                         width: parent.width
                         height: 44
                         Row {
@@ -277,8 +362,8 @@ Rectangle {
                             CustomButton {
                                 id: loadBtn
                                 text: qsTr("加载 ▾")
-                                bk_normalColor: "#8fd0a8"
-                                bk_pressedColor: "#5eb07e"
+                                bk_normalColor: theme.accentLoad
+                                bk_pressedColor: theme.accentLoadDown
                                 onClicked: loadMenu.popup()
                             }
                             CustomButton {
@@ -291,8 +376,8 @@ Rectangle {
                             }
                             CustomButton {
                                 text: MenuPluginKeship.paused ? qsTr("继续") : qsTr("暂停")
-                                bk_normalColor: "#f2c14e"
-                                bk_pressedColor: "#d9a62e"
+                                bk_normalColor: theme.warn
+                                bk_pressedColor: theme.warnDown
                                 onClicked: { MenuPluginKeship.OnPauseToggle(); }
                             }
                         }
@@ -319,8 +404,8 @@ Rectangle {
 
                     /// 行2：惯性计算（模型辅助工具）+ 任务（实验/考核基础设施）
                     Rectangle {
-                        color: "#c0d8f0"
-                        radius: 4
+                        color: theme.sectionBg
+                        radius: theme.radiusPanel
                         width: parent.width
                         height: 44
                         Row {
@@ -343,8 +428,8 @@ Rectangle {
 
                     /// 行3：维护操作（警示色）
                     Rectangle {
-                        color: "#c0d8f0"
-                        radius: 4
+                        color: theme.sectionBg
+                        radius: theme.radiusPanel
                         width: parent.width
                         height: 44
                         Row {
@@ -353,8 +438,8 @@ Rectangle {
                             CustomButton {
                                 text: qsTr("清理网格缓存")
                                 width: 130
-                                bk_normalColor: "#f2c14e"
-                                bk_pressedColor: "#d9a62e"
+                                bk_normalColor: theme.warn
+                                bk_pressedColor: theme.warnDown
                                 onClicked: MenuPluginKeship.OnBtn_CleanMeshCache()
                             }
                         }
@@ -495,21 +580,21 @@ Rectangle {
                         Label {
                             text: qsTr("暂无模型 / 水域 / 子世界")
                             anchors.centerIn: parent
-                            font.pixelSize: 12
-                            color: "#888888"
+                            font.pixelSize: theme.fontBody
+                            color: theme.textDim
                             visible: modelListView.count == 0
                         }
 
                         delegate: Rectangle {
                             width: modelListView.width
-                            height: 32
+                            height: theme.hStandard
                             color: modelData.kind === "group"
-                                   ? (modelData.gtype === "sub" ? "#e8d8c8"
-                                      : modelData.gtype === "waters" ? "#c8e8d8"
-                                                                     : "#c8d8e8")
-                                   : (modelListView.currentIndex === index ? "#b8d0f0"
-                                      : (index % 2 == 0 ? "#f8f8f8" : "#ececec"))
-                            border.color: modelData.kind === "group" ? "#8a8a8a" : "#cccccc"
+                                   ? (modelData.gtype === "sub" ? theme.groupSubBg
+                                      : modelData.gtype === "waters" ? theme.groupWaterBg
+                                                                     : theme.groupModelBg)
+                                   : (modelListView.currentIndex === index ? theme.rowSelected
+                                      : (index % 2 == 0 ? theme.rowEven : theme.rowOdd))
+                            border.color: modelData.kind === "group" ? theme.borderRowGroup : theme.borderRow
                             border.width: 1
 
                             // 左侧色条（组行按类型着色）
@@ -519,9 +604,9 @@ Rectangle {
                                 anchors.bottom: parent.bottom
                                 width: 4
                                 visible: modelData.kind === "group"
-                                color: modelData.gtype === "sub" ? "#c07840"
-                                     : modelData.gtype === "waters" ? "#40a070"
-                                                                    : "#4070b0"
+                                color: modelData.gtype === "sub" ? theme.groupSubBar
+                                     : modelData.gtype === "waters" ? theme.groupWaterBar
+                                                                    : theme.groupModelBar
                             }
 
                             // 缩进区 + 树连接竖线（叶行按层级逐级绘制）
@@ -536,7 +621,7 @@ Rectangle {
                                         x: 4 + index * 14
                                         width: 1
                                         height: parent.height
-                                        color: "#b8b8b8"
+                                        color: theme.treeLine
                                     }
                                 }
                             }
@@ -573,8 +658,8 @@ Rectangle {
                                     anchors.verticalCenter: parent.verticalCenter
                                     visible: modelData.kind !== "group"
                                     radius: 2
-                                    color: modelData.kind === "model" ? "#4070b0"
-                                                                      : "#40a070"
+                                    color: modelData.kind === "model" ? theme.groupModelBar
+                                                                      : theme.groupWaterBar
                                 }
 
                                 // 折叠箭头（组行）
@@ -587,9 +672,9 @@ Rectangle {
                                     width: 14
                                     height: parent.height
                                     verticalAlignment: Text.AlignVCenter
-                                    font.pixelSize: 10
+                                    font.pixelSize: theme.fontTiny
                                     font.bold: true
-                                    color: "#404040"
+                                    color: theme.textMid
                                 }
 
                                 // 名称（组行加粗；水域行预留海况列宽）
@@ -605,7 +690,7 @@ Rectangle {
                                            ? Math.max(40, modelListView.width - 130 - (modelData.depth || 0) * 14 - 46)
                                            : Math.max(40, modelListView.width - 130 - (modelData.depth || 0) * 14)
                                     color: modelData.kind === "group"
-                                            ? "#101010" : "black"
+                                            ? theme.textStrong : theme.textOnBlack
                                 }
 
                                 // 海况（水域）
@@ -614,8 +699,8 @@ Rectangle {
                                           ? MenuPluginKeship.waterAreaSeaStates[modelData.widx] : ""
                                     verticalAlignment: Text.AlignVCenter
                                     height: parent.height
-                                    font.pixelSize: 11
-                                    color: "#0055aa"
+                                    font.pixelSize: theme.fontSmall
+                                    color: theme.infoText
                                     width: 42
                                     visible: modelData.kind === "water"
                                 }
@@ -639,14 +724,14 @@ Rectangle {
                                     }
 
                                     background: Rectangle {
-                                        radius: 4
-                                        color: parent.hovered ? "#b8c8e0" : "#e0e0e8"
-                                        border.color: "#909098"
+                                        radius: theme.radiusPanel
+                                        color: parent.hovered ? theme.miniBgHover : theme.miniBg
+                                        border.color: theme.miniBorder
                                         border.width: 1
                                     }
                                     contentItem: Text {
                                         text: parent.text
-                                        color: '#303030'
+                                        color: theme.textLabel
                                         horizontalAlignment: Text.AlignHCenter
                                         verticalAlignment: Text.AlignVCenter
                                         font.pixelSize: 11
@@ -714,7 +799,9 @@ Rectangle {
                             }
                         }
                     }
-                    Button {
+                    // 2026-09-18（批次 1b）：原为裸 Button（零样式），与相邻 CustomButton 风格脱节；
+                    // 改为统一组件 + 危险色（删除是不可逆操作，需要视觉警示）
+                    CustomButton {
                         id: deleteAllBtn
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 8
@@ -722,7 +809,9 @@ Rectangle {
                         anchors.leftMargin: 8
                         anchors.right: parent.right
                         anchors.rightMargin: 8
-                        height: 30
+                        height: theme.hStandard
+                        bk_normalColor: theme.danger
+                        bk_pressedColor: theme.dangerDown
                         text: qsTr("删除所有模型")
                         onClicked: { MenuPluginKeship.OnBtn_DeleteAllModels(); }
                     }
@@ -784,10 +873,10 @@ Rectangle {
                     section.delegate: Rectangle {
                         width: expListView.width
                         height: 28
-                        color: "#b8b8c8"
+                        color: theme.headerBg
                         Text {
                             text: "▎" + section
-                            color: "#303030"
+                            color: theme.textLabel
                             font.pixelSize: 13
                             font.bold: true
                             anchors.verticalCenter: parent.verticalCenter
@@ -798,9 +887,9 @@ Rectangle {
 
                     delegate: Rectangle {
                         width: expListView.width
-                        height: 32
+                        height: theme.hStandard
                         color: bgColor
-                        border.color: "#444444"
+                        border.color: theme.borderStrong
                         border.width: 1
 
                         Rectangle {
@@ -811,9 +900,9 @@ Rectangle {
                             color: leftBarColor
                         }
 
-                        property color bgColor: "#e8e8ec"
-                        property color textColor: enabled ? "#202020" : "#999999"
-                        property color leftBarColor: enabled ? "#448844" : "transparent"
+                        property color bgColor: theme.expRowBg
+                        property color textColor: enabled ? theme.textDark : theme.textMuted
+                        property color leftBarColor: enabled ? theme.ok : "transparent"
 
                         MouseArea {
                             anchors.fill: parent
@@ -858,13 +947,13 @@ Rectangle {
                             }
                             Text {
                                 text: tier
-                                color: model.enabled ? "#338833" : "#666666"
+                                color: model.enabled ? theme.okText : theme.textSub2
                                 font.pixelSize: 10
                                 width: 36
                             }
                             Text {
                                 text: model.enabled ? "" : "(待开发)"
-                                color: "#555555"
+                                color: theme.textSub
                                 font.pixelSize: 10
                                 width: 56
                             }
