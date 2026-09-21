@@ -109,6 +109,7 @@ ThrusterEditorDialog::ThrusterEditorDialog(
   paramForm->addRow("最大推力:", maxForce_);
 
   auto *saveBtn = new QPushButton("保存", paramGroup_);
+  UiTheme::setButtonIcon(saveBtn, UiTheme::Icon::kSave);
   paramForm->addRow(saveBtn);
 
   leftColumn->addWidget(paramGroup_);
@@ -127,7 +128,9 @@ ThrusterEditorDialog::ThrusterEditorDialog(
   /// 底部按钮
   auto *bottomLayout = new QHBoxLayout();
   auto *applyBtn = new QPushButton("应用并重建模型", this);
+  UiTheme::setButtonIcon(applyBtn, UiTheme::Icon::kOk);
   auto *cancelBtn = new QPushButton("取消", this);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   bottomLayout->addStretch();
   bottomLayout->addWidget(applyBtn);
   bottomLayout->addWidget(cancelBtn);

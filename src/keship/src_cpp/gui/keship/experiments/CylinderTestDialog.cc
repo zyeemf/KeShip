@@ -6,10 +6,13 @@
 
 #include "CylinderTestDialog.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <QDoubleSpinBox>
+#include <QPushButton>
 
 CylinderTestDialog::CylinderTestDialog(const QStringList &_instanceNameList, QWidget *parent)
     : QDialog(parent), instanceNameList(_instanceNameList)
@@ -103,6 +106,10 @@ CylinderTestDialog::CylinderTestDialog(const QStringList &_instanceNameList, QWi
 
   /// 按钮
   auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  UiTheme::setButtonIcon(buttonBox->button(QDialogButtonBox::Ok),
+                         UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(buttonBox->button(QDialogButtonBox::Cancel),
+                         UiTheme::Icon::kCancel);
   formLayout->addRow(buttonBox);
 
   connect(buttonBox, &QDialogButtonBox::accepted, this, &CylinderTestDialog::validateAndAccept);

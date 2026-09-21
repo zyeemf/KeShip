@@ -5,6 +5,8 @@
 
 #include "MapWidget.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QPainter>
 #include <QPainterPath>
 #include <QToolTip>
@@ -14,6 +16,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QDoubleSpinBox>
+#include <QPushButton>
 #include <cmath>
 #include <algorithm>
 
@@ -944,6 +947,10 @@ void MapWidget::mouseDoubleClickEvent(QMouseEvent *_event) {
         form->addRow("Y 坐标:", sy);
         auto *btns = new QDialogButtonBox(
             QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        UiTheme::setButtonIcon(btns->button(QDialogButtonBox::Ok),
+                               UiTheme::Icon::kOk);
+        UiTheme::setButtonIcon(btns->button(QDialogButtonBox::Cancel),
+                               UiTheme::Icon::kCancel);
         connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
         form->addRow(btns);

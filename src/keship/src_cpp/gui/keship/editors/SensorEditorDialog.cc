@@ -71,6 +71,7 @@ SensorEditorDialog::SensorEditorDialog(
   }
 
   saveBtn_ = new QPushButton("保存修改");
+  UiTheme::setButtonIcon(saveBtn_, UiTheme::Icon::kSave);
   formLayout->addRow(saveBtn_);
   leftPanel->addWidget(rightPanel_);
   contentLayout->addLayout(leftPanel);
@@ -89,7 +90,9 @@ SensorEditorDialog::SensorEditorDialog(
   /// 底部按钮
   auto *bottomLayout = new QHBoxLayout();
   auto *applyBtn = new QPushButton("应用并重建模型");
+  UiTheme::setButtonIcon(applyBtn, UiTheme::Icon::kOk);
   auto *cancelBtn = new QPushButton("取消");
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   bottomLayout->addStretch();
   bottomLayout->addWidget(applyBtn);
   bottomLayout->addWidget(cancelBtn);

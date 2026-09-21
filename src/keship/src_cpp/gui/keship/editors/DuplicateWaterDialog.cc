@@ -5,10 +5,13 @@
 
 #include "DuplicateWaterDialog.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 DuplicateWaterDialog::DuplicateWaterDialog(const QString &_defaultName,
@@ -52,6 +55,10 @@ DuplicateWaterDialog::DuplicateWaterDialog(const QString &_defaultName,
 
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Ok),
+                         UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Cancel),
+                         UiTheme::Icon::kCancel);
   connect(buttons, &QDialogButtonBox::accepted,
           this, &DuplicateWaterDialog::validateAndAccept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

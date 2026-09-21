@@ -5,9 +5,12 @@
 
 #include "WorldSettingsDialog.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QPushButton>
 #include <QVBoxLayout>
 
 WorldSettingsDialog::WorldSettingsDialog(QWidget *parent)
@@ -51,6 +54,10 @@ WorldSettingsDialog::WorldSettingsDialog(QWidget *parent)
 
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Ok),
+                         UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Cancel),
+                         UiTheme::Icon::kCancel);
   connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   mainLayout->addWidget(buttons);

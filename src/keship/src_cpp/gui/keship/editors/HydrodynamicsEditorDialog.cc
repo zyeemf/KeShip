@@ -247,7 +247,9 @@ HydrodynamicsEditorDialog::HydrodynamicsEditorDialog(
 
   auto *bottomLayout = new QHBoxLayout();
   auto *applyBtn = new QPushButton("应用并重建模型", this);
+  UiTheme::setButtonIcon(applyBtn, UiTheme::Icon::kOk);
   auto *cancelBtn = new QPushButton("取消", this);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   bottomLayout->addStretch();
   bottomLayout->addWidget(applyBtn);
   bottomLayout->addWidget(cancelBtn);
@@ -423,7 +425,9 @@ void HydrodynamicsEditorDialog::addDampingTerm()
 
   auto *btnLayout = new QHBoxLayout();
   auto *okBtn = new QPushButton("确定", &dlg);
+  UiTheme::setButtonIcon(okBtn, UiTheme::Icon::kOk);
   auto *cancelBtn = new QPushButton("取消", &dlg);
+  UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   btnLayout->addStretch();
   btnLayout->addWidget(okBtn);
   btnLayout->addWidget(cancelBtn);

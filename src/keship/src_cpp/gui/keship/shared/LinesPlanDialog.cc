@@ -5,6 +5,8 @@
 
 #include "LinesPlanDialog.hh"
 
+#include "UiTheme.hh"
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -381,6 +383,7 @@ LinesPlanDialog::LinesPlanDialog(const keship::ShipHullSpec &_spec,
   mainLayout->addWidget(sheerWidget, 1);
 
   auto *closeBtn = new QPushButton("关闭", this);
+  UiTheme::setButtonIcon(closeBtn, UiTheme::Icon::kClose);
   connect(closeBtn, &QPushButton::clicked, this, &QDialog::close);
   mainLayout->addWidget(closeBtn);
 

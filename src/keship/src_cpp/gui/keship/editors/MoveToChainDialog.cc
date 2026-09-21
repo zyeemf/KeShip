@@ -5,10 +5,13 @@
 
 #include "MoveToChainDialog.hh"
 
+#include "../shared/UiTheme.hh"
+
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QRegExp>
 #include <QVBoxLayout>
 
@@ -44,6 +47,10 @@ MoveToChainDialog::MoveToChainDialog(const QStringList &_chains,
 
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Ok),
+                         UiTheme::Icon::kOk);
+  UiTheme::setButtonIcon(buttons->button(QDialogButtonBox::Cancel),
+                         UiTheme::Icon::kCancel);
   connect(buttons, &QDialogButtonBox::accepted,
           this, &MoveToChainDialog::validateAndAccept);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
