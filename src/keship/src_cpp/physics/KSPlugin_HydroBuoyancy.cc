@@ -323,8 +323,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       /// 浮力体世界位姿 = link 世界位姿 * 相对 link 偏移（与恢复力矩参考 linkWorldPos 同源）
       gz::math::Pose3d bodyWorldPose = linkWorldPose * body.poseOffset;
 
-      /// 多点采样波浪高度，计算梯度，构造倾斜裁剪面
-      double h0 = 0.0, hx = 0.0, hy = 0.0;
+      /// 波高 + **解析**梯度（一次遍历，不再三点采样差分），构造倾斜裁剪面
+      double h0 = 0.0, dhdx = 0.0, dhdy = 0.0;
       {
         std::lock_guard<std::mutex> lock(this->dataPtr->mutex);
         auto wf = this->dataPtr->activeWavefield_.lock();
@@ -332,22 +332,31 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         {
           double t  = std::chrono::duration<double>(this->dataPtr->simTime_).count();
           double t0 = 0.0;   // 波浪从世界 0s 缓起，所有模型一致
-          const double ds = 1.0;
-          gz::math::Vector3d c = bodyWorldPose.Pos();
-          h0 = wf->ComputeDepthSimply(c, t, t0);
-          hx = wf->ComputeDepthSimply(
-              c + gz::math::Vector3d(ds, 0, 0), t, t0);
-          hy = wf->ComputeDepthSimply(
-              c + gz::math::Vector3d(0, ds, 0), t, t0);
+          /// 原先是三点采样（中心 + x/y 各 +1 m）+ 前向差分：每个分量会引入
+          /// 幅值 ×2sin(k·ds/2)/(k·ds) 与**相位滞后 k·ds/2**（默认参数下 11°~30°，
+          /// λ<2 m 时甚至反号）。改解析式后与 ComputeDepthSimply 的高度逐位一致。
+          /// 见 doc/audit/water_wave_audit_2026-09-21.md §W-7。
+          wf->ComputeHeightAndGradient(
+              bodyWorldPose.Pos(), t, t0, &h0, &dhdx, &dhdy);
         }
         this->dataPtr->lastWaveHeight_ = h0;
       }
 
-      double dhdx = (hx - h0) / 1.0;
-      double dhdy = (hy - h0) / 1.0;
-      gz::math::Vector3d waveNormal(-dhdx, -dhdy, 1.0);
-      waveNormal.Normalize();
-      double waveOffset = h0 + effectiveFluidLevel;
+      /// ★ 波面裁剪平面必须**通过采样点** (x0, y0, h0 + level)。
+      /// gz::math::Plane 的语义是「n·p = d」（gz/math7/gz/math/Plane.hh:67/127），
+      /// 由 n·p = d 反解平面在 (x0,y0) 处的高度 = N·d + dhdx·x0 + dhdy·y0，
+      /// 故 d 必须取 (h0 + level − dhdx·x0 − dhdy·y0) / N；
+      /// 若写成 d = h0 + level，水面高度会平白多出 dhdx·x0 + dhdy·y0，
+      /// 误差随船离世界原点的距离**线性放大**（静水时 dhdx=dhdy=0 ⇒ 恒为 0，
+      /// 这正是此前所有实验都测不出来的原因）。
+      /// 见 doc/audit/water_wave_audit_2026-09-21.md §2（缺陷 W-1）。
+      gz::math::Vector3d n0(-dhdx, -dhdy, 1.0);
+      const double n0Len = n0.Length();
+      gz::math::Vector3d waveNormal = n0 / n0Len;
+      double waveOffset =
+          (h0 + effectiveFluidLevel
+           - dhdx * bodyWorldPose.Pos().X()
+           - dhdy * bodyWorldPose.Pos().Y()) / n0Len;
 
       gz::math::Plane<double> waterPlane(waveNormal, waveOffset);
       double subVol = body.buoyancy->calculateTotalVolumeContribution(

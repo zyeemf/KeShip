@@ -776,6 +776,54 @@ double Wavefield::ComputeDepthSimply(const math::Vector3d &_point,
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+void Wavefield::ComputeHeightAndGradient(const math::Vector3d &_point,
+  double _time, double _timeInit, double *_height, double *_dhdx,
+  double *_dhdy)
+{
+  std::lock_guard<std::mutex> lock(this->data->mutex);
+
+  double h = 0.0;
+  double dhdx = 0.0;
+  double dhdy = 0.0;
+
+  const std::size_t n = this->Number();
+  for (std::size_t i = 0; i < n; ++i)
+  {
+    const double k = this->Wavenumber_V()[i];
+    const double a = this->Amplitude_V()[i];
+    const double dx = this->Direction_V()[i].X();
+    const double dy = this->Direction_V()[i].Y();
+    const double omega = this->AngularFrequency_V()[i];
+    const double phi = this->Phase_V()[i];
+    const double dot = _point.X() * dx + _point.Y() * dy;
+    const double theta = k * dot - omega * _time + phi;
+    const double c = std::cos(theta);
+    const double s = std::sin(theta);
+    h += a * c;
+    /// 解析梯度：差分（ds=1 m）会让每个分量相位滞后 k·ds/2，短波甚至反号
+    dhdx -= a * k * dx * s;
+    dhdy -= a * k * dy * s;
+  }
+
+  // Exponentially grow the waves
+  const double ramp = 1 - exp(-1.0 * (_time - _timeInit) / this->Tau());
+
+  if (_height) *_height = h * ramp;
+  if (_dhdx)   *_dhdx   = dhdx * ramp;
+  if (_dhdy)   *_dhdy   = dhdy * ramp;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// ⚠️ 2026-09-21 审核标注（缺陷 W-4）：**当前全项目无调用者**（死代码）。
+/// 如将来要启用，需先修三处：
+///   1. **缺 Gerstner 的 q 因子** —— 函数内 `F(0) += a*dx*s` / `F(1) += a*dy*s`
+///      没有乘 steepness q，而顶点着色器是 `P.x -= q*a*dx*s`（`GerstnerWaves_vs_330.glsl`）
+///      ⇒ 即使 steepness=0（纯正弦）也会施加满幅水平位移，与 `ComputeDepthSimply` 不一致；
+///   2. **返回值语义与函数名/注释不符** —— 名与文档说"depth = pz − point.z()"，
+///      实际已改成返回**高度**（见函数尾部 `const double h = pz;` 及上方注释），
+///      调用方若按"深度"用会**符号相反**；
+///   3. Newton 求解里的 F 未乘缓起因子（`1−exp(−t/tau)`）而返回值乘了 ⇒ 启动瞬态自相矛盾。
+/// 生产路径用的是 `ComputeHeightAndGradient`（W-7 修复后）与 `ComputeDepthSimply`。
 double Wavefield::ComputeDepthDirectly(const math::Vector3d &_point,
   double _time, double _timeInit)
 {

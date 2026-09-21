@@ -315,6 +315,29 @@ namespace keship
                                       double _time,
                                       double _timeInit = 0);
 
+    /// \brief Compute the wave height and its **analytic** gradient at a point.
+    ///
+    /// 与 ComputeDepthSimply 同一波形（q = 0，无 Gerstner 水平位移）、同一缓起因子，
+    /// 但梯度取解析式
+    ///     ∂h/∂x = −Σ a_i k_i d_ix sin(θ_i)， ∂h/∂y = −Σ a_i k_i d_iy sin(θ_i)
+    /// 而非有限差分。ds = 1 m 的前向差分会给每个分量引入
+    /// 幅值 × 2sin(k·ds/2)/(k·ds) 与**相位滞后 k·ds/2**：
+    /// 默认参数（Tp=2.5 s）下滞后 11°~30°，k·ds > π（λ < 2 m）时甚至**反号**。
+    /// 见 doc/audit/water_wave_audit_2026-09-21.md §W-7。
+    ///
+    /// \param[in]  _point     The point at which we want the height.
+    /// \param[in]  _time      The time at which we want the height.
+    /// \param[in]  _timeInit  The time at which we want the wavefield to start
+    /// \param[out] _height    The wave height at the point (may be nullptr).
+    /// \param[out] _dhdx      ∂h/∂x (may be nullptr).
+    /// \param[out] _dhdy      ∂h/∂y (may be nullptr).
+    public: void ComputeHeightAndGradient(const gz::math::Vector3d &_point,
+                                          double _time,
+                                          double _timeInit,
+                                          double *_height,
+                                          double *_dhdx,
+                                          double *_dhdy);
+
     /// \brief Compute the depth at a point directly
     /// (no sampling or interpolation).
     ///
@@ -334,6 +357,11 @@ namespace keship
     /// \param[in] _time        The time at which we want the depth.
     /// \param[in] _timeInit    The time at which we want the wavefield to start
     /// \return                 The depth 'h' at the point.
+    ///
+    /// ⚠️ 2026-09-21 审核（缺陷 W-4）：**当前全项目无调用者**；且实际返回的是
+    /// **高度**而非"深度"、内部缺 Gerstner 的 `q` 因子（与顶点着色器不一致）、
+    /// F 与返回值对缓起因子的处理自相矛盾 —— 详见 `.cc` 中同名函数的标注。
+    /// 生产路径请用 `ComputeHeightAndGradient` / `ComputeDepthSimply`。
     public: double ComputeDepthDirectly(const gz::math::Vector3d &_point,
                                         double _time,
                                         double _timeInit = 0);
