@@ -124,6 +124,15 @@ namespace keship
     gz::transport::Node node;
     std::mutex mutex;
 
+    /// 浸水体积对外发布（opt-in：SDF 写 <publish_subvolume>true</publish_subvolume>）
+    /// 默认关闭 —— 仅供排水量实验（SP-01）作为"实测 ∇"数据源；
+    /// 未开启时零开销、行为与原先完全一致
+    bool publishSubVol_ = false;
+    std::string subVolTopic_;
+    gz::transport::Node::Publisher subVolPub_;
+    /// 发布降频计数（逐帧发布会淹没 transport，固定每 N 帧发一次）
+    int subVolPubCounter_ = 0;
+
     /// 全局波浪场引用（gz-waves 模式：从水区波浪场实体 ECM 组件获取，
     /// 见 notes/waves_global_refactor.md）
     std::weak_ptr<Wavefield> activeWavefield_;

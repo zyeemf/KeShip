@@ -75,6 +75,18 @@ struct HydroProperties {
   double Ix = 0.0;          // 水线面惯性矩 [m⁴]
   double Ci = 0.0;          // 水线面惯性矩系数
 
+  // ═══ ★ 缺陷 ⑩ 修复（2026-09-20）：**设计吃水处**的正确静水力 ═══
+  // 上面 6 个字段的口径是错的（Aw/Ix 取**甲板**水线面；volume/KB 按**全深度**积分；
+  // GM 把"距甲板深度"当"距龙骨高度"用）—— 但 **volume 被 4 处 `m = rho*volume`
+  // 当作"均质船体体积"依赖**，故**不能就地改**。改为新增独立字段：
+  // **显示与实验测量用下面这些；质量仍用 volume。** 详见 doc/plans/headless_ctl_plan.md §26。
+  double volumeD = 0.0;   ///< 设计吃水处排水体积 [m³]（= volumeAtDraft(draft)，与质量自洽）
+  double KBup    = 0.0;   ///< 浮心距**龙骨**高度 [m]（口径：自龙骨向上积分）
+  double BMd     = 0.0;   ///< 设计吃水处稳心半径 [m]（= IxD / volumeD）
+  double GMd     = 0.0;   ///< 设计吃水处初稳性高 [m]（= KBup + BMd − D/2）
+  double AwD     = 0.0;   ///< 设计吃水处水线面面积 [m²]
+  double IxD     = 0.0;   ///< 设计吃水处水线面惯性矩 [m⁴]
+
   // 排水量曲线 (不同吃水)
   std::vector<double> draftCurve;       // 吃水采样值 [m]
   std::vector<double> volumeCurve;      // 对应排水体积 [m³]
@@ -120,6 +132,18 @@ class ShipHullGenerator {
   // === 文件输出 ===
   bool writeVisualOBJ(const std::string &_filepath) const;
   bool writeBuoyancyOBJ(const std::string &_filepath) const;
+
+  /// 网格内容指纹（8 位十六进制）—— 供**内容寻址**的 OBJ 文件名使用。
+  ///
+  /// 为什么必须有它（2026-09-19 张老师实测："改了船长，生成的模型没变化"）：
+  /// gz 的 `gz::common::MeshManager` 按**文件路径**缓存网格，同一路径换内容后
+  /// 仍返回旧网格（进程内缓存、永不失效，GUI 进程常驻 → 永远看不到新船）。
+  /// 实验对话框原先把船体网格写到固定文件名（`hull_vis.obj` / `hull_buoy.obj`），
+  /// 于是"改参数 → 重新生成"后，界面上显示的仍是第一艘船。
+  ///
+  /// 把指纹写进文件名即得**内容寻址**：几何一变 → URI 就变 → 缓存必然未命中；
+  /// 几何相同 → 文件名相同 → 命中缓存是正确的（内容本就一致）。
+  std::string meshTag() const;
 
   // === 静水力 ===
   const HydroProperties &hydroProps() const { return hydro_; }

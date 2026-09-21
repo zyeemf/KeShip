@@ -99,6 +99,25 @@ struct MeshCacheCleanupResult
 /// @return 清理统计
 MeshCacheCleanupResult CleanupUnusedMeshCache();
 
+/// @brief 回收目录中"内容寻址网格"的过期文件（2026-09-19，缺陷 D 的配套回收）
+///
+/// 背景：`ShipHullGenerator::meshTag()` 让网格文件名随几何内容变化
+/// （`<stem>_<tag>.obj`），用于绕过 gz `MeshManager` 的"**按路径永久缓存**"
+/// —— 同路径换内容仍返回旧网格，导致"改了船型参数但界面不变"
+/// （见 plans/headless_ctl_plan.md §20.1）。代价是每换一组参数就多留一对文件
+/// （默认船型约 240 KB），故需在安全时机回收。
+///
+/// ⚠️ **调用前提（硬约束，违反会删掉活模型的网格）**：
+///    1. 目标目录由**单一所有者独占**（如 `KeshipDispDir()` 仅 SP-01 对话框使用）；
+///    2. 该所有者的模型**已被删除**（网格已无人引用）。
+///    安全放置点示例：实验对话框"生成模型"流程中 `doDeleteHull()` 之后、
+///    写新网格之前 —— 此时旧模型确已从场景移除。
+///
+/// @param _dir 目标目录（如 KeshipDispDir()）
+/// @param _stemPrefix 文件名前缀（如 "hull_vis"、"hull_buoy"）
+/// @return 实际删除的文件数（目录不存在时返回 0）
+int RemoveStaleMeshFiles(const std::string &_dir, const std::string &_stemPrefix);
+
 } // namespace keship
 
 #endif // MESH_UTILS_HH_

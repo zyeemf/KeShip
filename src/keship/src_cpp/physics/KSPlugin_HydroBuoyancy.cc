@@ -23,6 +23,7 @@
 #include "../utils/PrimitiveMeshGenerator.hh"
 #include "../utils/WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
+#include <gz/msgs/double.pb.h>
 #include <gz/sim/components/Name.hh>
 #include <cmath>
 #include <fstream>
@@ -62,6 +63,21 @@ void KSPlugin_HydroBuoyancy::Configure(
   this->logPrefix_ = this->modelName_.empty()
       ? this->linkName_
       : this->modelName_ + "_" + this->linkName_;
+
+  /// 浸水体积发布（opt-in）：仅当 SDF 显式写 <publish_subvolume>true</publish_subvolume>
+  /// 才建话题并发布。默认关闭 —— 其他模型零开销、行为与原先完全一致。
+  {
+    auto [pv, pvOk] = _sdf->Get<bool>("publish_subvolume", false);
+    if (pvOk && pv)
+    {
+      this->dataPtr->publishSubVol_ = true;
+      this->dataPtr->subVolTopic_ = "/keship/sp01/subvol/" + this->modelName_;
+      this->dataPtr->subVolPub_ = this->dataPtr->node.Advertise<gz::msgs::Double>(
+          this->dataPtr->subVolTopic_);
+      gzmsg << "KSPlugin_HydroBuoyancy: 浸水体积发布已开启, topic="
+            << this->dataPtr->subVolTopic_ << std::endl;
+    }
+  }
 
   /// 加载水区配置（波浪场引用按水区从 ECM 实体获取，不订阅 topic）
   {
@@ -385,6 +401,22 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       totalTorque += (cobWorld - linkWorldPos).Cross(buoyancyForce);
 
       bodyIdx++;
+    }
+
+    /// 浸水体积发布（opt-in，降频每 6 帧一次；供排水量实验取"实测 ∇"）
+    /// 2026-09-19 复核修正：原先写在本 if 之外 —— 模型不在任何水区（或未启用浮力、
+    /// 无浮力体）时浮力循环整段跳过、totalSubVol 保持 0，却照样把 0 发出去，
+    /// 订阅端无法区分"实测为 0"与"根本没算"，会把"没测到"伪装成"测到了"。
+    /// 移入本 if：只有真的算过才发布。
+    if (this->dataPtr->publishSubVol_)
+    {
+      if (++this->dataPtr->subVolPubCounter_ >= 6)
+      {
+        this->dataPtr->subVolPubCounter_ = 0;
+        gz::msgs::Double subVolMsg;
+        subVolMsg.set_data(totalSubVol);
+        this->dataPtr->subVolPub_.Publish(subVolMsg);
+      }
     }
   }
 

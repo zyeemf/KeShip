@@ -110,6 +110,8 @@ void keship::Buoyancy::loadMeshData(const aiMesh *_mesh)
         tri.normal_ = faceNormal;
         tri.area_ = area;
         tri.centroid_ = (v0 + v1 + v2) / 3.0;
+        /// ★ 缺陷 C 修复：浮心累加要用**四面体**形心（见 Buoyancy.hh 的 tetraCentroid_ 说明）
+        tri.tetraCentroid_ = (v0 + v1 + v2) / 4.0;
         tri.volume_ = area * tri.normal_.Dot(tri.centroid_) / 3.0;
         this->triangles_.emplace_back(tri);
     }
@@ -204,6 +206,8 @@ void keship::Buoyancy::loadMeshData(const MeshDataSimple &_data)
         triOut.normal_ = faceNormal;
         triOut.area_ = area;
         triOut.centroid_ = (v0 + v1 + v2) / 3.0;
+        /// ★ 缺陷 C 修复：浮心累加要用**四面体**形心（见 Buoyancy.hh 的 tetraCentroid_ 说明）
+        triOut.tetraCentroid_ = (v0 + v1 + v2) / 4.0;
         triOut.volume_ = area * triOut.normal_.Dot(triOut.centroid_) / 3.0;
         this->triangles_.push_back(triOut);
     }
@@ -318,6 +322,13 @@ double keship::Buoyancy::calculateTotalVolumeContribution(gz::math::Pose3d _link
 
     /// 计算水线面多边形的体积贡献（同时累加浮心）
     double waterPolyVol = calculateWaterPlanePolygonVolumeContribution(plane);
+
+    /// ★ 2026-09-19 修 A：盖面项必须计入总体积。
+    /// 原先该量被算出来后**只用于浮心累加、返回值直接丢弃** —— 于是
+    /// 分子（浮心）含盖面、分母（volume_）不含，**口径自相矛盾**；
+    /// 且返回的浮力体积偏大（细长船型可达 +60%），使船浮得过高。
+    /// 见 doc/plans/headless_ctl_plan.md §16。
+    volume_ += waterPolyVol;
 
     /// [DIAG-D2] 体积构成诊断（写日志文件，限频）
     {
@@ -891,7 +902,8 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
         else if (signSum == -3 || signSum == -2)
         {
             volume_ += tri.volume_;
-            centerOfBuoyancy_ += tri.volume_ * tri.centroid_;
+            /// ★ 缺陷 C：必须用四面体形心 tetraCentroid_（= centroid_×3/4）
+            centerOfBuoyancy_ += tri.volume_ * tri.tetraCentroid_;
         }
         /// 情况3：三角形与水面相交：三角形贡献部分体积，同时计算水线面多边形
         else
@@ -902,7 +914,8 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                 {
                 case -1: // 1、计算体积贡献和浮心；2、记录水线面多边形的边
                     volume_ += tri.volume_;
-                    centerOfBuoyancy_ += tri.volume_ * tri.centroid_;
+                    /// ★ 缺陷 C：必须用四面体形心 tetraCentroid_（= centroid_×3/4）
+                    centerOfBuoyancy_ += tri.volume_ * tri.tetraCentroid_;
                 case 1: // 1、不计算体积贡献；2、记录水线面多边形的边
                     for (int i = 0; i < 3; ++i)
                     {
@@ -938,7 +951,8 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                     /// 计算体积贡献和浮心
                     double partialVol = ((vertices_[a] - bc_mid).Cross(vertices_[c] - bc_mid)).Length() * 0.5 * tri.normal_.Dot((vertices_[a] + bc_mid + vertices_[c]) / 3.0) / 3.0;
                     volume_ += partialVol;
-                    centerOfBuoyancy_ += partialVol * ((vertices_[a] + bc_mid + vertices_[c]) / 3.0);
+                    /// ★ 缺陷 C：浮心用**四面体**形心 /4.0（体积仍用三角形形心 /3.0，勿混）
+                    centerOfBuoyancy_ += partialVol * ((vertices_[a] + bc_mid + vertices_[c]) / 4.0);
                 }
                 break;
                 }
@@ -976,7 +990,8 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                     {
                         double partialVol = ((vertices_[a] - ab_mid).Cross(ac_mid - ab_mid)).Length() * 0.5 * tri.normal_.Dot((vertices_[a] + ab_mid + ac_mid) / 3.0) / 3.0;
                         volume_ += partialVol;
-                        centerOfBuoyancy_ += partialVol * ((vertices_[a] + ab_mid + ac_mid) / 3.0);
+                        /// ★ 缺陷 C：浮心用**四面体**形心 /4.0（体积仍用三角形形心 /3.0，勿混）
+                        centerOfBuoyancy_ += partialVol * ((vertices_[a] + ab_mid + ac_mid) / 4.0);
                     }
                     break;
                 case -1: // 水上是三角形（一顶点在水上A，两顶点在水下B、C）
@@ -1004,9 +1019,11 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                     {
                         double upperVol = ((vertices_[a] - ab_mid).Cross(ac_mid - ab_mid)).Length() * 0.5 * tri.normal_.Dot((vertices_[a] + ab_mid + ac_mid) / 3.0) / 3.0;
                         double subVol = tri.volume_ - upperVol;
-                        gz::math::Vector3d upperCentroid = (vertices_[a] + ab_mid + ac_mid) / 3.0;
+                        /// ★ 缺陷 C：上、下两块的浮心都用**四面体**形心 /4.0
+                        /// （体积 subVol 仍由三角形形心算出的 upperVol 相减，勿改）
+                        gz::math::Vector3d upperCentroid = (vertices_[a] + ab_mid + ac_mid) / 4.0;
                         volume_ += subVol;
-                        centerOfBuoyancy_ += tri.volume_ * tri.centroid_ - upperVol * upperCentroid;
+                        centerOfBuoyancy_ += tri.volume_ * tri.tetraCentroid_ - upperVol * upperCentroid;
                     }
                     break;
                 }
@@ -1037,7 +1054,10 @@ double keship::Buoyancy::calculateWaterPlanePolygonVolumeContribution(const gz::
 
         double polyVol = area * _waterPlane.Normal().Dot(centroid) / 3.0;
         volume += polyVol;
-        centerOfBuoyancy_ += polyVol * centroid;
+        /// ★ 缺陷 C：盖面是"以原点为顶点的锥体"，其体积形心 = (3·centroid + O)/4
+        /// = centroid × 3/4；用 centroid 原值会让浮心偏大 4/3。
+        /// ⚠️ polyVol 的计算（用 centroid 作高度参考）**不变**。
+        centerOfBuoyancy_ += polyVol * centroid * 0.75;
     }
 
     ///

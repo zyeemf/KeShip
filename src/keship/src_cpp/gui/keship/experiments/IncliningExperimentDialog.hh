@@ -82,6 +82,11 @@ public:
 private slots:
   void onSpawn();
   void onSliderChanged(int _value);
+  /// ★ 2026-09-21 新增：「移动压载」确认按钮 —— 输入位置后**点它才真正下发**
+  /// （原设计是输入框一改就下发，而下发走的是阻塞 RPC，见下方 commitMove 注释）
+  void onApplyWeight();
+  /// ★ 2026-09-21 新增：滑条防抖到期后真正下发（避免拖动时每格一次阻塞 RPC）
+  void onMoveDebounced();
   void onRecord();
   void onDeleteSelected();
   void onResetWeight();
@@ -102,6 +107,9 @@ private:
   bool doSpawnBoth();
   bool resolveEntityID(const std::string &_name, uint32_t &_id);
   bool moveWeight(double _y);
+  /// ★ 2026-09-21 新增：移动压载的**统一入口**（记录 y、重置判稳、下发、刷新面板）。
+  /// 所有路径（确认按钮 / 滑条防抖 / 归零 / 复位）都必须走它，保证状态一致。
+  void commitMove(double _y);
 
   double computeTheoryGM(double _L, double _B, double _H,
                           double _density) const;
@@ -129,7 +137,13 @@ private:
 
   /// 压载控制
   QSlider *weightSlider_;
-  QDoubleSpinBox *weightSpinBox_;
+  /// ★ 2026-09-21：**由 QDoubleSpinBox 改为 QLineEdit**。
+  /// 原因：QDoubleSpinBox 会把值**自动格式化成固定小数位**（`setDecimals(3)` → "0.000"），
+  /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被 validate 判非法 → **按键被吞**
+  /// （张老师实测："想把 0.000 改成 0.1，无法直接写 1"）。QLineEdit 保留用户原文，
+  /// 配合 QDoubleValidator（小数位放宽到 6）即可自由编辑，范围仍受控。
+  QLineEdit *weightEdit_;
+  QPushButton *applyBtn_;          ///< 「移动压载」确认按钮（输入后点击才生效）
   QLabel *sliderValueLabel_;
   QLabel *heelLabel_;
   QLabel *deltaYLabel_;
@@ -148,6 +162,7 @@ private:
 
   /// 定时器
   QTimer *poseTimer_;
+  QTimer *moveDebounce_ = nullptr;   ///< ★ 2026-09-21：滑条防抖（300 ms），见 onSliderChanged
 
   /// 状态
   uint32_t bargeEntityId_ = 0;
@@ -155,6 +170,7 @@ private:
   bool spawned_ = false;
   double currentHeelDeg_ = 0.0;
   double weightY_ = 0.0;
+  double pendingY_ = 0.0;        ///< 防抖期间待下发的目标位置（滑条拖动用）
   double lastHeelDeg_ = 0.0;
   int settleCounter_ = 0;
   bool quiescent_ = false;

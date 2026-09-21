@@ -45,9 +45,20 @@ namespace keship
         gz::math::Vector3d normal_;
         /// \brief 三角形的面积
         double area_;
-        /// \brief 三角形的重心坐标
+        /// \brief 三角形的重心坐标（面积形心）= (v0+v1+v2)/3
+        ///        仅用于 tri.volume_ 的棱锥高度，**不可**用于浮心累加
         gz::math::Vector3d centroid_;
-        /// \brief 三角形的体积贡献
+        /// \brief 四面体 (O, v0, v1, v2) 的形心 = (v0+v1+v2)/4，O 为船体原点
+        ///
+        /// ★ 浮心（体积一阶矩）**必须**用它，不能复用 centroid_（缺陷 C）：
+        ///   体积一阶矩恒等式   ∫_Ω x dV = (1/4)∮_∂Ω (x·n̂) x dA
+        ///   而 tri.volume_ 是"以原点为顶点的棱锥体积"，其体积形心
+        ///   = (O + v0 + v1 + v2)/4 = (v0+v1+v2)/4 = centroid_ × 3/4。
+        ///   若误用 centroid_（三角形形心）→ 浮心恒偏大 4/3（关于船体原点）
+        ///   → 恢复力矩偏大 → 有效 GM 被低估约 58%。
+        ///   取证：data/test/cob_coefficient_probe.cc（受控探针 + 反事实）。
+        gz::math::Vector3d tetraCentroid_;
+        /// \brief 三角形的体积贡献（以原点为顶点的棱锥体积）
         double volume_;
     };
 

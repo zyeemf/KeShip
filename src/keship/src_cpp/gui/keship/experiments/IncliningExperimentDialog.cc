@@ -6,6 +6,7 @@
 
 #include "IncliningExperimentDialog.hh"
 #include "../shared/UiTheme.hh"
+#include "keship/utils/LinearDamping.hh"
 #include "../shared/UiTheme.hh"
 
 #include <QVBoxLayout>
@@ -17,6 +18,12 @@
 #include <QPainterPath>
 #include <QMessageBox>
 #include <QFrame>
+/// ★ 2026-09-21 新增：压载位置输入由 QDoubleSpinBox 改为 QLineEdit（自由编辑），
+/// 并新增「移动压载」确认按钮 + 滑条防抖定时器。
+#include <QLineEdit>
+#include <QDoubleValidator>
+#include <QTimer>
+#include <QLabel>
 
 #include <algorithm>
 #include <cmath>
@@ -365,18 +372,38 @@ void IncliningExperimentDialog::setupUI()
   sliderValueLabel_ = new QLabel("0.000 m", this);
   sliderValueLabel_->setStyleSheet("font-weight: bold;");
 
-  weightSpinBox_ = new QDoubleSpinBox(this);
-  weightSpinBox_->setRange(-0.25, 0.25);
-  weightSpinBox_->setValue(0.0);
-  weightSpinBox_->setDecimals(3);
-  weightSpinBox_->setSuffix(" m");
-  weightSpinBox_->setSingleStep(0.01);
+  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**。
+  /// 为什么换掉 QDoubleSpinBox：
+  ///   它把值**自动格式化成固定小数位**（`setDecimals(3)` → 显示 "0.000"），
+  ///   于是"在小数点后插入一个 1"必然产生 4 位小数 → 被内部 validate 判非法 → **按键被吞**。
+  ///   张老师实测："想把 0.000 改成 0.1，无法直接写一个 1"。
+  ///   改 QLineEdit 后保留用户原文（初始 "0"），配 QDoubleValidator 控范围即可自由编辑。
+  ///   小数位上限放宽到 6（>3）也是为此：允许 "0.1000" 这类中间文本存在。
+  weightEdit_ = new QLineEdit("0", this);
+  auto *wValidator = new QDoubleValidator(-0.25, 0.25, 6, this);
+  wValidator->setNotation(QDoubleValidator::StandardNotation);
+  weightEdit_->setValidator(wValidator);
+  weightEdit_->setMaximumWidth(90);
+  weightEdit_->setToolTip(
+      "压载横向位置（m），范围 −0.25 ~ 0.25；输入后点『移动压载』才生效");
+  weightEdit_->setPlaceholderText("0.1");
+
+  applyBtn_ = new QPushButton("移动压载", this);
+  applyBtn_->setToolTip("把压载移动到左侧输入框指定的位置（只有点这里才会真正移动）");
 
   auto *weightRow = new QHBoxLayout();
   weightRow->addWidget(weightSlider_, 3);
-  weightRow->addWidget(weightSpinBox_, 1);
+  weightRow->addWidget(weightEdit_, 1);
+  weightRow->addWidget(new QLabel("m", this));
+  weightRow->addWidget(applyBtn_);
   ctlForm->addRow("压载位置 y:", sliderValueLabel_);
   ctlForm->addRow(weightRow);
+
+  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可直接拖动滑条（松手 0.3 s 后移动）",
+                               this);
+  applyHint->setStyleSheet("color: #666; font-size: 11px;");
+  applyHint->setWordWrap(true);
+  ctlForm->addRow(applyHint);
 
   auto *sep = new QFrame(this);
   sep->setFrameStyle(QFrame::HLine);
@@ -392,7 +419,7 @@ void IncliningExperimentDialog::setupUI()
   wDyLabel_ = new QLabel("— Nm", this);
   ctlForm->addRow("横倾力矩 w·Δy:", wDyLabel_);
 
-  ctlGroup->setMinimumWidth(250);
+  ctlGroup->setMinimumWidth(300);   ///< 2026-09-21：加了输入框 + 「移动压载」按钮，250 太挤
   topRow->addWidget(ctlGroup);
   mainLayout->addLayout(topRow);
 
@@ -431,6 +458,9 @@ void IncliningExperimentDialog::setupUI()
           this, &IncliningExperimentDialog::onSpawn);
   connect(weightSlider_, &QSlider::valueChanged,
           this, &IncliningExperimentDialog::onSliderChanged);
+  /// ★ 2026-09-21 新增：确认按钮 —— 输入压载位置后**点它才真正移动**
+  connect(applyBtn_, &QPushButton::clicked,
+          this, &IncliningExperimentDialog::onApplyWeight);
   connect(recordBtn_, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onRecord);
   connect(resetBtn_, &QPushButton::clicked,
@@ -440,32 +470,18 @@ void IncliningExperimentDialog::setupUI()
   connect(deleteBtn, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onDeleteSelected);
 
-  /// 滑块 ↔ spinbox 双向同步（各自直接执行 moveWeight，不循环触发）
-  connect(weightSlider_, &QSlider::valueChanged, this, [this](int v) {
-    double y = (v / 500.0 - 0.5) * 0.5;
-    weightSpinBox_->blockSignals(true);
-    weightSpinBox_->setValue(y);
-    weightSpinBox_->blockSignals(false);
-  });
-  connect(weightSpinBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-          this, [this](double y) {
-    int v = static_cast<int>((y / 0.5 + 0.5) * 500.0);
-    v = std::clamp(v, 0, 500);
-    weightSlider_->blockSignals(true);
-    weightSlider_->setValue(v);
-    weightSlider_->blockSignals(false);
-
-    /// 直接执行方块移动和状态更新（不由 onSliderChanged 间接触发）
-    weightY_ = y;
-    sliderValueLabel_->setText(QString::number(y, 'f', 3) + " m");
-    if (spawned_)
-    {
-      moveWeight(y);
-      quiescent_ = false;
-      settleCounter_ = 0;
-    }
-    updateStatusDisplay();
-  });
+  /// ★ 2026-09-21：删掉原「spinbox ↔ 滑条双向同步、各自直接 moveWeight」的两条连接。
+  /// 现在**只有一条**滑条连接（onSliderChanged，内部防抖 300 ms 后才真正下发）；
+  /// 输入框**不再**触发任何下发 —— 必须由用户点「移动压载」（onApplyWeight）确认。
+  /// 原因：moveWeight 走 `/world/<w>/set_pose/**blocking**`（同步阻塞 RPC，超时 2000 ms，
+  /// 见 moveWeight 实现）→ 逐键 / 逐格触发会把 UI 线程冻住，
+  /// 表现即"输入框删不掉、输不进去"（张老师 2026-09-21 实测）。
+  ///
+  /// ★ 防抖定时器（滑条专用）：拖动时只更新显示，停手 300 ms 才下发
+  moveDebounce_ = new QTimer(this);
+  moveDebounce_->setSingleShot(true);
+  connect(moveDebounce_, &QTimer::timeout,
+          this, &IncliningExperimentDialog::onMoveDebounced);
 
   connect(lengthSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
           this, [this]() { updateTheoryDisplay(); });
@@ -548,6 +564,13 @@ void IncliningExperimentDialog::updateStatusDisplay()
   wDyLabel_->setText(QString::number(wDy, 'f', 1) + " Nm");
 }
 
+namespace {
+/// 流体密度 / 重力 —— **必须与下面 SDF 的 <fluid_density> 同源**
+/// （P3-2 教训：同一个量写两处，改一处必漏一处）
+constexpr double kFluidDensity = 1000.0;
+constexpr double kGravity = 9.81;
+}  // namespace
+
 std::string IncliningExperimentDialog::makeBargeSDF(
     double _L, double _B, double _H, double _density) const
 {
@@ -555,6 +578,17 @@ std::string IncliningExperimentDialog::makeBargeSDF(
   double ixx = mass / 12.0 * (_B * _B + _H * _H);
   double iyy = mass / 12.0 * (_L * _L + _H * _H);
   double izz = mass / 12.0 * (_L * _L + _B * _B);
+
+  /// ── 线性阻尼（2026-09-19 新增，与 SP-01 的 7.5 ① 同一修法）──────────────
+  /// 本实验要求"等待横倾角稳定"才能记录（判据 |Δheel|<0.05°/帧 × 15 帧，见 cc:973-979），
+  /// 而**长方体走不了插件的 pose_based 分支**（该分支需 hasCylinderGeometry_）→
+  /// 原先 `<enable_hydro>false</enable_hydro>` 等于零阻尼 → 横摇 60 s 不衰减 →
+  /// 判据永不满足、"记录数据"永远点不了。
+  /// 详见 doc/plans/headless_ctl_plan.md §14。
+  /// 长方体水线面恒为矩形 → A_wp = L·B **精确**（且 A_wp·B²/12 = L·B³/12 正是其水线面惯性矩）
+  const double A_wp = _L * _B;
+  const keship::LinearDampingCoeffs damp = keship::MakeLinearDamping(
+      A_wp, _L, _B, mass, ixx, iyy, 0.15, 0.10, kFluidDensity, kGravity);
 
   std::ostringstream sdf;
   sdf << "<?xml version=\"1.0\"?>\n"
@@ -597,8 +631,13 @@ std::string IncliningExperimentDialog::makeBargeSDF(
       << " name=\"keship::KSPlugin_HydroBuoyancy\">\n"
       << "      <link_name>base_link</link_name>\n"
       << "      <enable_buoyancy>true</enable_buoyancy>\n"
-      << "      <enable_hydro>false</enable_hydro>\n"
-      << "      <fluid_density>1000</fluid_density>\n"
+      << "      <enable_hydro>true</enable_hydro>\n"
+      << "      <linear_damping>\n"
+      << "        <Zw>" << damp.Zw << "</Zw>\n"
+      << "        <Kp>" << damp.Kp << "</Kp>\n"
+      << "        <Mq>" << damp.Mq << "</Mq>\n"
+      << "      </linear_damping>\n"
+      << "      <fluid_density>" << kFluidDensity << "</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n"
       << "      <buoyancy name=\"barge_hull\">\n"
       << "        <geometry>\n"
@@ -818,12 +857,13 @@ bool IncliningExperimentDialog::doSpawnBoth()
 
   /// 重置状态
   weightY_ = 0.0;
+  if (moveDebounce_) moveDebounce_->stop();
   weightSlider_->blockSignals(true);
   weightSlider_->setValue(250);
   weightSlider_->blockSignals(false);
-  weightSpinBox_->blockSignals(true);
-  weightSpinBox_->setValue(0.0);
-  weightSpinBox_->blockSignals(false);
+  weightEdit_->blockSignals(true);
+  weightEdit_->setText("0");
+  weightEdit_->blockSignals(false);
   sliderValueLabel_->setText("0.000 m");
   quiescent_ = false;
   settleCounter_ = 0;
@@ -848,17 +888,86 @@ void IncliningExperimentDialog::onSpawn()
 void IncliningExperimentDialog::onSliderChanged(int _value)
 {
   double y = (_value / 500.0 - 0.5) * 0.5;  // -0.25 to +0.25
+
+  /// 纯 UI 更新：输入框与读数**立即**跟随（不下发任何 RPC）
   weightY_ = y;
+  weightEdit_->blockSignals(true);
+  weightEdit_->setText(QString::number(y, 'f', 3));
+  weightEdit_->blockSignals(false);
   sliderValueLabel_->setText(QString::number(y, 'f', 3) + " m");
 
   if (spawned_)
   {
-    moveWeight(y);
+    /// ★ 必须**先**置"未稳定"：防抖窗口内若用户点了"记录"，此时压载尚未真正移动，
+    ///   置 false 可让 onRecord 拒绝，避免记录到"y 已改、船未动"的错误数据。
     quiescent_ = false;
     settleCounter_ = 0;
+    pendingY_ = y;
+    moveDebounce_->start(300);   ///< 停手 300 ms 才真正下发（避免逐格阻塞 RPC）
   }
 
   updateStatusDisplay();
+}
+
+/// ★ 2026-09-21 新增：移动压载的**统一入口**
+/// 所有路径（确认按钮 / 滑条防抖 / 压载归零）都走这里，保证"y / 判稳 / 下发 / 面板"四者一致。
+void IncliningExperimentDialog::commitMove(double _y)
+{
+  weightY_ = _y;
+  sliderValueLabel_->setText(QString::number(_y, 'f', 3) + " m");
+
+  if (spawned_)
+  {
+    /// 移动后必须重新判稳，才允许记录
+    quiescent_ = false;
+    settleCounter_ = 0;
+    moveWeight(_y);
+  }
+  updateStatusDisplay();
+}
+
+void IncliningExperimentDialog::onMoveDebounced()
+{
+  commitMove(pendingY_);
+}
+
+/// ★ 2026-09-21 新增：「移动压载」确认按钮
+/// 只有点它，输入框里的位置才会真正下发到仿真（输入过程零 RPC，故不再卡顿）。
+void IncliningExperimentDialog::onApplyWeight()
+{
+  const QString raw = weightEdit_->text().trimmed();
+  bool ok = false;
+  double y = raw.toDouble(&ok);
+  if (!ok)
+  {
+    QMessageBox::warning(this, "输入无效",
+        QString("无法识别 \"%1\"。请输入一个数值，范围 −0.25 ~ 0.25 m。").arg(raw));
+    return;
+  }
+  if (y < -0.25 || y > 0.25)
+  {
+    y = std::clamp(y, -0.25, 0.25);
+    QMessageBox::information(this, "超出量程",
+        QString("压载位置超出 ±0.25 m，已按 %1 m 处理。")
+            .arg(QString::number(y, 'f', 3)));
+  }
+
+  /// 与滑条防抖互斥：确认按钮是显式动作，立即生效
+  if (moveDebounce_) moveDebounce_->stop();
+  pendingY_ = y;
+
+  /// 同步滑条位置（blockSignals 防回环触发 onSliderChanged）
+  const int v = std::clamp(static_cast<int>((y / 0.5 + 0.5) * 500.0), 0, 500);
+  weightSlider_->blockSignals(true);
+  weightSlider_->setValue(v);
+  weightSlider_->blockSignals(false);
+
+  /// 规范化显示（"0.1000" → "0.100"），便于阅读
+  weightEdit_->blockSignals(true);
+  weightEdit_->setText(QString::number(y, 'f', 3));
+  weightEdit_->blockSignals(false);
+
+  commitMove(y);
 }
 
 void IncliningExperimentDialog::onRecord()
@@ -875,7 +984,17 @@ void IncliningExperimentDialog::onRecord()
   }
 
   double deltaY = weightY_;
-  double tanPhi = std::tan(currentHeelDeg_ * M_PI / 180.0);
+  /// ★ 2026-09-20 修复：`tanφ` 必须与 `w·Δy` **口径一致**（都取幅值）。
+  /// 原实现 `tanφ` 保留符号、而 `w·Δy` 用 `std::abs(deltaY)`（恒 ≥0）
+  /// ⇒ 压载移到**负侧**时记录点变成 (+w·Δy, −|tanφ|)，与正侧点符号自相矛盾
+  /// ⇒ `computeLinearFit` 的斜率被破坏、`GM实验 = 1/(disp·slope)` 全废。
+  /// 实测（无头，`data/test/sp03_inclining.py`）：只用正侧 → gmExp=0.1226（真值 ✓）；
+  /// **含负侧 → gmExp=1.75~2.24**（真值的 14~18 倍）✗。
+  /// 为什么取幅值而不是把 w·Δy 改成有符号：**图表的 x 轴硬编码从 0 开始**
+  /// （`IncliningChartWidget::clearData()` 里 `xMin_ = 0.0`，且 setData 只跟踪 `xMax_`）
+  /// ⇒ 作者的设计意图就是"幅值"；改成有符号还得动图表坐标轴（见 modules/gui.md 第 5 条的魔数换算）。
+  /// 表格里 `Δy(m)` 与 `φ(°)` **仍保留符号**，学生照样能看出倾斜方向。
+  double tanPhi = std::abs(std::tan(currentHeelDeg_ * M_PI / 180.0));
   double wDy = kWeightForce * std::abs(deltaY);
 
   IncliningDataPoint pt{weightY_, deltaY, currentHeelDeg_, tanPhi, wDy};
@@ -903,21 +1022,15 @@ void IncliningExperimentDialog::onRecord()
 
 void IncliningExperimentDialog::onResetWeight()
 {
-  weightY_ = 0.0;
+  if (moveDebounce_) moveDebounce_->stop();
+  commitMove(0.0);   ///< 统一入口：记录 y、重置判稳、下发、刷新面板
+
   weightSlider_->blockSignals(true);
   weightSlider_->setValue(250);
   weightSlider_->blockSignals(false);
-  weightSpinBox_->blockSignals(true);
-  weightSpinBox_->setValue(0.0);
-  weightSpinBox_->blockSignals(false);
-  sliderValueLabel_->setText("0.000 m");
-
-  if (spawned_)
-  {
-    moveWeight(0.0);
-    quiescent_ = false;
-    settleCounter_ = 0;
-  }
+  weightEdit_->blockSignals(true);
+  weightEdit_->setText("0");
+  weightEdit_->blockSignals(false);
 
   updateStatusDisplay();
 }

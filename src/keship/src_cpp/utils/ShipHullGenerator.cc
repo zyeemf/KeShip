@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -271,7 +273,10 @@ void ShipHullGenerator::computeHydroProps() {
   double rho = spec_.rho;
   double rhoW = 1000.0;  // 淡水
 
-  double d = (rho / rhoW) * D;  // 设计吃水
+  /// 设计吃水的**初值**（棱柱体近似，仅兜底）；
+  /// 精确值由 computeVolumeCurve() 末尾解 V_sub(d) = (ρ/ρw)·V_total 覆盖
+  /// —— 顺序原因：本函数在构造函数里先于 computeVolumeCurve() 执行。
+  double d = (rho / rhoW) * D;
   hydro_.draft = d;
 
   // === 水线面属性 (z=0) ===
@@ -356,12 +361,16 @@ void ShipHullGenerator::computeVolumeCurve() {
     for (int i = 0; i <= Nx; ++i) {
       double x = i * dx;
       std::vector<double> yVals(Nz+1);
-      // 只积分到吃水深度
+      // ★ 2026-09-19 修 B：自**龙骨**向上积分到水线。
+      // 水线在局部 z = dk − D（局部 z：甲板 0 → 龙骨 −D），
+      // 故积分区间是 z ∈ [−D, dk−D]，即自龙骨起 j·dz。
+      // 原实现写 `zGz = -j*dz`（自**甲板**向下）→ 积的是**水线以上**的体积，
+      // 与结构体注释「排水体积」及所有调用者的预期相反（V_top + V_sub ≡ V_total）。
+      // 见 doc/plans/headless_ctl_plan.md §16。
       int nCut = static_cast<int>(dk / D * Nz);
       if (nCut > Nz) nCut = Nz;
       for (int j = 0; j <= nCut; ++j) {
-        double zAbs = j * dz;
-        double zGz = -zAbs;
+        double zGz = -D + j * dz;   // 自龙骨 −D 向上
         yVals[j] = halfBreadthFunc(x, zGz);
       }
       // 梯形积分到吃水
@@ -372,6 +381,82 @@ void ShipHullGenerator::computeVolumeCurve() {
       areas[i] = 2.0 * area;
     }
     hydro_.volumeCurve[k] = trapz(areas, dx);
+  }
+
+  /// ★ 2026-09-19 修 ④：设计吃水 = 解 V_sub(d) = (ρ/ρw)·V_total，
+  /// 而非 computeHydroProps 里那个**棱柱体近似** (ρ/ρw)·D
+  /// （把船当等截面体；WigleyClassic 差 0.15 m，细长船型失真严重）。见 §16。
+  /// 放在这里是因为**构造函数中 computeHydroProps() 先于 computeVolumeCurve() 执行**，
+  /// 只有此处体积曲线才就绪。
+  {
+    const double target = (spec_.rho / 1000.0) * hydro_.volume;   // 需排开的水量
+    const auto &dc = hydro_.draftCurve;
+    const auto &vc = hydro_.volumeCurve;
+    if (vc.size() >= 2 && dc.size() == vc.size() && vc.back() > 1e-9) {
+      if (target <= vc.front()) {
+        hydro_.draft = dc.front();
+      } else if (target >= vc.back()) {
+        hydro_.draft = dc.back();
+      } else {
+        double lo = dc.front(), hi = dc.back();
+        for (int it = 0; it < 60; ++it) {   // 体积曲线单调递增 → 二分
+          const double mid = 0.5 * (lo + hi);
+          if (volumeAtDraft(mid) < target) lo = mid; else hi = mid;
+        }
+        hydro_.draft = 0.5 * (lo + hi);
+      }
+    }
+  }
+
+  /// ★★ 缺陷 ⑩ 修复（2026-09-20）：设计吃水处的**正确**静水力 → 新字段。
+  /// **落点是硬约束**：computeHydroProps() 在构造函数里先于本函数执行，
+  /// 那时 hydro_.draft 还是棱柱体初值 (ρ/ρw)·D，不是解出来的设计吃水。
+  /// 原口径错：Aw/Ix 取 z=0（甲板，最宽处）、volume/KB 按全深度积分、
+  /// GM = KB + BM − KG 坐标系混用（KB 是"距甲板深度"却当"距龙骨高度"用）。
+  /// 新字段**不动** volume/KB/BM/Aw/Ix/GM —— 4 处 `m = rho*volume` 依赖 volume 是全船体积。
+  /// 见 doc/plans/headless_ctl_plan.md §26。
+  {
+    const double d = hydro_.draft;
+    const double zw = d - spec_.D;                 // 水线局部 z（甲板 0 → 龙骨 −D）
+    const int Nx = 400;
+    const double dx = spec_.L / Nx;
+
+    /// 设计吃水处水线面
+    {
+      std::vector<double> yV(Nx + 1), y3V(Nx + 1);
+      for (int i = 0; i <= Nx; ++i) {
+        const double y = halfBreadthFunc(i * dx, zw);
+        yV[i] = y; y3V[i] = y * y * y;
+      }
+      hydro_.AwD = 2.0 * trapz(yV, dx);
+      hydro_.IxD = (2.0 / 3.0) * trapz(y3V, dx);
+    }
+
+    /// 浸水体积与浮心高度（自龙骨向上积分到水线）
+    {
+      const int Nz = 400;
+      const double dz = d / Nz;
+      std::vector<double> areas(Nx + 1), mz(Nx + 1);
+      for (int i = 0; i <= Nx; ++i) {
+        const double x = i * dx;
+        std::vector<double> yV(Nz + 1), yzV(Nz + 1);
+        for (int j = 0; j <= Nz; ++j) {
+          const double zGz = -spec_.D + j * dz;    // 自龙骨 −D 向上
+          const double y = halfBreadthFunc(x, zGz);
+          yV[j] = y;
+          yzV[j] = y * (j * dz);                   // 距龙骨高度加权
+        }
+        areas[i] = 2.0 * trapz(yV, dz);
+        mz[i] = 2.0 * trapz(yzV, dz);              // = areas * KB_x
+      }
+      /// ★ 复用同一条体积曲线 → 与 `m = rho*volume` 的质量**精确自洽**
+      /// （若另用高分辨率重算会与曲线差 ~0.07%，见 §26.3）
+      hydro_.volumeD = volumeAtDraft(d);
+      hydro_.KBup = (hydro_.volumeD > 1e-12) ? trapz(mz, dx) / hydro_.volumeD : 0.0;
+    }
+
+    hydro_.BMd = (hydro_.volumeD > 1e-12) ? hydro_.IxD / hydro_.volumeD : 0.0;
+    hydro_.GMd = hydro_.KBup + hydro_.BMd - spec_.D / 2.0;   // 均质船体 KG = D/2
   }
 }
 
@@ -424,6 +509,39 @@ bool ShipHullGenerator::writeVisualOBJ(const std::string &_fp) const {
 
 bool ShipHullGenerator::writeBuoyancyOBJ(const std::string &_fp) const {
   return writeOBJ(buoyMesh_, _fp, spec_.L * 0.5);
+}
+
+std::string ShipHullGenerator::meshTag() const {
+  /// FNV-1a 64 —— 只求"内容不同则指纹不同"，不用于安全用途。
+  /// 输入：两个网格的顶点数 / 三角形数 + 全部顶点坐标的 8 字节位模式。
+  /// 三角形顶点位置与 vertices 重复（generateMesh 存的是副本），故不必再遍历三角形。
+  uint64_t h = 1469598103934665603ULL;
+  auto mixByte = [&h](unsigned char _b) {
+    h ^= static_cast<uint64_t>(_b);
+    h *= 1099511628211ULL;
+  };
+  auto mixU64 = [&](uint64_t _v) {
+    for (int i = 0; i < 8; ++i) mixByte(static_cast<unsigned char>((_v >> (8 * i)) & 0xFFULL));
+  };
+  auto mixMesh = [&](const MeshDataSimple &_m) {
+    mixU64(_m.vertices.size());
+    mixU64(_m.triangles.size());
+    for (const auto &v : _m.vertices) {
+      const double c[3] = {v.X(), v.Y(), v.Z()};
+      for (double x : c) {
+        uint64_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(x), "double/uint64 尺寸不一致");
+        std::memcpy(&bits, &x, sizeof(bits));
+        mixU64(bits);
+      }
+    }
+  };
+  mixMesh(visMesh_);
+  mixMesh(buoyMesh_);
+
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+  return std::string(buf, 8);   ///< 取前 8 位十六进制，足够区分且文件名短
 }
 
 bool ShipHullGenerator::writeOBJ(const MeshDataSimple &_mesh,

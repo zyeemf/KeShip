@@ -685,4 +685,40 @@ MeshCacheCleanupResult CleanupUnusedMeshCache()
   return result;
 }
 
+int RemoveStaleMeshFiles(const std::string &_dir, const std::string &_stemPrefix)
+{
+  if (_dir.empty() || _stemPrefix.empty())
+    return 0;
+
+  std::error_code ec;
+  if (!std::filesystem::exists(_dir, ec) || ec)
+    return 0;
+
+  int deleted = 0;
+  std::filesystem::directory_iterator end;
+  for (std::filesystem::directory_iterator it(_dir, ec);
+       !ec && it != end; it.increment(ec))
+  {
+    if (!it->is_regular_file(ec)) { ec.clear(); continue; }
+    const std::string name = it->path().filename().string();
+    /// 只认 <prefix>_<tag>.obj 与旧式 <prefix>.obj —— 同目录可能还有其它来源的
+    /// 文件（如 hull_visual.obj / hull_vis_a.mtl），不越界删
+    if (name.rfind(_stemPrefix, 0) != 0) continue;
+    const size_t p = _stemPrefix.size();
+    if (name.size() <= p) continue;
+    const char sep = name[p];
+    if (sep != '_' && sep != '.') continue;
+    /// 用 `<`（不是 `<=`）：`<prefix>.obj` 的长度恰好是 p+4，必须允许
+    /// （2026-09-19：探针 `mesh_stale_cleanup_probe.cc` 抓出此处原为 `<=`，
+    ///  导致旧式无 tag 文件 hull_vis.obj 漏删）
+    if (name.size() < p + 4 ||
+        name.compare(name.size() - 4, 4, ".obj") != 0) continue;
+
+    std::filesystem::remove(it->path(), ec);
+    if (!ec) ++deleted;
+    ec.clear();
+  }
+  return deleted;
+}
+
 } // namespace keship

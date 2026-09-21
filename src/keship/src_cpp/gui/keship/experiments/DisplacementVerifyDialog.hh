@@ -24,6 +24,7 @@
 
 #include <gz/transport/Node.hh>
 #include <gz/msgs/pose_v.pb.h>
+#include <gz/msgs/double.pb.h>
 
 #include "ShipHullGenerator.hh"
 
@@ -61,6 +62,15 @@ struct DispPoseState {
   bool found = false;
 };
 
+/// 实测浸水体积共享状态（插件话题回调线程 → UI 线程）
+/// 来源：KSPlugin_HydroBuoyancy 的 <publish_subvolume> 话题（SP-01 专用）
+struct DispVolState {
+  std::mutex mutex;
+  bool alive = true;
+  double subVol = 0.0;
+  bool hasSample = false;   ///< 是否收到过样本（未收到时不得当 0 用，否则又变成"假实测"）
+};
+
 class DisplacementVerifyDialog : public QDialog {
   Q_OBJECT
  public:
@@ -83,9 +93,14 @@ class DisplacementVerifyDialog : public QDialog {
   void updateStatusDisplay();
   void updateChart();
   void initPoseSubscription();
+  void initVolumeSubscription();
   std::string makeSDF() const;
   bool doDeleteHull();
-  bool doSpawnHull();
+  /// @param _keepRecords true = 只重建模型（**保留**已记录的数据表与当前配载），
+  ///        供"改配载 → 重建"用；false = 全新一轮（清表、配载归零）。
+  bool doSpawnHull(bool _keepRecords = false);
+  /// 改配载后按新质量**重建**模型（防抖定时器的超时槽）
+  void respawnForPayload();
   bool resolveEntityID(const std::string &_name, uint32_t &_id);
 
   gz::transport::Node &transportNode_;
@@ -97,6 +112,10 @@ class DisplacementVerifyDialog : public QDialog {
   std::string poseTopic_;
   std::string payloadTopic_;
   gz::transport::Node::Publisher payloadPub_;
+
+  /// 实测浸水体积订阅（SP-01：实测 ∇ 的真实来源）
+  std::shared_ptr<DispVolState> volState_;
+  std::string subVolTopic_;
 
   QComboBox *typeCombo_;
   QDoubleSpinBox *lengthSpin_, *breadthSpin_, *depthSpin_;
@@ -113,6 +132,9 @@ class DisplacementVerifyDialog : public QDialog {
   std::vector<DispDataPoint> recordedData_;
 
   QTimer *poseTimer_;
+  /// 配载防抖（2026-09-19）：滑条 valueChanged 会连续触发（0~1000 量程最多上千次），
+  /// 而改配载要**重建模型** → 必须等用户停下再重建一次。
+  QTimer *payloadDebounce_ = nullptr;
 
   uint32_t hullEntityId_ = 0;
   bool spawned_ = false;

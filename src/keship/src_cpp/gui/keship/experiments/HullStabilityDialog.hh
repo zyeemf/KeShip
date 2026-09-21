@@ -70,6 +70,10 @@ public:
 private slots:
   void onSpawn();
   void onSliderChanged(int _value);
+  /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 SP-03 同一次改造）
+  void onApplyWeight();
+  /// ★ 2026-09-21 新增：滑条防抖到期后真正下发
+  void onMoveDebounced();
   void onRecord();
   void onDeleteSelected();
   void onResetWeight();
@@ -90,6 +94,8 @@ private:
   bool doSpawnAll();
   bool resolveEntityID(const std::string &_name, uint32_t &_id);
   bool moveWeight(double _y);
+  /// ★ 2026-09-21 新增：移动压载的**统一入口**（与 SP-03 同一套写法）
+  void commitMove(double _y);
   void computeLinearFit(const std::vector<HullDataPoint> &_pts,
                          double &_slope, double &_intercept) const;
 
@@ -109,7 +115,12 @@ private:
   QLabel *volLabel_, *kbLabel_, *bmLabel_, *gmLabel_;
 
   QSlider *weightSlider_;
-  QDoubleSpinBox *weightSpinBox_;
+  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 SP-03）。
+  /// QDoubleSpinBox 会把值格式化成固定小数位（decimals=3 → "0.000"），
+  /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被判非法 → **按键被吞**。
+  /// QLineEdit 保留用户原文 + QDoubleValidator（小数位 6）即可自由编辑。
+  QLineEdit *weightEdit_;
+  QPushButton *applyBtn_;      ///< 「移动压载」确认按钮
   QLabel *sliderValueLabel_, *heelLabel_, *deltaYLabel_, *wDyLabel_;
 
   QPushButton *spawnBtn_, *recordBtn_, *resetBtn_, *clearBtn_;
@@ -119,6 +130,8 @@ private:
   std::vector<HullDataPoint> recordedData_;
 
   QTimer *poseTimer_;
+  QTimer *moveDebounce_ = nullptr;   ///< ★ 2026-09-21：滑条防抖（300 ms）
+  double pendingY_ = 0.0;            ///< 防抖期间待下发的位置
 
   uint32_t hullEntityId_ = 0;
   uint32_t weightEntityId_ = 0;
