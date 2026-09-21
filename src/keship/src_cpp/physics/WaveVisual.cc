@@ -126,6 +126,15 @@ class keship::WaveVisualPrivate
   public: std::string bumpMapPath;
   public: std::string cubeMapPath;
 
+  /// \brief 环境参数里的「流速」（m/s）与方向（rad，0 = 世界 +Y 北向、顺时针）。
+  ///
+  /// ★ 2026-09-21（缺陷 W-3 的视觉侧接入）：这两个值此前**没有任何消费者** ——
+  /// 由 `KSPlugin_WavesModel` 随波浪参数一并广播到
+  /// `/keship/wavefield/<名>/parameters`（键 `current_speed` / `current_direction`）。
+  /// 视觉上**只有它驱动水面细节的定向漂移**：流速 0 ⇒ 完全不漂移。
+  public: double currentSpeed_ = 0.0;
+  public: double currentDirection_ = 0.0;
+
   /// \brief Transport node.
   public: transport::Node node;
 
@@ -332,6 +341,51 @@ void WaveVisualPrivate::UploadShaderParams()
   if (n > kMaxWaves) n = kMaxWaves;
   (*vsParams)["Nwaves"] = static_cast<int>(n);
 
+  /// ★★ 2026-09-21（第三轮 GUI 反馈定型）：把「平移」与「起伏」彻底分开。
+  ///
+  /// 张老师反馈两点：
+  ///   ① "0 级时水面有**移动**而无变化 —— 我要的是不移动，但可以有**轻微起伏**
+  ///      （现实风平浪静时也波光粼粼）"；
+  ///   ② "不论多少级海况，水面都以一个**恒定速度**移动"。
+  ///
+  /// 根因：此前用"波浪相速度"驱动**纹理整体平移** ——
+  ///   · 平移是"伪运动"（真运动由几何波体现），且与海况挂钩 ⇒ 3 级以上被上限削平 ⇒ 恒定速度；
+  ///   · 0 级时仍在移动（"有移动无变化"），而张老师要的是"不移动 + 有起伏"。
+  ///
+  /// 现在：
+  ///   · **平移只由「流速」驱动**（`flowSpeed` / `flowDir`）——
+  ///     流速默认 0 ⇒ 水面**完全不移动**；这正是 W-3 的视觉侧接入。
+  ///   · **"波光粼粼"改由原地振荡扰动提供**（见 fs 中的 `w1`/`w2`）——
+  ///     不产生净位移，幅度由 `detailActivity` 控制。
+  float flowSpeed = static_cast<float>(this->currentSpeed_);
+  const double cdir = this->currentDirection_;
+  /// 方向约定与 WindParams 一致：0 = 世界 +Y（北向），顺时针
+  float flowDirV[2] = {static_cast<float>(std::sin(cdir)),
+                       static_cast<float>(std::cos(cdir))};
+  (*vsParams)["flowSpeed"] = flowSpeed;
+  (*vsParams)["flowDir"].InitializeBuffer(2);
+  (*vsParams)["flowDir"].UpdateBuffer(flowDirV);
+
+  /// 细节活跃度 0~1：控制**原地扰动**的幅度。
+  /// 以 3 级海况的 Σ|a_i| ≈ 0.60 m 作"满活跃"参考，取平方根使低海况也有可感幅度；
+  /// **下限 0.35** —— 0 级海况（几何波严格静止）仍有轻微起伏，画面不"像卡死"。
+  float detailActivity = 0.35f;
+  {
+    float ampSum = 0.0f;
+    for (size_t i = 0; i < n; ++i)
+      ampSum += static_cast<float>(std::abs(this->wavefield.Amplitude_V()[i]));
+    constexpr float kRefAmpSum = 0.60f;   // 约 3 级海况
+    /// 用**四次方根**压缩：低海况的 Σ|a_i| 很小（1 级仅 0.035），
+    /// 若用平方根会被下限 0.35 截断、与 0 级无区分（探针实测）。
+    /// 四次方根后 1 级 ≈0.49、2 级 ≈0.77、3 级及以上 =1.0，区分度良好。
+    const float x = std::max(0.0f, ampSum / kRefAmpSum);
+    float a = std::sqrt(std::sqrt(x));
+    if (a > 1.0f) a = 1.0f;
+    if (a < 0.35f) a = 0.35f;
+    detailActivity = a;
+  }
+  (*vsParams)["detailActivity"] = detailActivity;
+
   for (size_t i = 0; i < kMaxWaves; ++i)
   {
     std::string is = std::to_string(i);
@@ -365,6 +419,17 @@ void WaveVisualPrivate::UploadShaderParams()
   auto fsParams = this->material->FragmentShaderParams();
   (*fsParams)["hdrMultiplier"] = this->hdrMultiplier;
   (*fsParams)["fresnelPower"] = this->fresnelPower;
+
+  /// ★ 2026-09-21：法线贴图的纹理坐标已改到**片段着色器**逐像素计算
+  /// （顶点着色器逐顶点算会因细节层纹理频率高于顶点采样率而抖动），
+  /// 故 fs 也需要 bumpScale / bumpSpeed（复用上面同一组值）。
+  (*fsParams)["bumpScale"].InitializeBuffer(2);
+  (*fsParams)["bumpScale"].UpdateBuffer(bumpScaleV);
+  (*fsParams)["bumpSpeed"].InitializeBuffer(2);
+  (*fsParams)["bumpSpeed"].UpdateBuffer(bumpSpeedV);
+
+  /// 细节活跃度：fs 用它控制**原地扰动**幅度（"波光粼粼"的强度）
+  (*fsParams)["detailActivity"] = detailActivity;
 
   float shallowColorV[4] = {
       static_cast<float>(this->shallowColor.R()),
@@ -411,6 +476,11 @@ void WaveVisualPrivate::UpdateTime()
           this->currentSimTime).count()) * 1e-9f;
   auto params = this->material->VertexShaderParams();
   (*params)["t"] = t;
+
+  /// ★ 2026-09-21：fs 也要 t —— 法线贴图的纹理坐标已移到片段着色器里算
+  /// （见 UploadShaderParams 的说明）。每帧与 vs 同步更新，否则两层细节会静止。
+  auto fsParams = this->material->FragmentShaderParams();
+  (*fsParams)["t"] = t;
 }
 
 //////////////////////////////////////////////////
@@ -474,8 +544,26 @@ void WaveVisualPrivate::OnWavefield(const msgs::Param &_msg)
   checkDouble("angle", this->wavefield.Angle());
   checkInt("number", static_cast<int64_t>(this->wavefield.Number()));
 
+  /// ★ 2026-09-21：解析「流速 / 流向」（W-3 的视觉侧接入）。
+  /// 它们与波浪参数走同一条广播通道，任一变化都要触发 uniform 重传。
+  bool envChanged = false;
+  auto itCur = p.find("current_speed");
+  if (itCur != p.end() &&
+      std::abs(itCur->second.double_value() - this->currentSpeed_) > 1e-9)
+  {
+    this->currentSpeed_ = itCur->second.double_value();
+    envChanged = true;
+  }
+  auto itCurDir = p.find("current_direction");
+  if (itCurDir != p.end() &&
+      std::abs(itCurDir->second.double_value() - this->currentDirection_) > 1e-9)
+  {
+    this->currentDirection_ = itCurDir->second.double_value();
+    envChanged = true;
+  }
+
   this->wavefield.Load(_msg);
-  if (waveChanged)
+  if (waveChanged || envChanged)
     this->paramsSet = false;
 }
 

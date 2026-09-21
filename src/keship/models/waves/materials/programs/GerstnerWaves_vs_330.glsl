@@ -52,6 +52,15 @@ uniform vec2 bumpScale;
 uniform vec2 bumpSpeed;
 uniform float t;
 uniform float tau;
+// 法线细节的**定向漂移**：由「流速」驱动（米/秒 + 世界方向）。
+// ★ 2026-09-21：流速默认 0 ⇒ 漂移为 0 ⇒ 水面**不整体移动**。
+//   波浪本身不产生纹理平移（波浪的运动由几何波体现）；
+//   "波光粼粼"的动态由 fs 里的**原地振荡扰动**提供（不产生净位移）。
+uniform float flowSpeed;
+uniform vec2  flowDir;
+// 细节活跃度 0~1（由波幅决定）：控制原地扰动的幅度 —— 浪大时细节更"活"。
+// 下限不为 0，保证 0 级海况仍有轻微起伏（否则画面像卡死）。
+uniform float detailActivity;
 
 // 8 组分波参数（命名 uniform，由 WaveVisual 按 Number() 动态填充）
 uniform float amp0;   uniform float amp1;   uniform float amp2;   uniform float amp3;
@@ -72,7 +81,8 @@ out block
 {
   mat3 rotMatrix;
   vec3 eyeVec;
-  vec2 bumpCoord;
+  vec2 worldXY;   // 顶点原始平面坐标（米）—— 线性量，插值到片元是精确的
+  vec2 flowXY;    // 主波流动位移（米）—— 对整帧是常量
 } outVs;
 
 // Compute linear combination of Gerstner waves as described in
@@ -153,8 +163,28 @@ void main()
 
   gl_Position = worldviewproj_matrix * P;
 
-  // Compute texture coordinates for bump map
-  outVs.bumpCoord = uv0.xy*bumpScale + t*bumpSpeed;
+  // ★ 2026-09-21（S2 修正）：法线贴图的采样坐标改到**片段着色器**里逐像素计算。
+  //
+  // 原先在顶点着色器算 bumpCoord：细节层纹理周期 ≈2.9 m，而 LOD 网格顶点间距
+  // 中心区 2.56 m、外围最大 15.4 m —— **纹理频率高于顶点采样率（违反 Nyquist）**
+  // ⇒ 相邻三角形之间纹理相位跳变，且随 t 变化 ⇒ 肉眼看到"细纹一直在抖动"
+  //（张老师 2026-09-21 实测反馈）。逐像素算即把采样率提到像素级，抖动消失。
+  //
+  // 这里只往下传两个量：
+  //   worldXY —— 原始平面坐标（**线性** ⇒ 插值到片元是精确的，不会引入误差）；
+  //   flowXY  —— 流动位移（**对整帧是常量** ⇒ 插值同样无害）。
+  // 两者相加后才在 fs 里乘 bumpScale / 加 t*bumpSpeed，因此高频纹理不再被顶点插值破坏。
+  //
+  // 另：两层改为**同向**（都沿主波方向 dir0），速度比 1.0 : 0.55、尺度比 1.0 : 0.43。
+  // 原先第二层反向 —— 反向会在两层之间产生拍频（约 1 s 一拍），观感即"抖"。
+  // 同向异速同样能打散单层平铺的重复纹，但没有拍频。
+  // ★ 2026-09-21（第三轮 GUI 反馈修正）：纹理漂移**只由「流速」驱动**。
+  //   之前几版用波浪相速度驱动 → 观感是"贴图整体在平移"，且速度与海况挂钩
+  //   （张老师反馈："0 级有移动而无变化"、"不论多少级都恒定速度移动"）。
+  //   现在：波浪**不产生任何纹理平移**（波浪运动由几何波体现），
+  //   漂移只来自环境参数里的「流速」（默认 0 ⇒ 完全不移动）。
+  outVs.worldXY = vertex.xy;
+  outVs.flowXY  = flowDir * (flowSpeed * t);
 
   outVs.eyeVec = P.xyz - camera_position_object_space; // eye position in vertex space
 }

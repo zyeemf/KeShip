@@ -80,7 +80,11 @@ std::string WaterAreaVisualManager::MakeSurfaceSdf(const WaterArea &_area) const
       << "            <fragment>" << fragmentShader << "</fragment>\n"
       << "            <parameters>\n"
       << "              <rescale>0.125</rescale>\n"
-      << "              <bumpScale>75 75</bumpScale>\n"
+      /// ★ 2026-09-21（S2）：bumpScale 语义变了 —— 着色器改用**模型局部坐标（米）**
+      /// 采样法线贴图（原先用归一化 uv0，导致细节世界尺度随水域尺寸变化）。
+      /// 故这里从 75 改为 0.15 ⇒ 每 1/0.15 ≈ 6.67 m 一个纹理周期（与原先观感一致），
+      /// 第二层再乘 0.43 ⇒ ≈2.9 m，两层共同覆盖 2.9~6.7 m 的细节尺度。
+      << "              <bumpScale>0.15 0.15</bumpScale>\n"
       << "              <bumpSpeed>0.01 0.0</bumpSpeed>\n"
       << "              <hdrMultiplier>0.4</hdrMultiplier>\n"
       << "              <fresnelPower>5.0</fresnelPower>\n"
@@ -271,50 +275,238 @@ bool WaterAreaVisualManager::PointInPolygon(
   return inside;
 }
 
-MeshDataSimple WaterAreaVisualManager::GeneratePolygonMesh(
+///////////////////////////////////////////////////////////////////////////////
+/// 网格 LOD：沿单轴生成"中心密、外围疏"的非均匀采样坐标（2026-09-21）
+///
+/// 背景：原先全水域用**单一等密度**网格。默认水域（500×500 m）为
+/// 197×197 = 38 809 顶点，每顶点在 vertex shader 里跑 Nwaves 个 Gerstner 分量；
+/// 而学生视野通常只看船周围 50~100 m，**远处 80% 顶点几乎不可见却按最高密度计算**。
+///
+/// 做法：保留规则拓扑（(nx−1)×(ny−1) 个四边形），只把**顶点位置**按半径分级拉开 ——
+/// 相邻格共享顶点，因此**不会产生 T-junction 裂缝**，三角形拼接逻辑无需改动。
+std::vector<double> WaterAreaVisualManager::BuildAxisSamples(double _lo,
+    double _hi, double _center, double _hFine,
+    const std::vector<LodBand> &_bands)
+{
+  std::vector<double> out;
+  if (!(_hi > _lo) || !(_hFine > 0.0))
+  {
+    out.push_back(_lo);
+    out.push_back(_hi);
+    return out;
+  }
+
+  /// 半跨：取中心到两端的较大者（水域可不对称，此时另一侧按需裁剪）
+  const double halfSpan = std::max(_center - _lo, _hi - _center);
+  if (halfSpan <= 0.0)
+  {
+    out.push_back(_lo);
+    out.push_back(_hi);
+    return out;
+  }
+
+  /// 1) 生成"相对中心的半径"序列（升序，首元素 0）
+  std::vector<double> radii;
+  radii.push_back(0.0);
+
+  double r = 0.0;
+  double step = _hFine;
+  double prevEnd = 0.0;
+  for (size_t k = 0; k < _bands.size(); ++k)
+  {
+    double rEnd = _bands[k].radiusFrac * halfSpan;
+    /// 绝对下限：防止小水域时中心细区被比例压得太小（否则步长被迫拉大）
+    if (_bands[k].minRadius > 0.0 && rEnd < _bands[k].minRadius)
+      rEnd = _bands[k].minRadius;
+    /// 绝对上限：抑制"大水域时中心细区被比例撑得过大"
+    if (_bands[k].maxRadius > 0.0 && rEnd > _bands[k].maxRadius)
+      rEnd = _bands[k].maxRadius;
+    /// 档位必须单调递增，否则后面的档会被前面的吞掉
+    if (rEnd < prevEnd) rEnd = prevEnd;
+    prevEnd = rEnd;
+
+    if (k > 0) step = _hFine * _bands[k].stepMul;   // 首档用基准步长
+    if (!(step > 0.0)) step = _hFine;
+    while (r + step <= rEnd - 1e-9)
+    {
+      r += step;
+      radii.push_back(r);
+    }
+    /// 档边界对齐：补一个正好落在 rEnd 的采样点，避免档间出现比 step 更宽的缝
+    if (r < rEnd - 1e-9)
+    {
+      r = rEnd;
+      radii.push_back(r);
+    }
+  }
+
+  /// 2) 末档继续延伸到覆盖整个半跨（含超出 halfSpan 一点点，供裁剪取用）
+  step = _hFine * (_bands.empty() ? 1.0 : _bands.back().stepMul);
+  if (!(step > 0.0)) step = _hFine;
+  while (r + step < halfSpan)
+  {
+    r += step;
+    radii.push_back(r);
+  }
+  if (r < halfSpan)
+    radii.push_back(halfSpan);
+
+  /// 3) 由半径序列生成坐标：负侧（含中心）→ 正侧，并裁剪到 [_lo, _hi]
+  for (auto it = radii.rbegin(); it != radii.rend(); ++it)
+  {
+    const double v = _center - *it;
+    if (v >= _lo - 1e-9 && v <= _hi + 1e-9)
+      out.push_back(v);
+  }
+  for (size_t k = 1; k < radii.size(); ++k)
+  {
+    const double v = _center + radii[k];
+    if (v >= _lo - 1e-9 && v <= _hi + 1e-9)
+      out.push_back(v);
+  }
+
+  if (out.size() < 2)
+  {
+    out.clear();
+    out.push_back(_lo);
+    out.push_back(_hi);
+    return out;
+  }
+
+  /// 4) 保证两端贴到水域边界（否则边缘会缺一条带）
+  if (out.front() > _lo + 1e-9) out.insert(out.begin(), _lo);
+  if (out.back() < _hi - 1e-9) out.push_back(_hi);
+
+  return out;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// 中心区基准步长：按 PMS 最高显著分量波长自适应，每波长 ≥3 个网格单元，
+/// 避免波浪欠采样呈现"一格一格"/aliasing（2026-08 波浪显示修复）。
+/// 最高显著分量为 n=(number-1)/2，λ_min = λ_p / scale^((number-1)/2)
+/// （PMS 采样 n 从 -(number-1)/2 到 +(number-1)/2，见 Wavefield::RecalculatePms）。
+double WaterAreaVisualManager::ComputeBaseStep(const WaveParams &_wp)
+{
+  double targetStep = 1.0;
+  if (_wp.model == "PMS" && _wp.period > 0.0 && _wp.number > 0)
+  {
+    constexpr double kG = 9.81;
+    const double lambdaP = kG * _wp.period * _wp.period / (2.0 * M_PI);
+    const double nMax = (static_cast<double>(_wp.number) - 1.0) / 2.0;
+    const double lambdaMin = lambdaP / std::pow(_wp.scale, nMax);
+    targetStep = lambdaMin / 3.0;
+  }
+  if (targetStep < 0.5) targetStep = 0.5;
+  if (targetStep > 5.0) targetStep = 5.0;
+  return targetStep;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// 网格 LOD 档位（唯一来源，GeneratePolygonMesh 与 ComputeMeshStats 共用）
+const std::vector<WaterAreaVisualManager::LodBand> &
+WaterAreaVisualManager::LodBands()
+{
+  /// 半径区间取值依据：
+  /// - 细区 40~80 m：40 m 是"船周围必须精细"的最小范围（小水域也能保证质量），
+  ///   80 m 是上限（再远肉眼分不出密度差）；
+  /// - 中区 120~240 m：一眼能看到的范围；
+  /// - 再远即使步长很大也看不出来。
+  static const std::vector<LodBand> kBands = {
+      {0.15, 1.0, 40.0, 80.0},     // 细区：保持基准步长（船所在的核心区）
+      {0.45, 2.5, 120.0, 240.0},   // 中区：2.5 倍步长
+      {1.01, 6.0, -1.0, -1.0}};    // 其余：6 倍步长
+  return kBands;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+WaterAreaVisualManager::MeshStats WaterAreaVisualManager::ComputeMeshStats(
     const WaterArea &_area) const
+{
+  MeshStats st;
+
+  /// 跑一遍**真实生成路径**（含多边形裁剪 + 上限夹紧），
+  /// 采样点数由 GeneratePolygonMesh 回传 —— 不自己重算，避免与真实生成不一致。
+  MeshDataSimple mesh = GeneratePolygonMesh(_area, &st.samplesX, &st.samplesY);
+  st.vertices = mesh.vertices.size();
+  st.triangles = mesh.triangles.size();
+  return st;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+MeshDataSimple WaterAreaVisualManager::GeneratePolygonMesh(
+    const WaterArea &_area, size_t *_samplesX, size_t *_samplesY) const
 {
   double bboxW = _area.xMax - _area.xMin;
   double bboxH = _area.yMax - _area.yMin;
   double cx = (_area.xMin + _area.xMax) * 0.5;
   double cy = (_area.yMin + _area.yMax) * 0.5;
 
-  // 网格步长按 PMS 最高显著分量波长自适应：每波长 ≥3 个网格单元，
-  // 避免波浪欠采样呈现"一格一格"/aliasing（2026-08 波浪显示修复）
-  // 最高显著分量为 n=(number-1)/2，波长 λ_min = λ_p / scale^((number-1)/2)
-  // （PMS 采样 n 从 -(number-1)/2 到 +(number-1)/2，见 Wavefield::RecalculatePms）
-  double targetStep = 1.0;
-  const auto &wp = _area.waveParams;
-  if (wp.model == "PMS" && wp.period > 0.0 && wp.number > 0)
-  {
-    constexpr double kG = 9.81;
-    const double lambdaP = kG * wp.period * wp.period / (2.0 * M_PI);
-    const double nMax = (static_cast<double>(wp.number) - 1.0) / 2.0;
-    const double lambdaMin = lambdaP / std::pow(wp.scale, nMax);
-    targetStep = lambdaMin / 3.0;
-  }
-  if (targetStep < 0.5) targetStep = 0.5;
-  if (targetStep > 5.0) targetStep = 5.0;
+  /// 中心区基准步长（与 ComputeMeshStats 共用同一实现）
+  double targetStep = ComputeBaseStep(_area.waveParams);
 
-  int divsX = static_cast<int>(std::ceil(bboxW / targetStep));
-  int divsY = static_cast<int>(std::ceil(bboxH / targetStep));
-  if (divsX < 50) divsX = 50;
-  if (divsX > 400) divsX = 400;
-  if (divsY < 50) divsY = 50;
-  if (divsY > 400) divsY = 400;
-  double stepX = bboxW / divsX;
-  double stepY = bboxH / divsY;
+  /// ★ 步长不得超过半跨的一半：否则极小水域（如 1×1 m）每轴只采到 1~2 个点，
+  /// 裁剪后顶点数不足 3 ⇒ 生成不出任何三角面（2026-09-21 边界探针发现）。
+  /// 默认水域 halfSpan=250 m ⇒ 上限 125 m，远大于 targetStep 的实际取值（≤5 m），不受影响。
+  {
+    const double halfSpan = std::max(bboxW, bboxH) * 0.5;
+    if (halfSpan > 0.0 && targetStep > halfSpan * 0.5)
+      targetStep = halfSpan * 0.5;
+  }
+
+  /// ── 网格 LOD（2026-09-21）：中心密、外围疏 ──────────────────────
+  /// targetStep 仍是**中心区**的步长（保持船周围的质量不变），
+  /// 外围按档位放大步长 —— 远处顶点在屏幕上不足 1 像素，放大后视觉几乎无损，
+  /// 但顶点数可降约 5~7 倍。档位半径按半跨比例给，随水域尺寸自动缩放。
+  const std::vector<LodBand> &kLodBands = LodBands();
+
+  double stepScale = 1.0;
+  std::vector<double> xs = BuildAxisSamples(
+      _area.xMin, _area.xMax, cx, targetStep, kLodBands);
+  std::vector<double> ys = BuildAxisSamples(
+      _area.yMin, _area.yMax, cy, targetStep, kLodBands);
+
+  /// 总点数上限保护：水域极大或周期极小时仍不至于爆网格。
+  /// ★ **必须循环夹紧**：档位半径有绝对上下限（minRadius/maxRadius），
+  /// 所以"按比例放大步长"**不是等比例减少点数** —— 单次放大不保证收敛
+  /// （2026-09-21 实测：±5000 m + Tp=0.1 单次放大后仍有 36 万顶点）。
+  constexpr int kMaxSamplesPerAxis = 400;
+  for (int guard = 0; guard < 12; ++guard)
+  {
+    if (static_cast<int>(xs.size()) <= kMaxSamplesPerAxis &&
+        static_cast<int>(ys.size()) <= kMaxSamplesPerAxis)
+      break;
+    const double over = std::max(
+        static_cast<double>(xs.size()) / kMaxSamplesPerAxis,
+        static_cast<double>(ys.size()) / kMaxSamplesPerAxis);
+    /// 略超一点（×1.1）以抵消"档位边界对齐点"带来的非线性，确保收敛
+    stepScale *= std::max(1.1, over * 1.1);
+    xs = BuildAxisSamples(_area.xMin, _area.xMax, cx,
+                          targetStep * stepScale, kLodBands);
+    ys = BuildAxisSamples(_area.yMin, _area.yMax, cy,
+                          targetStep * stepScale, kLodBands);
+  }
+
+  const int nx = static_cast<int>(xs.size());
+  const int ny = static_cast<int>(ys.size());
+  /// 回传**实际采用**的采样点数（上限夹紧之后的值）——
+  /// 调用方不得自己重算（重算会漏掉上面的循环夹紧，得到不一致的数字）
+  if (_samplesX) *_samplesX = static_cast<size_t>(nx);
+  if (_samplesY) *_samplesY = static_cast<size_t>(ny);
+  if (nx < 2 || ny < 2)
+  {
+    std::cerr << "GeneratePolygonMesh: LOD 采样点不足, 回退 plane" << std::endl;
+    return MeshDataSimple{};
+  }
 
   MeshDataSimple mesh;
-  std::vector<std::vector<int>> idx(divsX + 1,
-      std::vector<int>(divsY + 1, -1));
+  std::vector<std::vector<int>> idx(nx, std::vector<int>(ny, -1));
 
-  for (int i = 0; i <= divsX; i++)
+  for (int i = 0; i < nx; i++)
   {
-    for (int j = 0; j <= divsY; j++)
+    for (int j = 0; j < ny; j++)
     {
-      double wx = _area.xMin + i * stepX;
-      double wy = _area.yMin + j * stepY;
+      double wx = xs[i];
+      double wy = ys[j];
       if (!PointInPolygon(wx, wy, _area.vertices))
         continue;
 
@@ -330,9 +522,9 @@ MeshDataSimple WaterAreaVisualManager::GeneratePolygonMesh(
     }
   }
 
-  for (int i = 0; i < divsX; i++)
+  for (int i = 0; i < nx - 1; i++)
   {
-    for (int j = 0; j < divsY; j++)
+    for (int j = 0; j < ny - 1; j++)
     {
       int p00 = idx[i][j];
       int p10 = idx[i + 1][j];
@@ -379,8 +571,14 @@ MeshDataSimple WaterAreaVisualManager::GeneratePolygonMesh(
 
   if (mesh.triangles.empty())
   {
-    std::cerr << "GeneratePolygonMesh: 多边形内无网格点, 回退 plane"
+    /// ★ 必须**返回空 mesh**：调用方（MakeSurfaceSdf）是以
+    /// `!mesh.vertices.empty()` 判断"多边形网格可用"的 ——
+    /// 若这里只打印警告却把 vertices 留着（例如退化水域只采到 1 个点），
+    /// 调用方会误判为可用，进而写出一个画不出任何面的 OBJ
+    /// （2026-09-21 边界探针发现）。
+    std::cerr << "GeneratePolygonMesh: 多边形内无有效三角面, 回退 plane"
               << std::endl;
+    return MeshDataSimple{};
   }
 
   return mesh;
