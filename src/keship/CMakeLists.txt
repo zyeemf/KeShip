@@ -297,6 +297,21 @@ target_link_libraries(gen_test_world PUBLIC
 install(TARGETS gen_test_world DESTINATION lib/${PROJECT_NAME})
 endif()
 
+############### 无头指令入口 keship_ctl（2026-09-19）###############
+# 让仿真在没有 GUI（MenuPluginKeship 不加载）时也能被命令行驱动。
+# 直接链接 keship_utils 复用同一个 ModelManager —— 不复制任何模型/水域/SDF 组装逻辑。
+# 注意：必须放在上面 if(EXISTS src_cpp/test) 之外（src_cpp/test 被 .gitignore 排除，
+# 本地不存在时该整块被跳过，放在里面会导致本目标不编译）。
+add_executable(keship_ctl
+  src_cpp/headless/keship_ctl.cc
+)
+target_link_libraries(keship_ctl PUBLIC
+  gz-math7
+  gz-transport13::gz-transport13
+  keship_utils
+)
+install(TARGETS keship_ctl DESTINATION lib/${PROJECT_NAME})
+
 ############### 安装 - Python模块 ###############
 ament_python_install_package(src_py)
 

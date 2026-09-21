@@ -1263,7 +1263,8 @@ bool ModelManager::SpawnCylinderInGazebo(
 bool ModelManager::SpawnMathHull(
     const std::string &_instanceName,
     const ShipHullSpec &_spec,
-    double _pos[6])
+    double _pos[6],
+    const MathHullPluginOpts &_opts)
 {
   // 生成 OBJ 文件 (Phase B: 模型加载菜单)
   std::string dir = keship::KeshipModelsDir();
@@ -1271,8 +1272,15 @@ bool ModelManager::SpawnMathHull(
     std::cerr << "SpawnMathHull: 创建目录失败 " << dir << std::endl;
 
   ShipHullGenerator hull(_spec);
-  std::string visPath = dir + _instanceName + "_vis.obj";
-  std::string buoyPath = dir + _instanceName + "_buoy.obj";
+  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与实验对话框同一处错）：
+  /// gz 的 `gz::common::MeshManager` **按文件路径**缓存网格 —— 同路径换内容仍返回旧网格。
+  /// 原先只按实例名命名（`<名>_vis.obj`）→ 同名实例换参数重新生成时，
+  /// 界面里显示的仍是旧船（GUI 进程常驻、缓存永不失效）。
+  /// 典型触发：`keship_ctl model spawn-hull hullA --L 6` → 删除 → `--L 9` 同名重生。
+  /// 加指纹后几何一变 URI 就变；几何相同则命中缓存是正确的（内容本就一致）。
+  const std::string meshTag = hull.meshTag();
+  std::string visPath = dir + _instanceName + "_vis_" + meshTag + ".obj";
+  std::string buoyPath = dir + _instanceName + "_buoy_" + meshTag + ".obj";
   hull.writeVisualOBJ(visPath);
   hull.writeBuoyancyOBJ(buoyPath);
 
@@ -1310,7 +1318,21 @@ bool ModelManager::SpawnMathHull(
       << "    <plugin filename=\"libKSPlugin_HydroBuoyancy.so\" name=\"keship::KSPlugin_HydroBuoyancy\">\n"
       << "      <link_name>base_link</link_name>\n"
       << "      <enable_buoyancy>true</enable_buoyancy>\n"
-      << "      <enable_hydro>false</enable_hydro>\n"
+      << "      <enable_hydro>" << (_opts.enableHydro ? "true" : "false") << "</enable_hydro>\n"
+      /// 以下两段为 opt-in 插入：_opts 全默认时产出与改动前**逐字节一致**
+      /// 浸水体积发布（排水量实验取"实测 ∇"用）
+      << (_opts.publishSubVolume
+            ? std::string("      <publish_subvolume>true</publish_subvolume>\n")
+            : std::string())
+      /// 线性阻尼（fossen 路径）：网格船体走不了 pose_based（需 hasCylinderGeometry_），
+      /// 不给系数就是零阻尼 → 长时间垂荡
+      << (_opts.hasDamping()
+            ? std::string("      <linear_damping>\n")
+              + "        <Zw>" + std::to_string(_opts.damping[0]) + "</Zw>\n"
+              + "        <Kp>" + std::to_string(_opts.damping[1]) + "</Kp>\n"
+              + "        <Mq>" + std::to_string(_opts.damping[2]) + "</Mq>\n"
+              + "      </linear_damping>\n"
+            : std::string())
       << "      <fluid_density>1000</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n"
       << "      <buoyancy name=\"hull\">\n"

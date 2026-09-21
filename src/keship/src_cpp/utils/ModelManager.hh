@@ -158,6 +158,22 @@ namespace keship
   };
 
   /////////////////////////////////////////////////
+  /// 数学船型的插件可选参数（2026-09-19 新增，供无头指令入口 keship_ctl 表达实验模型）
+  ///
+  /// **默认全部关闭 → SpawnMathHull 产出的 SDF 与改动前逐字节一致**，GUI 路径零变化。
+  /// 为什么需要：原实现硬编码 `<enable_hydro>false</enable_hydro>`，生成的是
+  /// **零阻尼**船体 —— 网格船体没有 pose_based 阻尼（该分支需 hasCylinderGeometry_），
+  /// 会长时间垂荡；这正是 doc/plans/ui_improvement_plan.md §7.5 里 ① 的同一类缺陷。
+  struct MathHullPluginOpts
+  {
+    bool enableHydro = false;        ///< <enable_hydro>；开启后才接受 <linear_damping>
+    bool publishSubVolume = false;   ///< <publish_subvolume>；发布 /keship/sp01/subvol/<名>
+    double damping[3] = {0, 0, 0};   ///< <linear_damping> 的 Zw / Kp / Mq（全 0 = 不写该段）
+    bool hasDamping() const
+    { return damping[0] > 0.0 || damping[1] > 0.0 || damping[2] > 0.0; }
+  };
+
+  /////////////////////////////////////////////////
   class ModelManager
   {
   public:
@@ -210,9 +226,14 @@ namespace keship
     /// @param _instanceName 实例名称
     /// @param _spec 船型规格
     /// @param _pos 初始位姿
+    /// @param _opts 插件可选参数。**默认全部关闭 = 与既有行为逐字节一致**
+    ///              （原实现硬编码 `<enable_hydro>false</enable_hydro>`，
+    ///               无阻尼、无浸水体积发布 —— 网格船体在零阻尼下会长时间垂荡，
+    ///               见 doc/plans/ui_improvement_plan.md §7.5）
     bool SpawnMathHull(const std::string &_instanceName,
                        const ShipHullSpec &_spec,
-                       double _pos[6]);
+                       double _pos[6],
+                       const MathHullPluginOpts &_opts = MathHullPluginOpts{});
 
     /// @brief 从有效文件类型生成SDF字符串
     /// @param _instanceName 实例名称
