@@ -772,14 +772,21 @@ int CmdWaterAddDefault(keship::ModelManager &_mm) {
   area.yMin = -250; area.yMax = 250;
   area.baseHeight = 0.0;
   area.vertices = {{-250, -250}, {250, -250}, {250, 250}, {-250, 250}};
-  keship::SeaState::ParamsFromLevel(1, &area.waveParams.period,
+  /// ★ 2026-09-22 张老师要求：新增水域默认 **0 级海况（无风无浪无流）** ——
+  /// 教学实验一上来就是干净的静水基线，不必再手动"设静水"。
+  /// 画面上的"微微起伏"由 WaveVisual 的**纯渲染细节层活跃度**负责，
+  /// 不参与物理（见 doc/plans/ui_improvement_plan.md 的 S2 与判读纪律 25/26）。
+  /// ParamsFromLevel(0) 给出 gain=0 / 风速=0（周期取 TpFromHs(0)=5.0 占位）。
+  keship::SeaState::ParamsFromLevel(0, &area.waveParams.period,
                                     &area.windParams.speed,
                                     &area.waveParams.gain);
+  area.currentParams.speed = 0.0;      ///< 流速显式置 0（无流）
   areas.push_back(area);
   SaveWaterAreas(areas);
-  Info("已添加「默认水域」：±250 m 矩形，baseHeight=0，海况 1 级（周期 " +
+  Info("已添加「默认水域」：±250 m 矩形，baseHeight=0，海况 0 级（无风无浪无流；周期 " +
        std::to_string(area.waveParams.period) + " s / 风速 " +
-       std::to_string(area.windParams.speed) + " m/s / gain " +
+       std::to_string(area.windParams.speed) + " m/s / 流速 " +
+       std::to_string(area.currentParams.speed) + " m/s / gain " +
        std::to_string(area.waveParams.gain) + "）");
   /// GUI 侧同时会 PublishWaveParams；这里保持一致
   PublishWaveParams(_mm, area.waveParams.model, area.waveParams.gain);

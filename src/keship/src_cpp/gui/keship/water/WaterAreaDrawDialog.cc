@@ -19,11 +19,13 @@
 WaterAreaDrawDialog::WaterAreaDrawDialog(QWidget *parent)
     : QDialog(parent)
 {
-  /// 初始风浪参数对齐"按海况 1 级自动设置"（与默认水域一致的"标准 1 级"），
-  /// 用户后续可在编辑器手动修改，届时以用户值为准
-  keship::SeaState::ParamsFromLevel(1, &result_.waveParams.period,
+  /// ★ 2026-09-22 张老师要求：新建水域默认 **0 级海况（无风无浪无流）**，
+  /// 与"添加默认水域"一致；用户后续可在编辑器手动修改，届时以用户值为准。
+  /// 画面上的"微微起伏"由 WaveVisual 的**纯渲染细节层活跃度**负责，不参与物理。
+  keship::SeaState::ParamsFromLevel(0, &result_.waveParams.period,
                                     &result_.windParams.speed,
                                     &result_.waveParams.gain);
+  result_.currentParams.speed = 0.0;   ///< 流速显式置 0（无流）
   setWindowTitle("绘制水域");
   resize(500, 450);
 

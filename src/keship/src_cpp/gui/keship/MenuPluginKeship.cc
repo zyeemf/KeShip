@@ -2187,11 +2187,14 @@ void MenuPluginKeship::OnBtn_AddDefaultWaterArea()
   /// 统一为点构成形状（矩形四角，与手动输入兜底顺序一致）：保证
   /// 编辑对话框可见可编辑、保存/载入 ksw 持久化后形状不退化
   area.vertices = {{-250,-250},{250,-250},{250,250},{-250,250}};
-  /// 初始风浪参数对齐"按海况 1 级自动设置"（周期 2.5s / 增益 0.2 / 风速 1.42），
-  /// 保证默认水域显示 1 级且参数与对话框选"1级"完全一致
-  keship::SeaState::ParamsFromLevel(1, &area.waveParams.period,
+  /// ★ 2026-09-22 张老师要求：新增水域默认 **0 级海况（无风无浪无流）** ——
+  /// 教学实验一上来就是干净的静水基线，不必再手动"设静水"。
+  /// 画面上的"微微起伏"由 WaveVisual 的**纯渲染细节层活跃度**负责，不参与物理。
+  /// ParamsFromLevel(0) 给出 gain=0 / 风速=0（周期取 TpFromHs(0)=5.0 占位）。
+  keship::SeaState::ParamsFromLevel(0, &area.waveParams.period,
                                     &area.windParams.speed,
                                     &area.waveParams.gain);
+  area.currentParams.speed = 0.0;      ///< 流速显式置 0（无流）
   customWaterAreas_.push_back(area);
   {
     std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
