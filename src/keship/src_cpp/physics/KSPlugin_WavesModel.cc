@@ -16,6 +16,7 @@
 #include "keship/utils/WaterArea.hh"
 #include "../utils/WaterAreaSerializer.hh"
 #include "components/Wavefield.hh"
+#include "components/EnvFlow.hh"
 
 using namespace gz;
 using namespace keship;
@@ -204,6 +205,21 @@ void KSPlugin_WavesModelPrivate::FlushPendingPublish()
 void KSPlugin_WavesModelPrivate::RebuildFromJson(
     gz::sim::EntityComponentManager &_ecm)
 {
+  /// ★ T5（2026-09-22）：把水区的风/流参数写入 EnvFlow 组件，
+  /// 供 KSPlugin_HydroBuoyancy 计算流力与风压力。
+  /// 此前 windParams / currentParams 在**物理侧零消费者**（缺陷 W-3），
+  /// 见 doc/modules/physics.md §5。新建与更新两条路径都要写。
+  auto writeEnvFlow = [&_ecm](gz::sim::Entity _e, const WaterArea &_a) {
+    auto *c = _ecm.Component<keship::components::EnvFlow>(_e);
+    if (!c)
+      c = _ecm.CreateComponent(_e, keship::components::EnvFlow());
+    auto &d = c->Data();
+    d.currentSpeed     = _a.currentParams.speed;
+    d.currentDirection = _a.currentParams.direction;
+    d.windSpeed        = _a.windParams.speed;
+    d.windDirection    = _a.windParams.direction;
+  };
+
   std::error_code ec;
   auto mtime = std::filesystem::last_write_time(
       keship::KeshipWaterAreasFile(), ec);
@@ -263,6 +279,7 @@ void KSPlugin_WavesModelPrivate::RebuildFromJson(
       gzmsg << "KSPlugin_WavesModel: 创建波浪场 [" << a.name
             << "] gain=" << a.waveParams.gain << " entity=" << e << std::endl;
       this->currents_[a.name] = a.currentParams;   // W-3：流参数随参数一并广播
+      writeEnvFlow(e, a);                          // ★ T5：风/流参数供物理侧消费
       this->MarkPublish(a.name);
     }
     else
@@ -270,6 +287,7 @@ void KSPlugin_WavesModelPrivate::RebuildFromJson(
       /// 已存在：参数整体更新（JSON 为准）
       it->second->SetWaveParams(a.waveParams);
       this->currents_[a.name] = a.currentParams;
+      writeEnvFlow(this->entities_[a.name], a);    // ★ T5：更新路径同样要刷新
       /// ★ W-2：JSON 改了参数（环境编辑器/海况等级/水域重建）也要让视觉水面跟上
       this->MarkPublish(a.name);
     }

@@ -18,6 +18,7 @@
 #include "../utils/Buoyancy.hh"
 #include "../utils/ForceAccumulator.hh"
 #include "../utils/FossenModel.hh"
+#include "components/EnvFlow.hh"
 #include "../utils/DiagnosticLog.hh"
 #include "../utils/MeshUtils.hh"
 #include "../utils/CylinderMeshGenerator.hh"
@@ -286,6 +287,7 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           /// 按水区名查实体 "wavefield_{name}" → 读 ECM 组件 weak_ptr
           auto wfEntity = _ecm.EntityByComponents(
               gz::sim::components::Name("wavefield_" + area->name));
+          this->dataPtr->activeWfEntity_ = wfEntity;   // ★ T5：供每帧读 EnvFlow
           auto wfComp = _ecm.Component<keship::components::Wavefield>(wfEntity);
           this->dataPtr->activeWavefield_ =
               wfComp ? wfComp->Data() : std::weak_ptr<Wavefield>();
@@ -297,6 +299,17 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         }
       }
     }
+  }
+
+  /// ★ T5（2026-09-22）：每帧读当前水区的环境流动（流速 / 风速）。
+  /// 不能只在"水区切换时"读一次 —— 环境编辑器可在运行中即时改风/流。
+  /// 实体或组件缺失时保持上一次的值（默认全 0 ⇒ 两项力为 0）。
+  if (this->dataPtr->activeWfEntity_ != gz::sim::kNullEntity)
+  {
+    auto efComp = _ecm.Component<keship::components::EnvFlow>(
+        this->dataPtr->activeWfEntity_);
+    if (efComp)
+      this->dataPtr->envFlow_ = efComp->Data();
   }
 
   /// 水面检测（给水动力用）
@@ -493,6 +506,105 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     }
   }
 
+  /// ═══════════════════════════════════════════════
+  /// 6b. 流速 / 风速外力（T5，2026-09-22）
+  ///
+  ///   模型：F = ½·ρ·C_d·A·|v_rel|·v_rel      （v_rel = v_env − v_ship，世界系）
+  ///   面积（由浮力体包围盒 + 当前吃水估算，方案 A）：
+  ///     A_sub   = B · T          水下侧向投影
+  ///     A_above = B · (D − T)    水线以上侧向投影
+  ///   作用点：水下 = 水位 − T/2；水上 = 水位 + (D−T)/2
+  ///           （风力作用点高于重心 ⇒ 产生倾覆力矩，教学上有意义）
+  ///
+  ///   ★ 软开关：流速与风速均为 0 时两项力**精确为 0**
+  ///     ⇒ 静水无风场景与改动前逐位一致（这是本项的首要判据）。
+  ///   ★ 静水力与阻尼**一行未动**：本段只向受力总线追加两项。
+  /// ═══════════════════════════════════════════════
+  if (inWater)
+  {
+    const components::EnvFlowData &ef = this->dataPtr->envFlow_;
+    const bool hasFlow = std::abs(ef.currentSpeed) > 1e-9;
+    const bool hasWind = std::abs(ef.windSpeed) > 1e-9;
+
+    if (hasFlow || hasWind)
+    {
+      auto linVel = this->linkObj_.WorldLinearVelocity(_ecm);
+      if (linVel)
+      {
+        /// 环境速度矢量（世界系）。方向约定：0 = 世界 +Y（北向），顺时针
+        /// ⇒ 单位方向向量 = (sin(dir), cos(dir), 0)
+        const gz::math::Vector3d vCurrent(
+            ef.currentSpeed * std::sin(ef.currentDirection),
+            ef.currentSpeed * std::cos(ef.currentDirection), 0.0);
+        const gz::math::Vector3d vWind(
+            ef.windSpeed * std::sin(ef.windDirection),
+            ef.windSpeed * std::cos(ef.windDirection), 0.0);
+
+        /// 所有浮力体包围盒的**并集**（世界系；8 角点变换后取极值，兼顾倾斜）
+        double bMinZ = 1e30, bMaxZ = -1e30, bMinY = 1e30, bMaxY = -1e30;
+        for (auto &body : this->dataPtr->bodies)
+        {
+          if (!body.bboxValid)
+            continue;
+          const gz::math::Pose3d bp = linkWorldPose * body.poseOffset;
+          for (int ix = 0; ix < 2; ++ix)
+            for (int iy = 0; iy < 2; ++iy)
+              for (int iz = 0; iz < 2; ++iz)
+              {
+                const gz::math::Vector3d corner(
+                    ix ? body.bboxMax.X() : body.bboxMin.X(),
+                    iy ? body.bboxMax.Y() : body.bboxMin.Y(),
+                    iz ? body.bboxMax.Z() : body.bboxMin.Z());
+                const gz::math::Vector3d w = bp.Rot() * corner + bp.Pos();
+                bMinZ = std::min(bMinZ, w.Z());
+                bMaxZ = std::max(bMaxZ, w.Z());
+                bMinY = std::min(bMinY, w.Y());
+                bMaxY = std::max(bMaxY, w.Y());
+              }
+        }
+
+        if (bMaxZ > bMinZ)
+        {
+          const double D = bMaxZ - bMinZ;    ///< 型深（世界竖直向跨度）
+          const double B = bMaxY - bMinY;    ///< 型宽
+          const double T = std::clamp(effectiveFluidLevel - bMinZ, 0.0, D);  ///< 吃水
+          const double A_sub = B * T * this->dataPtr->currentAreaScale_;
+          const double A_above = B * (D - T) * this->dataPtr->windAreaScale_;
+
+          /// 流力（水流对船体）
+          if (hasFlow)
+          {
+            const gz::math::Vector3d vr = vCurrent - *linVel;
+            const double mag = vr.Length();
+            if (mag > 1e-9)
+            {
+              const gz::math::Vector3d F = vr * (0.5 * this->dataPtr->fluidDensity_
+                  * this->dataPtr->currentDragCoeff_ * A_sub * mag);
+              const gz::math::Vector3d P(linkWorldPos.X(), linkWorldPos.Y(),
+                  effectiveFluidLevel - 0.5 * T);
+              acc.Add({"env/current", F, P});
+            }
+          }
+
+          /// 风压力（风对船体水上部分）
+          if (hasWind)
+          {
+            const gz::math::Vector3d vr = vWind - *linVel;
+            const double mag = vr.Length();
+            if (mag > 1e-9)
+            {
+              const gz::math::Vector3d F = vr * (0.5 * this->dataPtr->airDensity_
+                  * this->dataPtr->windDragCoeff_ * A_above * mag);
+              const gz::math::Vector3d P(linkWorldPos.X(), linkWorldPos.Y(),
+                  effectiveFluidLevel + 0.5 * (D - T));
+              acc.Add({"env/wind", F, P});
+            }
+          }
+        }
+      }
+    }
+  }
+
   /// 7. 诊断日志
   double simTimeSec = std::chrono::duration<double>(
       this->dataPtr->simTime_).count();
@@ -597,6 +709,28 @@ void KSPlugin_HydroBuoyancy::LoadParameters(
 
   auto [zeta, zetaOk] = _sdf->Get<double>("damping_ratio", 0.1);
   if (zetaOk) this->dataPtr->dampingRatio_ = zeta;
+
+  /// ★ T5（2026-09-22）流速 / 风速外力系数（全部可选，缺省见 .hh）
+  /// 软开关：环境流速与风速均为 0 时两项力**精确为 0** ⇒ 静水无风场景逐位不变。
+  auto [cdw, cdwOk] =
+      _sdf->Get<double>("current_drag_coeff", this->dataPtr->currentDragCoeff_);
+  if (cdwOk) this->dataPtr->currentDragCoeff_ = cdw;
+
+  auto [cda, cdaOk] =
+      _sdf->Get<double>("wind_drag_coeff", this->dataPtr->windDragCoeff_);
+  if (cdaOk) this->dataPtr->windDragCoeff_ = cda;
+
+  auto [rhoAir, rhoAirOk] =
+      _sdf->Get<double>("air_density", this->dataPtr->airDensity_);
+  if (rhoAirOk) this->dataPtr->airDensity_ = rhoAir;
+
+  auto [cScale, cScaleOk] =
+      _sdf->Get<double>("current_area_scale", this->dataPtr->currentAreaScale_);
+  if (cScaleOk) this->dataPtr->currentAreaScale_ = cScale;
+
+  auto [wScale, wScaleOk] =
+      _sdf->Get<double>("wind_area_scale", this->dataPtr->windAreaScale_);
+  if (wScaleOk) this->dataPtr->windAreaScale_ = wScale;
 }
 
 /////////////////////////////////////////////////
@@ -677,6 +811,12 @@ void KSPlugin_HydroBuoyancy::LoadSingleMeshBuoyancy(
     }
     double dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
     body.characteristicLengthSq = dx*dx + dy*dy + dz*dz;
+
+    /// ★ T5（2026-09-22）：顺便记下包围盒 —— 迎流/迎风面积与作用点估算用
+    /// （型宽 B = bboxMax.Y − bboxMin.Y，型深 D = bboxMax.Z − bboxMin.Z）
+    body.bboxMin = {minX, minY, minZ};
+    body.bboxMax = {maxX, maxY, maxZ};
+    body.bboxValid = true;
   }
 
   this->dataPtr->bodies.push_back(std::move(body));
@@ -787,6 +927,11 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
       }
       double dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
       body.characteristicLengthSq = dx*dx + dy*dy + dz*dz;
+
+      /// ★ T5（2026-09-22）：顺便记下包围盒 —— 迎流/迎风面积与作用点估算用
+      body.bboxMin = {minX, minY, minZ};
+      body.bboxMax = {maxX, maxY, maxZ};
+      body.bboxValid = true;
     }
 
     this->dataPtr->bodies.push_back(std::move(body));

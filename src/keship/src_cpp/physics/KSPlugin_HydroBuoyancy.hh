@@ -24,6 +24,7 @@
 #include "keship/utils/WaterArea.hh"
 #include "../utils/WaterAreaManager.hh"
 #include "components/Wavefield.hh"
+#include "components/EnvFlow.hh"
 
 namespace keship
 {
@@ -38,6 +39,15 @@ namespace keship
     gz::math::Pose3d poseOffset{0, 0, 0, 0, 0, 0};
     double totalVolume = 0.0;
     double characteristicLengthSq = 1.0;
+
+    /// ★ T5（2026-09-22）：浮力体在**自身坐标系**下的包围盒，
+    /// 由网格顶点算出（Configure 时一次）。供"迎流/迎风面积"与作用点估算用：
+    ///   型宽 B = bboxMax.Y − bboxMin.Y
+    ///   型深 D = bboxMax.Z − bboxMin.Z
+    /// bboxValid 为 false 时表示未取到几何（此时流力/风压力按 0 处理）。
+    gz::math::Vector3d bboxMin{0, 0, 0};
+    gz::math::Vector3d bboxMax{0, 0, 0};
+    bool bboxValid = false;
   };
 
   class KSPlugin_HydroBuoyancy : public gz::sim::System,
@@ -166,6 +176,23 @@ namespace keship
         int waterFrameCount = 0;
     } hydroDiag;
     double lastWaveHeight_ = 0.0;
+
+    /// ★ T5（2026-09-22）：环境流动（流速 / 风速）。
+    /// 由 KSPlugin_WavesModel 写入 `wavefield_{水区}` 实体上的 EnvFlow 组件，
+    /// 本插件按当前水区读取（与 Wavefield 组件同处、同一把锁保护的查找路径）。
+    /// 速度全为 0 时两项力**精确为 0** ⇒ 静水无风场景逐位不变（即软开关）。
+    components::EnvFlowData envFlow_;
+
+    /// ★ T5（2026-09-22）流速 / 风速外力系数（全部 SDF 可调，便于按船型标定）
+    double currentDragCoeff_{1.0};    ///< <current_drag_coeff>  流阻力系数 C_d,w（钝体侧向）
+    double windDragCoeff_{1.2};       ///< <wind_drag_coeff>     风阻力系数 C_d,a（船体水上部分）
+    double airDensity_{1.225};        ///< <air_density>         空气密度 kg/m³
+    double currentAreaScale_{1.0};    ///< <current_area_scale>  迎流面积缩放（标定用）
+    double windAreaScale_{1.0};       ///< <wind_area_scale>     迎风面积缩放（标定用）
+
+    /// \brief 当前水区的波浪场实体 ID（缓存在此，供**每帧**读 EnvFlow 组件用；
+    /// 流速/风速可能被环境编辑器即时改动，不能只在"水区切换时"读一次）
+    gz::sim::Entity activeWfEntity_{gz::sim::kNullEntity};
   };
 
 } // namespace keship
