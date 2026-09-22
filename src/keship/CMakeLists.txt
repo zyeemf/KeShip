@@ -170,6 +170,7 @@ add_library(keship_utils STATIC
   src_cpp/utils/StbImageLoader.cc
   src_cpp/utils/MeshInertiaCalculator.cc
   src_cpp/utils/ModelManager.cc
+  src_cpp/utils/ForceAccumulator.cc
 )
 target_link_libraries(keship_utils PUBLIC
   gz-math7

@@ -16,6 +16,7 @@
 #include <gz/common/Util.hh>
 
 #include "../utils/Buoyancy.hh"
+#include "../utils/ForceAccumulator.hh"
 #include "../utils/FossenModel.hh"
 #include "../utils/DiagnosticLog.hh"
 #include "../utils/MeshUtils.hh"
@@ -305,8 +306,11 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   const double rhoG = this->dataPtr->fluidDensity_
                     * std::abs(this->dataPtr->gravity_.Z());
 
-  gz::math::Vector3d totalForce(0, 0, 0);
-  gz::math::Vector3d totalTorque(0, 0, 0);
+  /// ★ 受力总线（2026-09-22）：本插件施加的每一份力都经 ForceAccumulator 累加，
+  ///   力矩参考点（link 原点）在构造函数里**唯一确定**，插件只需如实声明力的作用点。
+  ///   设计说明见 src_cpp/utils/ForceAccumulator.hh；
+  ///   为什么必须是 link 原点见 doc/audit/force_ref_calibration_2026-09-22.md §5b。
+  keship::ForceAccumulator acc(linkWorldPos);
   double totalSubVol = 0.0;
 
   /// 时间记录（波浪时间全局统一，无 per-model 缓起）
@@ -401,13 +405,13 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
 
       double Fmag = rhoG * subVol;
       gz::math::Vector3d buoyancyForce(0, 0, Fmag);
-      totalForce += buoyancyForce;
 
-      /// 恢复力矩（相对 link 原点：ExternalWorldWrenchCmd 的力作用点在 link 原点，
-      /// 作用点在浮心；该原点参考力矩与引擎残差抵消后物理上等价于绕质心的惯性恢复力矩）
+      /// 浮力 + 恢复力矩：**如实声明"力作用在浮心"**即可 ——
+      /// 绕 link 原点的力矩由 ForceAccumulator 唯一折算（τ = (CoB − link原点) × F）。
+      /// 该折算与引擎"力作用于 link 原点"的语义互补后，物理上等价于绕质心的惯性恢复力矩。
       gz::math::Vector3d cobLocal = body.buoyancy->getCenterOfBuoyancy();
       gz::math::Vector3d cobWorld = bodyWorldPose.Rot() * cobLocal + bodyWorldPose.Pos();
-      totalTorque += (cobWorld - linkWorldPos).Cross(buoyancyForce);
+      acc.Add({"buoyancy/" + body.name, buoyancyForce, cobWorld});
 
       bodyIdx++;
     }
@@ -439,9 +443,14 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           && this->dataPtr->hasCylinderGeometry_
           && !this->dataPtr->bodies.empty())
       {
+        gz::math::Vector3d dampForce(0, 0, 0);
+        gz::math::Vector3d dampTorque(0, 0, 0);
         computePoseBasedDamping(
             _ecm, modelPose, totalSubVol, effectiveFluidLevel,
-            totalForce, totalTorque, totalMass);
+            dampForce, dampTorque, totalMass);
+        /// 阻尼的**力项无力臂**（既有口径：隐含作用于 link 原点）⇒ applyPoint 填 linkWorldPos，
+        /// 叉乘恒为 0，力矩全部来自 pureTorque。**本次重构不改这一口径、不改数值**。
+        acc.Add({"damping/pose_based", dampForce, linkWorldPos, dampTorque});
       }
       else if (this->dataPtr->fossen && this->dataPtr->fossen->valid())
       {
@@ -466,8 +475,9 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           gz::math::Vector3d torqueWorld = modelPose.Rot() * gz::math::Vector3d(
               tauBody(3), tauBody(4), tauBody(5));
 
-          totalForce += forceWorld;
-          totalTorque += torqueWorld;
+          /// 同上：Fossen 阻尼的力项无力臂（隐含作用于 link 原点）
+          /// ⇒ applyPoint 填 linkWorldPos，叉乘恒为 0，力矩全部来自 pureTorque。
+          acc.Add({"damping/fossen", forceWorld, linkWorldPos, torqueWorld});
 
           auto &d = this->dataPtr->hydroDiag;
           for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i);
@@ -506,8 +516,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       + (lv ? std::to_string(lv->X()) + "," + std::to_string(lv->Y()) + "," + std::to_string(lv->Z()) : "0,0,0") + ","
       + (av ? std::to_string(av->X()) + "," + std::to_string(av->Y()) + "," + std::to_string(av->Z()) : "0,0,0") + ","
       + std::to_string(totalSubVol) + ","
-      + std::to_string(totalForce.X()) + "," + std::to_string(totalForce.Y()) + "," + std::to_string(totalForce.Z()) + ","
-      + std::to_string(totalTorque.X()) + "," + std::to_string(totalTorque.Y()) + "," + std::to_string(totalTorque.Z()) + ","
+      + std::to_string(acc.TotalForce().X()) + "," + std::to_string(acc.TotalForce().Y()) + "," + std::to_string(acc.TotalForce().Z()) + ","
+      + std::to_string(acc.TotalTorque().X()) + "," + std::to_string(acc.TotalTorque().Y()) + "," + std::to_string(acc.TotalTorque().Z()) + ","
       + std::to_string(totalMass) + ","
       + std::to_string(inWater) + "," + std::to_string(aboveWater) + ","
       + std::to_string(simTimeSec) + ","
@@ -533,7 +543,7 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   this->dataPtr->logWriteCounter++;
 
   /// 8. 汇总写入 ECM（wrench 每步被物理系统 Clear，多插件共存无顺序依赖）
-  this->ApplyForces(_ecm, totalForce, totalTorque);
+  this->ApplyForces(_ecm, acc.TotalForce(), acc.TotalTorque());
 }
 
 /////////////////////////////////////////////////

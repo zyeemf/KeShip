@@ -15,6 +15,7 @@
 #include <gz/msgs/double.pb.h>
 
 #include "../utils/DiagnosticLog.hh"
+#include "../utils/ForceAccumulator.hh"
 #include "keship/utils/KeshipPaths.hh"
 
 /////////////////////////////////////////////////
@@ -165,8 +166,11 @@ void keship::KSPlugin_Thrust::PreUpdate(
   gz::math::Vector3d linkCoMWorldPos =
       linkInertialPose ? linkInertialPose->Pos() : linkWorldPos;
 
-  gz::math::Vector3d totalForce(0, 0, 0);
-  gz::math::Vector3d totalTorque(0, 0, 0);
+  /// ★ 受力总线（2026-09-22）：力矩参考点（link 原点）在 ForceAccumulator 里**唯一确定**。
+  ///   本插件原先按**质心**算力矩，而引擎把力作用于 **link 原点** ⇒ 推进器即便置于质心
+  ///   也会产生寄生俯仰（实测 α = 0.009991 rad/s²，正确值应为 0）。
+  ///   见 commit 756acd0 与 doc/audit/force_ref_calibration_2026-09-22.md §5b/§7。
+  keship::ForceAccumulator acc(linkWorldPos);
 
   /// 前 10 帧全量打印（无推力基线）；之后仅当推力非零时打印，
   /// 以便采集施加推力后的 totalForce/totalTorque 而不刷屏。
@@ -185,23 +189,18 @@ void keship::KSPlugin_Thrust::PreUpdate(
     /// 推力方向 = 箭头（螺旋桨朝向）的反方向
     gz::math::Vector3d thrustForce = thrustDir * (-thrustMag);
 
-    totalForce += thrustForce;
-
-    /// 累加各推进器相对 **link 原点** 的力矩：totalTorque = Σ (P_i − link原点) × F_i
-    /// ★ 2026-09-22 修正（缺陷已实测确证）：
-    ///   ExternalWorldWrenchCmd 的力作用点是 **link 原点**（不是质心）——
-    ///   见 doc/audit/force_ref_calibration_2026-09-22.md §5b（7 组实测，与官方文档逐字一致）。
-    ///   原写法用 CoM 作参考点 ⇒ 引擎按 link 原点解释时，会凭空多出
-    ///   (link原点 − CoM) × F 的寄生力矩。
-    ///   实测证据：推进器刻意置于质心时，原写法仍产生 α = 0.009991 rad/s²，
-    ///   而正确值应为 0（力过质心不产生转动）。
-    ///   ⚠ linkCoMWorldPos 仍用于下方诊断日志，不要删。
-    totalTorque += (bodyWorldPose.Pos() - linkWorldPos).Cross(thrustForce);
+    /// 如实声明"力作用在**推进器位置**"—— 绕 link 原点的力矩由 ForceAccumulator
+    /// 唯一折算（τ = (推进器 − link原点) × F）。⚠ linkCoMWorldPos 仍用于下方诊断日志。
+    acc.Add({"thrust/" + body->name, thrustForce, bodyWorldPose.Pos()});
 
     if (diagLimit)
       gzmsg << "KSPlugin_Thrust::PreUpdate body[" << body->name
             << "] thrust=" << thrustMag << " force=" << thrustForce << std::endl;
   }
+
+  /// 合计结果（由受力总线统一给出；后面的施加与诊断都读它）
+  const gz::math::Vector3d totalForce = acc.TotalForce();
+  const gz::math::Vector3d totalTorque = acc.TotalTorque();
 
   /// 循环外单次施加：合力 + 合力矩写入同一 ExternalWorldWrenchCmd（力施于 link 原点）。
   /// 注意：该组件每帧只消费一次且后写覆盖先写，绝不能在推进器循环内多次调用
