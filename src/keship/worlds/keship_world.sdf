@@ -2,6 +2,15 @@
 
 <sdf version="1.9">
   <world name="keship_world">
+    <!-- ★ 重力加速度：显式声明（2026-09-22 新增）
+         理由：sdformat 对 <gravity> 的默认值是 "0 0 -9.8"，而本工程**代码侧统一用 9.81**
+         （HydroBuoyancy / Wavefield / SeaState / LinearDamping / 四个实验对话框等共 10 处，
+         全部为 9.81）⇒ 不显式声明就形成"引擎 9.8 / 代码 9.81"双口径（相对差 0.102%），
+         浮力（用 9.81）与重力（用 9.8）**不自洽**。
+         显式写 9.81 后两侧同源；将来若要改 g，只需改这一处 + 代码侧的 kGravity。
+         证据：doc/audit/force_ref_calibration_2026-09-22.md §3.2 -->
+    <gravity>0 0 -9.81</gravity>
+
     <!--  使用物理引擎 dart ode bullet simbody
           最大步长：4ms
           实时因子：1.0（仿真时间与实际时间同步） -->
