@@ -160,7 +160,7 @@ void keship::KSPlugin_Thrust::PreUpdate(
   gz::math::Vector3d linkEuler =
       linkPose ? linkPose->Rot().Euler() : modelPose.Rot().Euler();
 
-  /// 质心世界坐标（linkCoMWorldPos 仅用于诊断/力矩计算值；实际施加为各推力点力）
+  /// 质心世界坐标（**仅用于诊断日志**；力矩参考点已于 2026-09-22 改为 link 原点，见下方 ★）
   auto linkInertialPose = gz::sim::Link(this->linkEntity_).WorldInertialPose(_ecm);
   gz::math::Vector3d linkCoMWorldPos =
       linkInertialPose ? linkInertialPose->Pos() : linkWorldPos;
@@ -187,8 +187,16 @@ void keship::KSPlugin_Thrust::PreUpdate(
 
     totalForce += thrustForce;
 
-    /// 累加各推进器相对质心的力矩：totalTorque = Σ (P_i - CoM) x F_i
-    totalTorque += (bodyWorldPose.Pos() - linkCoMWorldPos).Cross(thrustForce);
+    /// 累加各推进器相对 **link 原点** 的力矩：totalTorque = Σ (P_i − link原点) × F_i
+    /// ★ 2026-09-22 修正（缺陷已实测确证）：
+    ///   ExternalWorldWrenchCmd 的力作用点是 **link 原点**（不是质心）——
+    ///   见 doc/audit/force_ref_calibration_2026-09-22.md §5b（7 组实测，与官方文档逐字一致）。
+    ///   原写法用 CoM 作参考点 ⇒ 引擎按 link 原点解释时，会凭空多出
+    ///   (link原点 − CoM) × F 的寄生力矩。
+    ///   实测证据：推进器刻意置于质心时，原写法仍产生 α = 0.009991 rad/s²，
+    ///   而正确值应为 0（力过质心不产生转动）。
+    ///   ⚠ linkCoMWorldPos 仍用于下方诊断日志，不要删。
+    totalTorque += (bodyWorldPose.Pos() - linkWorldPos).Cross(thrustForce);
 
     if (diagLimit)
       gzmsg << "KSPlugin_Thrust::PreUpdate body[" << body->name
