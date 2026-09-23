@@ -2259,7 +2259,10 @@ static void ComputeProjectedImage(
   ///     · 图像 Y（纵向）← 世界 **X（北）**，且 y 取负（图像 y 向下）
   ///   原先写成 图像X←世界X、图像Y←世界Y（旧映射）⇒
   ///   张老师看到"2D 预览与 3D 场景方向不一致"。
-  auto toX = [&](double _wy) { return (_wy - yMin) / localH * (_imgW - 1); };
+  /// ⚠ 注意方向：**图像 X（横向）← 世界 −Y（西）**、图像 Y（纵向）← 世界 −X（下→上为 +X）。
+  /// 这与 MapWidget 的映射严格一致（见其 toX/toY 的说明）。
+  /// 依据：3D 相机的"屏幕右"是世界 −Y（gz 世界系为 ENU，相机朝 +X 等价于朝东）。
+  auto toX = [&](double _wy) { return (_imgW - 1) - (_wy - yMin) / localH * (_imgW - 1); };
   auto toY = [&](double _wx) { return (_imgH - 1) - (_wx - xMin) / localW * (_imgH - 1); };
 
   auto edgeFn = [](double _px, double _py,

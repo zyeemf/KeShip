@@ -363,7 +363,17 @@ void MapWidget::paintModelImage(QPainter &_p,
 //   即 screen = (worldY, worldX)。⚠ 调用点必须成对交换参数，见 .hh 的说明。
 int MapWidget::toX(double _wy) const {
   int pw = plotW(); if (pw <= 0) return ml();
-  return ml() + (int)((_wy - viewYMin_) / (viewYMax_ - viewYMin_) * pw);
+  /// ★★ 2026-09-23（第二轮修正）：**屏幕右 ← 世界 −Y（西）**。
+  ///
+  /// 依据：3D 视图的相机位于 −X、看向 +X。gz 世界系是 ENU（+X 东、+Y 北），
+  /// 因此"相机朝 +X"在 gz 世界里等价于"朝东" ⇒ 屏幕右 = 世界 **−Y**。
+  /// （张老师实测：修复前的视觉流向是 −Y 时显示在屏幕右侧，与此一致。）
+  ///
+  /// 而本项目把 +X 命名为"北"（NED 语义）⇒ 地图上呈现为"**上北、右西**"。
+  /// 这与"航海地图上北右东"的习惯不同，但与 **3D 视图的视觉方向一致、且无镜像** ——
+  /// 张老师明确要求"不要镜像"。若后续希望回到"上北右东"，
+  /// 需改为把 3D 相机调整为俯视（见 doc/plans/direction_convention_plan.md）。
+  return ml() + pw - (int)((_wy - viewYMin_) / (viewYMax_ - viewYMin_) * pw);
 }
 int MapWidget::toY(double _wx) const {
   int ph = plotH(); if (ph <= 0) return mt();
@@ -371,7 +381,8 @@ int MapWidget::toY(double _wx) const {
 }
 double MapWidget::fromX(int _px) const {
   int pw = plotW(); if (pw <= 0) return 0;
-  return viewYMin_ + (_px - ml()) * (viewYMax_ - viewYMin_) / (double)pw;
+  // 与 toX 互逆（屏幕右 ← 世界 −Y）
+  return viewYMin_ + (ml() + pw - _px) * (viewYMax_ - viewYMin_) / (double)pw;
 }
 double MapWidget::fromY(int _py) const {
   int ph = plotH(); if (ph <= 0) return 0;
