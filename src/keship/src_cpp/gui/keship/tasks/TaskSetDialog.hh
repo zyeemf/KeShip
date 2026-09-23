@@ -30,6 +30,11 @@ class TaskSetDialog : public QDialog {
                 QWidget *_parent = nullptr);
   ~TaskSetDialog() override = default;
 
+  /// ★ 2026-09-23 新增（张老师反馈"任务设定对话框看不到场景模型预览"）：
+  /// 注入场景模型足迹，供地图显示（与"绘制水域"对话框行为对齐）。
+  /// 由 MenuPluginKeship 在创建本对话框后调用 GatherSceneFootprints() 注入。
+  void setSceneModels(const std::vector<keship::ModelFootprint> &_models);
+
  signals:
   void taskSaved(const QString &_filePath);
 

@@ -244,8 +244,9 @@ void MapWidget::resizeEvent(QResizeEvent *_event)
 void MapWidget::paintModelRect(QPainter &_p,
     const keship::ModelFootprint &_m, int _pw, int _ph) const
 {
-  double pixW = _m.localW * _pw / (viewXMax_ - viewXMin_);
-  double pixH = _m.localH * _ph / (viewYMax_ - viewYMin_);
+  /// ★ 2026-09-23 修正（北朝上）：屏幕宽 ← 世界 Y 跨度、屏幕高 ← 世界 X 跨度
+  double pixW = _m.localH * _pw / (viewYMax_ - viewYMin_);
+  double pixH = _m.localW * _ph / (viewXMax_ - viewXMin_);
   QRectF rect(-pixW / 2, -pixH / 2, pixW, pixH);
 
   if (_m.isStatic) {
@@ -265,12 +266,18 @@ void MapWidget::paintModelPolygon(QPainter &_p,
 {
   if (_outline.size() < 3) return;
 
-  double sx = _pw / (viewXMax_ - viewXMin_);
-  double sy = _ph / (viewYMax_ - viewYMin_);
+  /// ★★ 2026-09-23 修正（地图改「北朝上」后，此处仍在用旧映射）：
+  ///   新映射 screen = (worldY, worldX) ⇒
+  ///     屏幕 X（右）← 世界 **Y** ⇒ 缩放按 **Y 范围**
+  ///     屏幕 Y（上）← 世界 **X** ⇒ 缩放按 **X 范围**，且 y 取负（屏幕 y 向下）
+  ///   原先写成 sx 用 X 范围、点用 (v.first, -v.second)
+  ///   ⇒ 与世界方向差 90° 并镜像（张老师反馈"预览与 3D 场景有镜像、方向不一致"）。
+  double sx = _pw / (viewYMax_ - viewYMin_);   // 屏幕宽 ← 世界 Y 范围
+  double sy = _ph / (viewXMax_ - viewXMin_);   // 屏幕高 ← 世界 X 范围
 
   QPolygonF poly;
   for (const auto &v : _outline)
-    poly << QPointF(v.first * sx, -(v.second * sy));
+    poly << QPointF(v.second * sx, -(v.first * sy));   // (世界Y, -世界X)
 
   if (_m.isStatic) {
     _p.setBrush(QColor(160, 160, 160, 80));
@@ -319,14 +326,15 @@ void MapWidget::paintModelImage(QPainter &_p,
              QImage::Format_RGBA8888);
   if (img.isNull()) return;
 
-  double sx = _pw / (viewXMax_ - viewXMin_);
-  double sy = _ph / (viewYMax_ - viewYMin_);
+  /// ★ 2026-09-23 修正（北朝上）：屏幕 X ← 世界 Y、屏幕 Y ← 世界 X
+  double sx = _pw / (viewYMax_ - viewYMin_);   // 屏幕宽 ← 世界 Y 范围
+  double sy = _ph / (viewXMax_ - viewXMin_);   // 屏幕高 ← 世界 X 范围
 
-  double offX = _m.localXMin + _m.localW / 2.0;
-  double offY = _m.localYMin + _m.localH / 2.0;
+  double offY = _m.localXMin + _m.localW / 2.0;   // 世界 X 中心（决定屏幕纵向位置）
+  double offX = _m.localYMin + _m.localH / 2.0;   // 世界 Y 中心（决定屏幕横向位置）
 
-  double pixW = _m.localW * sx;
-  double pixH = _m.localH * sy;
+  double pixW = _m.localH * sx;   // 屏幕宽 ← 世界 Y 跨度
+  double pixH = _m.localW * sy;   // 屏幕高 ← 世界 X 跨度
 
   QRectF rect(offX * sx - pixW / 2.0, -(offY * sy) - pixH / 2.0, pixW, pixH);
 

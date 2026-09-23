@@ -1701,6 +1701,10 @@ void MenuPluginKeship::OnBtn_TaskSet()
   auto *dlg = new TaskSetDialog(modelManager->GetNode(), "keship_world");
   dlg->setAttribute(Qt::WA_DeleteOnClose);
 
+  /// ★ 2026-09-23：注入场景模型足迹 —— 原先本对话框的地图**看不到任何模型预览**
+  /// （`GatherSceneFootprints` 只在水域对话框被调用）。张老师反馈后补齐。
+  dlg->setSceneModels(GatherSceneFootprints());
+
   QObject::connect(dlg, &QDialog::destroyed, this, [this]() {
     taskSetDialog_ = nullptr;
   });
@@ -2146,6 +2150,15 @@ std::vector<keship::ModelFootprint> MenuPluginKeship::GatherSceneFootprints() co
       fp.worldYaw = it->second.yaw;
     }
     result.push_back(fp);
+  }
+
+  /// ★ 2026-09-23 诊断：地图实际会画哪些模型（张老师反馈 yanhu 不显示）
+  {
+    std::string names;
+    for (const auto &f : result)
+      names += f.name + "(" + std::to_string(f.localW) + "x" + std::to_string(f.localH) + ") ";
+    std::cout << "[足迹诊断] 地图收到 " << result.size() << " 个模型: "
+              << (names.empty() ? "(空)" : names) << std::endl;
   }
   return result;
 }

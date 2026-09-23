@@ -120,8 +120,14 @@ void TaskSetDialog::setupUI() {
   // ---- 地图（必须在 setupTrackingPanel 之前创建，后者会连接 mapWidget_ 信号）----
   mapWidget_ = new MapWidget(this);
 
+  /// ★ 2026-09-23：任务设定对话框的地图**不主动采集**场景模型（原实现里
+  /// `GatherSceneFootprints` 只在水域对话框被调用）⇒ 看不到模型预览。
+  /// 现改为由 MenuPluginKeship 创建本对话框后调用 setSceneModels() 注入。
+
   // ---- tracking 面板 ----
   setupTrackingPanel();
+
+  // 注：场景模型足迹由外部通过 setSceneModels() 注入（见 .hh 说明）
 
   // ---- 参数面板（直接 layout + visible 切换，避免 QStackedWidget 按最大子控件预留空间）----
   mainLayout->addWidget(wpPanel_);
@@ -603,6 +609,17 @@ bool TaskSetDialog::onSave() {
 
 bool TaskSetDialog::isDirty() const { return dirty_; }
 void TaskSetDialog::setDirty(bool _d) { dirty_ = _d; }
+
+/// ★ 2026-09-23 新增：注入场景模型足迹（与"绘制水域"对话框行为对齐）
+void TaskSetDialog::setSceneModels(
+    const std::vector<keship::ModelFootprint> &_models)
+{
+  if (mapWidget_)
+  {
+    mapWidget_->setSceneModels(_models);
+    mapWidget_->fitToAll();   // 模型 + 水域并集适配视图
+  }
+}
 
 void TaskSetDialog::closeEvent(QCloseEvent *_event) {
   if (isDirty()) {
