@@ -282,7 +282,8 @@ void MapWidget::paintModelPolygon(QPainter &_p,
 
   QPolygonF poly;
   for (const auto &v : _outline)
-    poly << QPointF(v.second * sx, -(v.first * sy));   // (世界Y, -世界X)
+    // ★ 屏幕右 ← 世界 **−Y**（与 toX 一致）⇒ x 分量取负
+    poly << QPointF(-v.second * sx, -(v.first * sy));
 
   if (_m.isStatic) {
     _p.setBrush(QColor(160, 160, 160, 80));
@@ -319,7 +320,8 @@ void MapWidget::paintModelSubPolygons(QPainter &_p,
     if (outline.size() < 3) continue;
     QPolygonF poly;
     for (const auto &v : outline)
-      poly << QPointF(v.second * sx, -(v.first * sy));   // (世界Y, -世界X)
+      // ★ 屏幕右 ← 世界 **−Y**（与 toX 一致）⇒ x 分量取负
+      poly << QPointF(-v.second * sx, -(v.first * sy));
     _p.drawPolygon(poly);
   }
 }
@@ -343,7 +345,8 @@ void MapWidget::paintModelImage(QPainter &_p,
   double pixW = _m.localH * sx;   // 屏幕宽 ← 世界 Y 跨度
   double pixH = _m.localW * sy;   // 屏幕高 ← 世界 X 跨度
 
-  QRectF rect(offX * sx - pixW / 2.0, -(offY * sy) - pixH / 2.0, pixW, pixH);
+  // ★ 屏幕右 ← 世界 **−Y**（与 toX 一致）⇒ x 分量取负
+  QRectF rect(-offX * sx - pixW / 2.0, -(offY * sy) - pixH / 2.0, pixW, pixH);
 
   if (_m.isStatic) {
     _p.setPen(QPen(QColor(120, 120, 120), 1, Qt::DashLine));
@@ -418,10 +421,14 @@ void MapWidget::autoPanToShip() {
   ///   原先按旧映射用 dx/pw 平移世界 X ⇒ 拖动方向错 90°。
   double dw = viewXMax_ - viewXMin_;   // 世界 X（北）跨度 ↔ 屏幕高
   double dh = viewYMax_ - viewYMin_;   // 世界 Y（东）跨度 ↔ 屏幕宽
-  viewXMin_ -= dy / ph * dw;           // 屏幕下移 ⇒ 视野向"南"（−X）
+  // ⚠ 注意与 mouseMoveEvent 的**符号相反**：
+  //   这里是"视野去追船"（船跑出边界 ⇒ 视野朝船的方向移），
+  //   而拖动是"内容跟手"（视野朝鼠标的反方向移）。
+  //   新映射下：屏幕右 = 世界 −Y ⇒ 船在右侧外(dx>0) ⇒ 视野向 −Y 移。
+  viewXMin_ -= dy / ph * dw;           // 船在下方 ⇒ 视野向 −X（南）移
   viewXMax_ -= dy / ph * dw;
-  viewYMin_ += dx / pw * dh;           // 屏幕右移 ⇒ 视野向"东"（+Y）
-  viewYMax_ += dx / pw * dh;
+  viewYMin_ -= dx / pw * dh;           // 船在右方 ⇒ 视野向 −Y 移
+  viewYMax_ -= dx / pw * dh;
 }
 
 // ═══════════════════════════════════════════════
@@ -467,22 +474,42 @@ void MapWidget::paintEvent(QPaintEvent *) {
   //     屏幕**右** = 世界 **+Y（东）**   ← 红色箭头
   //   原先画成"右 = X、上 = Y"（旧映射）⇒ 与画面内容差 90°、且误导用户。
   {
-    int cx = ml() + 12, cy = mt() + 16;
-    // 红色 → 右 = +Y（东）
-    p.setPen(QPen(Qt::red, 2));
-    p.drawLine(cx, cy, cx + 13, cy);
-    p.drawLine(cx + 13, cy, cx + 9, cy - 3);
-    p.drawLine(cx + 13, cy, cx + 9, cy + 3);
+    /// ★ 2026-09-23 调整（张老师反馈"左上角图标与坐标轴/刻度重叠"）：
+    ///   移到**绘图区右上角**，并加半透明白底，避免与网格线、刻度数字混淆。
+    ///   注：方向映射为「屏幕上=世界+X(北)、屏幕右=世界−Y」——
+    ///   即本项目的 NED 命名在 gz 右手系下的呈现（详见 toX/toY 的说明）。
+    const int boxW = 46, boxH = 34;
+    const int bx = ml() + pw - boxW - 6;   // 右上角（留 6px 边距）
+    const int by = mt() + 6;
+
+    p.save();
+    // 半透明白底 + 细边框
+    p.setPen(QPen(QColor(150, 150, 150, 160), 1));
+    p.setBrush(QColor(255, 255, 255, 210));
+    p.drawRect(bx, by, boxW, boxH);
+
+    const int cx = bx + 16, cy = by + 20;   // 原点在底盒内偏左下
+
     // 绿色 → 上 = +X（北）
     p.setPen(QPen(QColor(0, 140, 0), 2));
-    p.drawLine(cx, cy, cx, cy - 13);
-    p.drawLine(cx, cy - 13, cx - 3, cy - 9);
-    p.drawLine(cx, cy - 13, cx + 3, cy - 9);
-    // 标签：上=北(X)、右=东(Y)
-    p.setPen(Qt::black);
+    p.drawLine(cx, cy, cx, cy - 11);
+    p.drawLine(cx, cy - 11, cx - 3, cy - 7);
+    p.drawLine(cx, cy - 11, cx + 3, cy - 7);
+    // 红色 → 右 = −Y（本项目的"东"在屏幕左，故此处标注 −Y 方向）
+    p.setPen(QPen(Qt::red, 2));
+    p.drawLine(cx, cy, cx + 11, cy);
+    p.drawLine(cx + 11, cy, cx + 7, cy - 3);
+    p.drawLine(cx + 11, cy, cx + 7, cy + 3);
+
+    // 标签（放在箭头内侧，避免超出底盒）
+    p.setPen(QColor(0, 110, 0));
     QFont xf; xf.setPointSize(7); xf.setBold(true); p.setFont(xf);
-    p.drawText(cx + 15, cy + 4, QStringLiteral("Y 东"));
-    p.drawText(cx - 26, cy - 12, QStringLiteral("X 北"));
+    p.drawText(QRect(bx + 4, by + 1, boxW - 8, 11), Qt::AlignCenter,
+               QStringLiteral("X北"));
+    p.setPen(QColor(180, 0, 0));
+    p.drawText(QRect(bx + 26, cy - 6, boxW - 28, 12), Qt::AlignLeft | Qt::AlignVCenter,
+               QStringLiteral("−Y"));
+    p.restore();
   }
 
   // ═══ 第 2 层：绘图区内容（裁剪，防止放大后超出方框） ═══
@@ -916,11 +943,16 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
     ///     · 下拖(dScreenY>0) ⇒ 内容下移 ⇒ 视野向 +X（北）移 ⇒ viewX 增大
     ///   原先按旧映射把屏幕 X 位移加到世界 X 上 ⇒ 拖动方向整体差 90°
     ///   （张老师反馈："往左拖预览往下跑、往上拖预览往右跑"）。
+    /// ⚠ 2026-09-23 第二轮修正：`toX` 已改为"屏幕右 ← 世界 −Y"（取反），
+    ///   因此**世界 Y 的平移符号要跟着反过来**（否则左右拖动是反的）。
+    ///   上下方向不受影响（`toY` 未变）。张老师实测："上下正常、左右反了"。
     const double dScreenX = _event->pos().x() - panStart_.x();
     const double dScreenY = _event->pos().y() - panStart_.y();
     const double dWorldY = dScreenX / pw * (viewYMax_ - viewYMin_);   // 屏幕 X → 世界 Y
     const double dWorldX = dScreenY / ph * (viewXMax_ - viewXMin_);   // 屏幕 Y → 世界 X
-    viewYMin_ -= dWorldY; viewYMax_ -= dWorldY;
+    // 屏幕右 = 世界 −Y ⇒ 右拖(内容右移) = 视野向 +Y 移
+    viewYMin_ += dWorldY; viewYMax_ += dWorldY;
+    // 屏幕上 = 世界 +X ⇒ 下拖(内容下移) = 视野向 +X 移
     viewXMin_ += dWorldX; viewXMax_ += dWorldX;
     panStart_ = _event->pos();
     update(); return;
