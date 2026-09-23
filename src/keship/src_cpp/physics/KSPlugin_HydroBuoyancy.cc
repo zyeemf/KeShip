@@ -567,6 +567,16 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         {
           const double D = bMaxZ - bMinZ;    ///< 型深（世界竖直向跨度）
           const double B = bMaxY - bMinY;    ///< 型宽
+
+          /// ★ 作用点的**水平位置取质心**（水下侧面积形心的近似）。
+          /// ⚠ 绝不能用 link 原点的 x,y —— 二者可相差数米
+          ///   （如 ke0812_1.ksm：link 原点 vs CoM 差 (1.6, -0.99) m），
+          ///   会产生**虚假的偏航力矩**。实测（2026-09-23）：流速 1 m/s 时
+          ///   船 30 s 内 yaw 从 -1° 转到 +47°（原地打转），改用 CoM 后消除。
+          const gz::math::Vector3d linkCoMWorldPos =
+              this->linkObj_.WorldInertialPose(_ecm)
+                  ? this->linkObj_.WorldInertialPose(_ecm)->Pos()
+                  : linkWorldPos;
           const double T = std::clamp(effectiveFluidLevel - bMinZ, 0.0, D);  ///< 吃水
           const double A_sub = B * T * this->dataPtr->currentAreaScale_;
           const double A_above = B * (D - T) * this->dataPtr->windAreaScale_;
@@ -580,7 +590,7 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
             {
               const gz::math::Vector3d F = vr * (0.5 * this->dataPtr->fluidDensity_
                   * this->dataPtr->currentDragCoeff_ * A_sub * mag);
-              const gz::math::Vector3d P(linkWorldPos.X(), linkWorldPos.Y(),
+              const gz::math::Vector3d P(linkCoMWorldPos.X(), linkCoMWorldPos.Y(),
                   effectiveFluidLevel - 0.5 * T);
               acc.Add({"env/current", F, P});
             }
@@ -595,7 +605,7 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
             {
               const gz::math::Vector3d F = vr * (0.5 * this->dataPtr->airDensity_
                   * this->dataPtr->windDragCoeff_ * A_above * mag);
-              const gz::math::Vector3d P(linkWorldPos.X(), linkWorldPos.Y(),
+              const gz::math::Vector3d P(linkCoMWorldPos.X(), linkCoMWorldPos.Y(),
                   effectiveFluidLevel + 0.5 * (D - T));
               acc.Add({"env/wind", F, P});
             }
