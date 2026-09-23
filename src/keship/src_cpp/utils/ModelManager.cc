@@ -2252,8 +2252,15 @@ static void ComputeProjectedImage(
   _outH = _imgH;
   _outData.assign(_imgW * _imgH * 4, 0);
 
-  auto toX = [&](double _wx) { return (_wx - xMin) / localW * (_imgW - 1); };
-  auto toY = [&](double _wy) { return (_imgH - 1) - (_wy - yMin) / localH * (_imgH - 1); };
+  /// ★★ 2026-09-23 修正（地图「北朝上」，NED：+X 北、+Y 东）：
+  ///   投影图**生成时**的轴映射必须与 MapWidget 一致，否则位图本身朝向就错了 ——
+  ///   在 paintModelImage 里再交换坐标是**无效的**（图像内容是旋转过的）。
+  ///     · 图像 X（横向）← 世界 **Y（东）**
+  ///     · 图像 Y（纵向）← 世界 **X（北）**，且 y 取负（图像 y 向下）
+  ///   原先写成 图像X←世界X、图像Y←世界Y（旧映射）⇒
+  ///   张老师看到"2D 预览与 3D 场景方向不一致"。
+  auto toX = [&](double _wy) { return (_wy - yMin) / localH * (_imgW - 1); };
+  auto toY = [&](double _wx) { return (_imgH - 1) - (_wx - xMin) / localW * (_imgH - 1); };
 
   auto edgeFn = [](double _px, double _py,
                    double _ax, double _ay, double _bx, double _by) -> double {
@@ -2277,9 +2284,10 @@ static void ComputeProjectedImage(
   for (size_t t = 0; t < mesh.triangles.size(); ++t)
   {
     const auto &tri = mesh.triangles[t];
-    double ix0 = toX(tri.v0.X()), iy0 = toY(tri.v0.Y());
-    double ix1 = toX(tri.v1.X()), iy1 = toY(tri.v1.Y());
-    double ix2 = toX(tri.v2.X()), iy2 = toY(tri.v2.Y());
+    // 注意：toX 吃世界 Y、toY 吃世界 X（见上方说明）
+    double ix0 = toX(tri.v0.Y()), iy0 = toY(tri.v0.X());
+    double ix1 = toX(tri.v1.Y()), iy1 = toY(tri.v1.X());
+    double ix2 = toX(tri.v2.Y()), iy2 = toY(tri.v2.X());
 
     int minX = std::max(0, (int)std::floor(std::min({ix0, ix1, ix2})));
     int maxX = std::min(_imgW - 1, (int)std::ceil(std::max({ix0, ix1, ix2})));
