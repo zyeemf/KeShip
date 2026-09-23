@@ -2901,6 +2901,28 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
       double val = _addedMass[i * 6 + j];
       if (std::abs(val) < 1e-12)
         continue;
+
+      /// ★★ 本体坐标系符号修正（2026-09-23）
+      ///
+      /// 用户的 M_A 按 **Fossen/NED 本体**导出（x 前、**y 右**、**z 下**），
+      /// 而 DART 的 `<fluid_added_mass>` 工作在 **gz link 系**（x 前、**y 左**、**z 上**）
+      /// ⇒ y/z 轴族（sway/heave/roll/pitch/yaw，索引 1..5）的"力分量"与
+      ///   "速度分量"各自反号。
+      ///
+      /// 对矩阵项 m_ij，净修正系数 = (-1)^([i∈S] + [j∈S])，S = {1,2,3,4,5}：
+      ///   · i、j 都在 S 内，或都不在（即 i=j=0）      ⇒ +1（不变）
+      ///   · 恰有一个在 S 内（即 **x 与 y/z 轴的耦合项**）⇒ -1（取反）
+      ///
+      /// 实测（`models_all/ks_model/ke0812_1.ksm`）：非零项为对角 6 项
+      /// + `m15 = m51 = -405`（sway↔yaw），**全部落在"不变"一侧** ⇒
+      /// 加此修正后该模型的 SDF 输出**逐字不变**（可作回归判据）。
+      /// 唯一受影响的是 `m01..m05` 类耦合项（该模型全为 0）——
+      /// 这正是本次要堵住的隐患：将来若出现非零的 x↔y/z 耦合，符号自动正确。
+      const bool iInS = (i >= 1);
+      const bool jInS = (j >= 1);
+      if (iInS != jInS)
+        val = -val;
+
       fam << "        <" << tags[i][j] << ">"
           << val << "</" << tags[i][j] << ">\n";
     }
