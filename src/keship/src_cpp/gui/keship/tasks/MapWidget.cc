@@ -215,22 +215,27 @@ void MapWidget::fitViewToWidget()
 {
   int pw = plotW(), ph = plotH();
   if (pw <= 0 || ph <= 0 || scale_ < 1e-12) return;
+  /// ★ 2026-09-23 修正（北朝上）：世界 X 占**屏幕高**、世界 Y 占**屏幕宽** ——
+  ///   原先 viewX 范围用 pw（宽）、viewY 用 ph（高），是旧映射下的写法。
+  ///   视野非正方形时会导致缩放/裁剪错位。
   double cx = (viewXMin_ + viewXMax_) * 0.5;
   double cy = (viewYMin_ + viewYMax_) * 0.5;
-  viewXMin_ = cx - pw / scale_ * 0.5;
-  viewXMax_ = cx + pw / scale_ * 0.5;
-  viewYMin_ = cy - ph / scale_ * 0.5;
-  viewYMax_ = cy + ph / scale_ * 0.5;
+  viewXMin_ = cx - ph / scale_ * 0.5;   // 世界 X（北）↔ 屏幕高
+  viewXMax_ = cx + ph / scale_ * 0.5;
+  viewYMin_ = cy - pw / scale_ * 0.5;   // 世界 Y（东）↔ 屏幕宽
+  viewYMax_ = cy + pw / scale_ * 0.5;
 }
 
 void MapWidget::initViewScale()
 {
   int pw = plotW(), ph = plotH();
   if (pw <= 0 || ph <= 0) return;
-  double rangeX = viewXMax_ - viewXMin_;
-  double rangeY = viewYMax_ - viewYMin_;
+  double rangeX = viewXMax_ - viewXMin_;   // 世界 X（北）跨度
+  double rangeY = viewYMax_ - viewYMin_;   // 世界 Y（东）跨度
   if (rangeX < 1e-12 || rangeY < 1e-12) return;
-  scale_ = std::min(pw / rangeX, ph / rangeY);
+  /// ★ 2026-09-23 修正（北朝上）：世界 X 占屏幕高、世界 Y 占屏幕宽 ⇒
+  ///   比例尺应为 min(屏幕高/世界X跨度, 屏幕宽/世界Y跨度)。
+  scale_ = std::min(ph / rangeX, pw / rangeY);
   fitViewToWidget();
 }
 
@@ -296,8 +301,10 @@ void MapWidget::paintModelSubPolygons(QPainter &_p,
 {
   if (_outlines.empty()) return;
 
-  double sx = _pw / (viewXMax_ - viewXMin_);
-  double sy = _ph / (viewYMax_ - viewYMin_);
+  /// ★ 2026-09-23 修正（北朝上）：与 paintModelPolygon 同理 ——
+  ///   屏幕 X ← 世界 Y（缩放按 Y 范围）、屏幕 Y ← 世界 X（缩放按 X 范围）。
+  double sx = _pw / (viewYMax_ - viewYMin_);   // 屏幕宽 ← 世界 Y 范围
+  double sy = _ph / (viewXMax_ - viewXMin_);   // 屏幕高 ← 世界 X 范围
 
   if (_m.isStatic) {
     _p.setBrush(QColor(160, 160, 160, 80));
@@ -312,7 +319,7 @@ void MapWidget::paintModelSubPolygons(QPainter &_p,
     if (outline.size() < 3) continue;
     QPolygonF poly;
     for (const auto &v : outline)
-      poly << QPointF(v.first * sx, -(v.second * sy));
+      poly << QPointF(v.second * sx, -(v.first * sy));   // (世界Y, -世界X)
     _p.drawPolygon(poly);
   }
 }
@@ -394,12 +401,16 @@ void MapWidget::autoPanToShip() {
 
   if (std::abs(dx) < 1 && std::abs(dy) < 1) return;
 
-  double dw = viewXMax_ - viewXMin_;
-  double dh = viewYMax_ - viewYMin_;
-  viewXMin_ += dx / pw * dw;
-  viewXMax_ += dx / pw * dw;
-  viewYMin_ -= dy / ph * dh;
-  viewYMax_ -= dy / ph * dh;
+  /// ★ 2026-09-23 修正（北朝上）：世界 X（北）占屏幕**高**、世界 Y（东）占屏幕**宽**
+  ///   ⇒ 世界 X 的平移量来自屏幕纵向位移 dy（除以 ph），
+  ///     世界 Y 的平移量来自屏幕横向位移 dx（除以 pw）。
+  ///   原先按旧映射用 dx/pw 平移世界 X ⇒ 拖动方向错 90°。
+  double dw = viewXMax_ - viewXMin_;   // 世界 X（北）跨度 ↔ 屏幕高
+  double dh = viewYMax_ - viewYMin_;   // 世界 Y（东）跨度 ↔ 屏幕宽
+  viewXMin_ -= dy / ph * dw;           // 屏幕下移 ⇒ 视野向"南"（−X）
+  viewXMax_ -= dy / ph * dw;
+  viewYMin_ += dx / pw * dh;           // 屏幕右移 ⇒ 视野向"东"（+Y）
+  viewYMax_ += dx / pw * dh;
 }
 
 // ═══════════════════════════════════════════════
@@ -418,30 +429,49 @@ void MapWidget::paintEvent(QPaintEvent *) {
 
   {
     QFont tf; tf.setPointSize(7); p.setFont(tf); p.setPen(Qt::black);
-    double dx = (viewXMax_ - viewXMin_) / 4;
-    double dy = (viewYMax_ - viewYMin_) / 4;
+    /// ★★ 2026-09-23 修正（北朝上）：刻度轴也要跟随映射交换 ——
+    ///   底部横轴的刻度值应是**世界 Y（东）**（屏幕 X ← 世界 Y）；
+    ///   左侧纵轴的刻度值应是**世界 X（北）**（屏幕 Y ← 世界 X）。
+    ///   原先底部标世界 X、左侧标世界 Y ⇒ 与画面内容差 90°。
+    double dx = (viewYMax_ - viewYMin_) / 4;   // 横轴步长 ← 世界 Y 范围
+    double dy = (viewXMax_ - viewXMin_) / 4;   // 纵轴步长 ← 世界 X 范围
     for (int i = 0; i <= 4; ++i) {
-      double xv = viewXMin_ + dx * i, yv = viewYMin_ + dy * i;
-      int tx = ml() + (int)((xv - viewXMin_) / (viewXMax_ - viewXMin_) * pw);
-      int ty = mt() + ph - (int)((yv - viewYMin_) / (viewYMax_ - viewYMin_) * ph);
+      double yv = viewYMin_ + dx * i;   // 横轴刻度值（世界 Y）
+      double xv = viewXMin_ + dy * i;   // 纵轴刻度值（世界 X）
+      int tx = ml() + (int)((yv - viewYMin_) / (viewYMax_ - viewYMin_) * pw);
+      int ty = mt() + ph - (int)((xv - viewXMin_) / (viewXMax_ - viewXMin_) * ph);
       p.drawLine(tx, mt() + ph, tx, mt() + ph + 4);
       p.drawText(QRect(tx - 25, mt() + ph + 4, 50, 12), Qt::AlignHCenter,
-                 QString::number(xv, 'f', 0));
+                 QString::number(yv, 'f', 0));
       p.drawLine(ml(), ty, ml() - 4, ty);
       p.drawText(QRect(2, ty - 6, ml() - 6, 12), Qt::AlignRight | Qt::AlignVCenter,
-                 QString::number(yv, 'f', 0));
+                 QString::number(xv, 'f', 0));
     }
   }
 
-  // 小坐标系指示器
+  // ★★ 小坐标系指示器（2026-09-23 按「北朝上」修正方向）
+  //
+  //   本项目方向约定 = NED（+X 北、+Y 东），地图映射为「北朝上」：
+  //     屏幕**上** = 世界 **+X（北）**   ← 绿色箭头
+  //     屏幕**右** = 世界 **+Y（东）**   ← 红色箭头
+  //   原先画成"右 = X、上 = Y"（旧映射）⇒ 与画面内容差 90°、且误导用户。
   {
-    int cx = ml() + 12, cy = mt() + 14;
-    p.setPen(QPen(Qt::red, 2));   p.drawLine(cx, cy, cx + 12, cy);
-    p.setPen(QPen(QColor(0,140,0), 2)); p.drawLine(cx, cy, cx, cy - 8);
+    int cx = ml() + 12, cy = mt() + 16;
+    // 红色 → 右 = +Y（东）
+    p.setPen(QPen(Qt::red, 2));
+    p.drawLine(cx, cy, cx + 13, cy);
+    p.drawLine(cx + 13, cy, cx + 9, cy - 3);
+    p.drawLine(cx + 13, cy, cx + 9, cy + 3);
+    // 绿色 → 上 = +X（北）
+    p.setPen(QPen(QColor(0, 140, 0), 2));
+    p.drawLine(cx, cy, cx, cy - 13);
+    p.drawLine(cx, cy - 13, cx - 3, cy - 9);
+    p.drawLine(cx, cy - 13, cx + 3, cy - 9);
+    // 标签：上=北(X)、右=东(Y)
     p.setPen(Qt::black);
     QFont xf; xf.setPointSize(7); xf.setBold(true); p.setFont(xf);
-    p.drawText(cx + 13, cy + 4, "X");
-    p.drawText(cx - 2, cy - 9, "Y");
+    p.drawText(cx + 15, cy + 4, QStringLiteral("Y 东"));
+    p.drawText(cx - 26, cy - 12, QStringLiteral("X 北"));
   }
 
   // ═══ 第 2 层：绘图区内容（裁剪，防止放大后超出方框） ═══
@@ -524,7 +554,9 @@ void MapWidget::paintEvent(QPaintEvent *) {
   // DP 目标区域
   if (showDp_) {
     int dpx = toX(dpY_), dpy = toY(dpX_);
-    int rPx = (int)(dpTol_ / (viewXMax_ - viewXMin_) * pw);
+    /// ★ 2026-09-23 修正（北朝上）：半径（米）→ 像素按**屏幕宽 / 世界 Y 跨度**
+    ///   （屏幕宽对应世界 Y）。原先用 viewX 跨度，视野非正方形时圆会画成椭圆。
+    int rPx = (int)(dpTol_ / (viewYMax_ - viewYMin_) * pw);
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(40, 200, 40, 50));
     p.drawEllipse(QPoint(dpx, dpy), rPx, rPx);
@@ -539,7 +571,8 @@ void MapWidget::paintEvent(QPaintEvent *) {
   // goto 目标（旗帜标记 + 抵达圈）
   if (showGoto_) {
     int gx = toX(gotoY_), gy = toY(gotoX_);
-    int rPx = std::max(3, (int)(gotoR_ / (viewXMax_ - viewXMin_) * pw));
+    /// ★ 2026-09-23 修正（北朝上）：同上 —— 半径按屏幕宽 / 世界 Y 跨度换算
+    int rPx = std::max(3, (int)(gotoR_ / (viewYMax_ - viewYMin_) * pw));
     // 抵达圈
     p.setPen(QPen(QColor(200, 120, 0), 1.5, Qt::DashLine));
     p.setBrush(QColor(200, 120, 0, 40));
@@ -722,36 +755,8 @@ void MapWidget::paintEvent(QPaintEvent *) {
   // 恢复裁剪（比例尺和底部信息在裁剪区外渲染）
   p.restore();
 
-  // ---- ★ 2026-09-23 方向罗盘（张老师要求「地图加北标注」）----
-  //   本项目方向约定为 **NED**（+X = 北、+Y = 东），地图已改为「**北朝上**」
-  //   （见 toX/toY 的说明：屏幕=(worldY, worldX)）
-  //   ⇒ 箭头向上 = 北(+X)，向右 = 东(+Y)。
-  {
-    const int ccx = ml() + 24;          // 罗盘中心：绘图区左上角内侧
-    const int ccy = mt() + 28;
-
-    p.save();
-    // 指北箭头
-    p.setPen(QPen(QColor(50, 50, 50), 1.6));
-    p.drawLine(ccx, ccy + 11, ccx, ccy - 11);
-    p.drawLine(ccx, ccy - 11, ccx - 4, ccy - 4);
-    p.drawLine(ccx, ccy - 11, ccx + 4, ccy - 4);
-    // 「北」字（箭头下方）
-    {
-      QFont nf; nf.setPointSize(9); nf.setBold(true);
-      p.setFont(nf);
-      p.setPen(QColor(30, 30, 30));
-      p.drawText(QRect(ccx - 14, ccy + 12, 28, 14), Qt::AlignCenter, QStringLiteral("北"));
-    }
-    // 「东」字（箭头右侧，示意 +Y 方向）
-    {
-      QFont ef; ef.setPointSize(8);
-      p.setFont(ef);
-      p.setPen(QColor(120, 120, 120));
-      p.drawText(QRect(ccx + 13, ccy - 7, 20, 14), Qt::AlignCenter, QStringLiteral("东"));
-    }
-    p.restore();
-  }
+  // 注：方向指示由绘图区左上角的「小坐标系指示器」承担（见上方 paintEvent 第 1 层），
+  //     那里同时给出 +X（北）/ +Y（东）两轴与文字标签，故此处不再另画罗盘。
 
   // ---- 动作提示（地图下方，不遮挡地图内容；操作说明不随模式误显示"双击设航向"）----
   // 注意：X 轴刻度数字画在 ph+4~ph+16，故提示必须从 ph+18 起，否则两者重叠
