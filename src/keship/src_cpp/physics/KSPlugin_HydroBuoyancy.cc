@@ -862,8 +862,14 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
   {
     BuoyancyBody body;
 
-    auto [name, nameOk] = elem->Get<std::string>("name", "");
-    body.name = nameOk ? name : ("body_" + std::to_string(count));
+    /// ★ 2026-09-23 修复：`name` 是 `<buoyancy>` 的**属性**（`name="body_0"`），
+    /// 不是子元素。原先用 `elem->Get<std::string>("name", "")` 读的是**子元素 `<name>`**
+    /// —— sdf::Element::Get 不会回退到属性 ⇒ 永远读不到 ⇒ 日志里 name 恒为空。
+    /// （只影响日志/诊断，不影响浮力计算 —— 但会让日志失去区分各浮力体的能力。）
+    std::string name;
+    if (auto nameAttr = elem->GetAttribute("name"))
+      name = nameAttr->GetAsString();
+    body.name = name.empty() ? ("body_" + std::to_string(count)) : name;
 
     auto [pose, poseOk] = elem->Get<gz::math::Pose3d>("pose", gz::math::Pose3d::Zero);
     if (poseOk) body.poseOffset = pose;
@@ -956,7 +962,13 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
 
     this->dataPtr->bodies.push_back(std::move(body));
 
-    gzmsg << "KSPlugin_HydroBuoyancy: 浮力体[" << count << "] name=" << body.name
+    /// ⚠ 2026-09-23 修复：**必须在 move 之后改从 `bodies.back()` 取字段**。
+    /// 原先此处打印 `body.name` —— 但 body 已被 `std::move` 移走，
+    /// `std::string` 被置空 ⇒ 日志里 name 恒为空（这才是"name 为空"的**直接原因**；
+    /// 另一个原因见上方 `GetAttribute` 修复：属性本来就没被读到）。
+    /// 注：move 后 `body` 处于有效但未指定状态，读它的成员是未定义行为的温床。
+    gzmsg << "KSPlugin_HydroBuoyancy: 浮力体[" << count
+          << "] name=" << this->dataPtr->bodies.back().name
           << " volume=" << this->dataPtr->bodies.back().totalVolume
           << " lenSq=" << this->dataPtr->bodies.back().characteristicLengthSq << std::endl;
 

@@ -101,8 +101,13 @@ void keship::KSPlugin_Thrust::Configure(
   {
     auto body = std::make_unique<ThrusterBody>();
 
-    auto [name, nameOk] = elem->Get<std::string>("name", "");
-    body->name = nameOk ? name : ("thrust_" + std::to_string(count));
+    /// ★ 2026-09-23 修复（与 KSPlugin_HydroBuoyancy 的 `<buoyancy name>` 同一处误用）：
+    /// `name` 是 `<thrust>` 的**属性**，不是子元素 —— `elem->Get<std::string>("name", "")`
+    /// 读的是子元素 `<name>` ⇒ 永远读不到 ⇒ 日志/诊断里推力器名恒为空。
+    std::string name;
+    if (auto nameAttr = elem->GetAttribute("name"))
+      name = nameAttr->GetAsString();
+    body->name = name.empty() ? ("thrust_" + std::to_string(count)) : name;
 
     auto [pose, poseOk] = elem->Get<gz::math::Pose3d>("pose", gz::math::Pose3d::Zero);
     if (poseOk) body->poseOffset = pose;
