@@ -33,7 +33,12 @@
         <scene>scene</scene>
         <ambient_light>0.3 0.2 0.1</ambient_light>
         <background_color>0.9 0.6 0.3</background_color>
-        <camera_pose>-100 0 30 0 0 0</camera_pose>
+        <!-- ★ 2026-09-23 默认视角：正北方向、视线正对原点（张老师要求）。
+             格式 x y z roll pitch yaw。
+             本项目方向约定为 NED（+X = 北）⇒ 相机置于 −X（南侧）100 m、高 30 m，
+             朝向 +X（北，yaw = 0）；pitch = −atan(30/100) ≈ −0.2915 rad 使视线穿过原点。
+             改前为 (-100 0 30 0 0 0)：位置相同但 pitch=0（水平），视线在 z=30 高度不经过原点。 -->
+        <camera_pose>-100 0 30 0 -0.2915 0</camera_pose>
         <camera_clip>
           <near>0.25</near>
           <far>10000</far>

@@ -190,7 +190,9 @@ void main()
   //   ⇒ **视觉流向与物理流向相反**（船顺流走，水面却显示成逆流）。
   //   fs 里 `uvBase = worldXY + flowXY` 直接印证了这一点。
   //   取负号后：采样点沿 −flowDir 后退 ⇒ 图案向 +flowDir 滚动 ⇒ 与物理一致。
-  //   ⚠ 符号与 `flowDir` 的约定（0 = 世界 +Y 北向、顺时针）绑定，改动任一处都要同步核对。
+  //   ⚠ 符号与 `flowDir` 的约定绑定 —— 2026-09-23 已统一为 **NED：0 = +X（北），顺时针**，
+  //     与波浪方向 `dir0..dir7`（同样 0 = +X）一致。改动任一处都要同步核对四处：
+  //     Wavefield.cc / WaveVisual.cc / KSPlugin_HydroBuoyancy.cc / 本文件。
   outVs.flowXY  = -flowDir * (flowSpeed * t);
 
   outVs.eyeVec = P.xyz - camera_position_object_space; // eye position in vertex space

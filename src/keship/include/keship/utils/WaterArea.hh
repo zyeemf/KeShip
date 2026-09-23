@@ -38,17 +38,21 @@ namespace keship
   };
 
   /// \brief 风参数
+  ///
+  /// ★★ 方向约定（2026-09-23 统一为 NED，张老师："以船舶为主题"）：
+  ///   **0 = +X（北向），顺时针** —— 与 Fossen 6-DOF / 波浪方向 / 船体几何一致。
+  ///   ⚠ 与 Gazebo 世界系的 ENU（+X 东、+Y 北）不同；方向类参数一律按 NED 解释。
   struct WindParams
   {
     double speed     = 0.0;   // m/s
-    double direction = 0.0;   // rad, 0 = 世界 +Y (北向)
+    double direction = 0.0;   // rad, 0 = +X (北向), 顺时针
   };
 
-  /// \brief 流参数
+  /// \brief 流参数（方向约定同 WindParams）
   struct CurrentParams
   {
     double speed     = 0.0;   // m/s (表层)
-    double direction = 0.0;   // rad
+    double direction = 0.0;   // rad, 0 = +X (北向), 顺时针
   };
 
   /// \brief 单片水域定义

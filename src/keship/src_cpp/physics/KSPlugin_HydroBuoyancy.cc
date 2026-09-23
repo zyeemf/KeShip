@@ -531,14 +531,24 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       auto linVel = this->linkObj_.WorldLinearVelocity(_ecm);
       if (linVel)
       {
-        /// 环境速度矢量（世界系）。方向约定：0 = 世界 +Y（北向），顺时针
-        /// ⇒ 单位方向向量 = (sin(dir), cos(dir), 0)
+        /// 环境速度矢量（世界系）。
+        ///
+        /// ★★ 2026-09-23 方向约定统一（张老师："以船舶为主题"）：
+        ///   本项目**统一采用 NED 风格**（与 Fossen 6-DOF、波浪方向、船体几何一致）：
+        ///     **0° = +X（北），顺时针** ⇒ 单位方向向量 = (cos(dir), sin(dir), 0)
+        ///       dir = 0    → (+1, 0, 0) = 正北
+        ///       dir = π/2  → (0, +1, 0) = 正东
+        ///   ⚠ 注意：这与 Gazebo 世界系的 ENU 惯例（+X 东、+Y 北）**不同**。
+        ///     此前本处用 `(sin, cos)`（ENU）⇒ 与波浪方向差 90°，已修正。
+        ///   ⚠ 改动任一处方向约定，都要同步核对：
+        ///     Wavefield.cc（波浪）、WaveVisual.cc（流向视觉）、
+        ///     GerstnerWaves_vs_330.glsl（shader）、EnvFlow.hh（注释）。
         const gz::math::Vector3d vCurrent(
-            ef.currentSpeed * std::sin(ef.currentDirection),
-            ef.currentSpeed * std::cos(ef.currentDirection), 0.0);
+            ef.currentSpeed * std::cos(ef.currentDirection),
+            ef.currentSpeed * std::sin(ef.currentDirection), 0.0);
         const gz::math::Vector3d vWind(
-            ef.windSpeed * std::sin(ef.windDirection),
-            ef.windSpeed * std::cos(ef.windDirection), 0.0);
+            ef.windSpeed * std::cos(ef.windDirection),
+            ef.windSpeed * std::sin(ef.windDirection), 0.0);
 
         /// 所有浮力体包围盒的**并集**（世界系；8 角点变换后取极值，兼顾倾斜）
         double bMinZ = 1e30, bMaxZ = -1e30, bMinY = 1e30, bMaxY = -1e30;

@@ -14,10 +14,19 @@
  * 读 ECM（Wavefield 组件）⇒ 同一模式、无跨线程问题；且风/流是"世界状态"
  * 而非"事件"，每帧可读、无需缓存。
  *
- * 方向约定（与 WaterArea::WindParams 一致）：0 = 世界 +Y（北向），顺时针。
- *   ⇒ 单位方向向量 = (sin(dir), cos(dir), 0)
- *      dir = 0     → (0, +1, 0) = 正北
- *      dir = π/2   → (+1, 0, 0) = 正东
+ * ★★ 方向约定（2026-09-23 统一为 NED，张老师："以船舶为主题"）：
+ *   **0 = +X（北），顺时针** —— 与 Fossen 6-DOF、波浪方向、船体几何一致。
+ *   ⇒ 单位方向向量 = (cos(dir), sin(dir), 0)
+ *      dir = 0     → (+1, 0, 0) = 正北
+ *      dir = π/2   → (0, +1, 0) = 正东
+ *
+ * ⚠ 这与 Gazebo 世界系的 ENU 惯例（+X 东、+Y 北）**不同** —— 本项目的方向类参数
+ *   一律按 NED 解释。此前本文件与流向/风向的计算曾用 (sin, cos)（ENU），
+ *   与波浪方向差 90°，已于 2026-09-23 统一修正。
+ *
+ * ⚠ 改动任一处方向约定，都要同步核对四处实现：
+ *   `Wavefield.cc`（波浪）、`WaveVisual.cc`（流向视觉）、
+ *   `KSPlugin_HydroBuoyancy.cc`（环境力）、`GerstnerWaves_vs_330.glsl`（shader）。
  */
 
 #ifndef KESHIP_COMPONENTS_ENVFLOW_HH_
@@ -38,13 +47,13 @@ namespace components
     /// \brief 流速（表层），m/s
     double currentSpeed{0.0};
 
-    /// \brief 流向，rad（0 = 世界 +Y 北向，顺时针）
+    /// \brief 流向，rad（**0 = +X 北向**，顺时针 —— NED，见文件头说明）
     double currentDirection{0.0};
 
     /// \brief 风速，m/s
     double windSpeed{0.0};
 
-    /// \brief 风向，rad（0 = 世界 +Y 北向，顺时针）
+    /// \brief 风向，rad（**0 = +X 北向**，顺时针 —— NED，见文件头说明）
     double windDirection{0.0};
   };
 

@@ -126,7 +126,7 @@ class keship::WaveVisualPrivate
   public: std::string bumpMapPath;
   public: std::string cubeMapPath;
 
-  /// \brief 环境参数里的「流速」（m/s）与方向（rad，0 = 世界 +Y 北向、顺时针）。
+  /// \brief 环境参数里的「流速」（m/s）与方向（rad，**0 = +X 北向**、顺时针；NED）。
   ///
   /// ★ 2026-09-21（缺陷 W-3 的视觉侧接入）：这两个值此前**没有任何消费者** ——
   /// 由 `KSPlugin_WavesModel` 随波浪参数一并广播到
@@ -359,9 +359,13 @@ void WaveVisualPrivate::UploadShaderParams()
   ///     不产生净位移，幅度由 `detailActivity` 控制。
   float flowSpeed = static_cast<float>(this->currentSpeed_);
   const double cdir = this->currentDirection_;
-  /// 方向约定与 WindParams 一致：0 = 世界 +Y（北向），顺时针
-  float flowDirV[2] = {static_cast<float>(std::sin(cdir)),
-                       static_cast<float>(std::cos(cdir))};
+  /// ★★ 2026-09-23 方向约定统一（NED）：0 = +X（北），顺时针
+  /// ⇒ 单位方向向量 = (cos(dir), sin(dir))，与物理侧 HydroBuoyancy 及
+  ///   Wavefield 的波浪方向保持一致。
+  /// ⚠ 与 Gazebo 世界系的 ENU（+Y 北）不同 —— 改动需同步核对四处：
+  ///   Wavefield.cc / WaveVisual.cc / GerstnerWaves_vs_330.glsl / EnvFlow.hh
+  float flowDirV[2] = {static_cast<float>(std::cos(cdir)),
+                       static_cast<float>(std::sin(cdir))};
   (*vsParams)["flowSpeed"] = flowSpeed;
   (*vsParams)["flowDir"].InitializeBuffer(2);
   (*vsParams)["flowDir"].UpdateBuffer(flowDirV);
