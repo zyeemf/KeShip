@@ -2387,7 +2387,13 @@ void ModelManager::CacheModelFootprint(const std::string &_name)
   double dx, dy, dz, radius, length;
   std::string meshPath;
   if (!GetCachedModelGeometry(_name, type, dx, dy, dz, radius, length, meshPath))
+  {
+    /// ★ 2026-09-23 诊断：模型未进地图缓存的原因之一（sdfCache_ 里没有该模型，
+    ///   或 SDF 里既无 <mesh> 也无 <box>/<cylinder>）
+    std::cout << "[足迹诊断] " << _name
+              << " —— GetCachedModelGeometry 失败（不进地图缓存）" << std::endl;
     return;
+  }
 
   switch (type)
   {
@@ -2420,6 +2426,14 @@ void ModelManager::CacheModelFootprint(const std::string &_name)
   bool isStatic;
   if (GetCachedModelStatic(_name, isStatic))
     fp.isStatic = isStatic;
+
+  /// ★ 2026-09-23 诊断：确认该模型是否真的进了地图缓存、尺寸与轮廓是否有效
+  std::cout << "[足迹诊断] " << _name
+            << " type=" << static_cast<int>(type)
+            << " meshPath=" << meshPath
+            << " W=" << fp.localW << " H=" << fp.localH
+            << " outline=" << fp.convexOutline.size()
+            << std::endl;
 
   modelBBoxCache_[_name] = fp;
 }
