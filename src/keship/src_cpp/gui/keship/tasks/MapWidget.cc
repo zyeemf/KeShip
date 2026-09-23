@@ -167,7 +167,7 @@ void MapWidget::paintReferenceAreas(QPainter &_p) const
     double cx = 0.0, cy = 0.0;
     for (const auto &v : pts)
     {
-      poly << QPointF(toX(v.first), toY(v.second));
+      poly << QPointF(toX(v.second), toY(v.first));
       cx += v.first; cy += v.second;
     }
     cx /= (double)pts.size();
@@ -183,7 +183,7 @@ void MapWidget::paintReferenceAreas(QPainter &_p) const
 
     // 水域名称标签（质心）
     _p.setPen(QColor(120, 120, 120));
-    _p.drawText(QRect(toX(cx) - 40, toY(cy) - 8, 80, 16),
+    _p.drawText(QRect(toX(cy) - 40, toY(cx) - 8, 80, 16),
                 Qt::AlignCenter,
                 QString::fromStdString(a.name));
   }
@@ -342,21 +342,25 @@ void MapWidget::paintModelImage(QPainter &_p,
 // 坐标变换
 // ═══════════════════════════════════════════════
 
-int MapWidget::toX(double _wx) const {
+// ★★ 2026-09-23 地图改为「北朝上」（张老师定；NED 下北 = +X）：
+//   · 屏幕**上** = 世界 **+X（北）** ⇒ toY 吃世界 X
+//   · 屏幕**右** = 世界 **+Y（东）** ⇒ toX 吃世界 Y
+//   即 screen = (worldY, worldX)。⚠ 调用点必须成对交换参数，见 .hh 的说明。
+int MapWidget::toX(double _wy) const {
   int pw = plotW(); if (pw <= 0) return ml();
-  return ml() + (int)((_wx - viewXMin_) / (viewXMax_ - viewXMin_) * pw);
+  return ml() + (int)((_wy - viewYMin_) / (viewYMax_ - viewYMin_) * pw);
 }
-int MapWidget::toY(double _wy) const {
+int MapWidget::toY(double _wx) const {
   int ph = plotH(); if (ph <= 0) return mt();
-  return mt() + ph - (int)((_wy - viewYMin_) / (viewYMax_ - viewYMin_) * ph);
+  return mt() + ph - (int)((_wx - viewXMin_) / (viewXMax_ - viewXMin_) * ph);
 }
 double MapWidget::fromX(int _px) const {
   int pw = plotW(); if (pw <= 0) return 0;
-  return viewXMin_ + (_px - ml()) * (viewXMax_ - viewXMin_) / (double)pw;
+  return viewYMin_ + (_px - ml()) * (viewYMax_ - viewYMin_) / (double)pw;
 }
 double MapWidget::fromY(int _py) const {
   int ph = plotH(); if (ph <= 0) return 0;
-  return viewYMin_ + (mt() + ph - _py) * (viewYMax_ - viewYMin_) / (double)ph;
+  return viewXMin_ + (mt() + ph - _py) * (viewXMax_ - viewXMin_) / (double)ph;
 }
 
 // ═══════════════════════════════════════════════
@@ -368,7 +372,7 @@ void MapWidget::autoPanToShip() {
   if (pw <= 0 || ph <= 0) return;
 
   double margin = 0.20;  // 20% 边界触发平移
-  double sx = toX(shipX_), sy = toY(shipY_);
+  double sx = toX(shipY_), sy = toY(shipX_);
   double left = ml() + pw * margin;
   double right = ml() + pw * (1.0 - margin);
   double top = mt() + ph * margin;
@@ -452,7 +456,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
     {
       p.save();
 
-      int cx = toX(m.worldX), cy = toY(m.worldY);
+      int cx = toX(m.worldY), cy = toY(m.worldX);
       double angleDeg = -m.worldYaw * 180.0 / M_PI;
 
       p.translate(cx, cy);
@@ -498,8 +502,8 @@ void MapWidget::paintEvent(QPaintEvent *) {
       QFont f = p.font();
       f.setPixelSize(10);
       p.setFont(f);
-      p.drawText(QRectF(toX(m.worldX) - 50,
-                        toY(m.worldY) - 14, 100, 14),
+      p.drawText(QRectF(toX(m.worldY) - 50,
+                        toY(m.worldX) - 14, 100, 14),
                  Qt::AlignCenter,
                  QString::fromStdString(m.name));
     }
@@ -511,7 +515,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
 
   // DP 目标区域
   if (showDp_) {
-    int dpx = toX(dpX_), dpy = toY(dpY_);
+    int dpx = toX(dpY_), dpy = toY(dpX_);
     int rPx = (int)(dpTol_ / (viewXMax_ - viewXMin_) * pw);
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(40, 200, 40, 50));
@@ -526,7 +530,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
 
   // goto 目标（旗帜标记 + 抵达圈）
   if (showGoto_) {
-    int gx = toX(gotoX_), gy = toY(gotoY_);
+    int gx = toX(gotoY_), gy = toY(gotoX_);
     int rPx = std::max(3, (int)(gotoR_ / (viewXMax_ - viewXMin_) * pw));
     // 抵达圈
     p.setPen(QPen(QColor(200, 120, 0), 1.5, Qt::DashLine));
@@ -550,7 +554,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
   if (showShip_) {
     p.setPen(QPen(QColor(40, 80, 200), 2));
     p.setBrush(QColor(40, 80, 200));
-    int sx = toX(shipX_), sy = toY(shipY_);
+    int sx = toX(shipY_), sy = toY(shipX_);
     double rad = (90.0 - shipHdg_) * M_PI / 180.0;
     QPointF pts[3] = {
       QPointF(sx + 10 * cos(rad), sy - 10 * sin(rad)),
@@ -564,14 +568,14 @@ void MapWidget::paintEvent(QPaintEvent *) {
   if (trail_.size() >= 2) {
     p.setPen(QPen(QColor(40, 80, 200, 180), 2));
     for (size_t i = 1; i < trail_.size(); ++i)
-      p.drawLine(QPointF(toX(trail_[i-1].x), toY(trail_[i-1].y)),
-                 QPointF(toX(trail_[i].x),   toY(trail_[i].y)));
+      p.drawLine(QPointF(toX(trail_[i-1].y), toY(trail_[i-1].x)),
+                 QPointF(toX(trail_[i].y),   toY(trail_[i].x)));
   }
 
   // 参考点
   if (!refPoints_.empty()) {
     for (size_t i = 0; i < refPoints_.size(); ++i) {
-      int rx = toX(refPoints_[i].first), ry = toY(refPoints_[i].second);
+      int rx = toX(refPoints_[i].second), ry = toY(refPoints_[i].first);
       p.setPen(QPen(QColor(200, 80, 0), 2));
       p.setBrush(Qt::NoBrush);
       p.drawLine(rx - 6, ry, rx + 6, ry);
@@ -587,7 +591,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
   if (polygonMode_ && polygonVertices_.size() >= 3) {
     QPolygonF poly;
     for (auto &v : polygonVertices_)
-      poly << QPointF(toX(v.first), toY(v.second));
+      poly << QPointF(toX(v.second), toY(v.first));
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(70, 130, 200, 45));
     p.drawPolygon(poly);
@@ -597,8 +601,8 @@ void MapWidget::paintEvent(QPaintEvent *) {
     p.setPen(QPen(QColor(40, 80, 160), 2));
     p.setBrush(Qt::white);
     for (size_t i = 0; i < polygonVertices_.size(); ++i) {
-      int vx = toX(polygonVertices_[i].first),
-          vy = toY(polygonVertices_[i].second);
+      int vx = toX(polygonVertices_[i].second),
+          vy = toY(polygonVertices_[i].first);
       p.drawEllipse(QPoint(vx, vy), 5, 5);
       QFont vf; vf.setPointSize(8); vf.setBold(true); p.setFont(vf);
       p.setPen(QColor(40, 80, 160));
@@ -612,12 +616,12 @@ void MapWidget::paintEvent(QPaintEvent *) {
     p.setPen(QPen(QColor(70, 130, 200, 160), 1.5, Qt::DashLine));
     p.setBrush(Qt::white);
     for (size_t i = 0; i < polygonVertices_.size(); ++i) {
-      int vx = toX(polygonVertices_[i].first),
-          vy = toY(polygonVertices_[i].second);
+      int vx = toX(polygonVertices_[i].second),
+          vy = toY(polygonVertices_[i].first);
       p.drawEllipse(QPoint(vx, vy), 5, 5);
       if (i > 0)
-        p.drawLine(toX(polygonVertices_[i-1].first),
-                   toY(polygonVertices_[i-1].second), vx, vy);
+        p.drawLine(toX(polygonVertices_[i-1].second),
+                   toY(polygonVertices_[i-1].first), vx, vy);
     }
   }
 
@@ -631,18 +635,18 @@ void MapWidget::paintEvent(QPaintEvent *) {
       // 半透明走廊
       p.setPen(QPen(QColor(40, 120, 200, 60), tolPx * 2, Qt::SolidLine, Qt::RoundCap));
       for (size_t i = 1; i < wpts_.size(); ++i)
-        p.drawLine(toX(wpts_[i-1].x), toY(wpts_[i-1].y),
-                   toX(wpts_[i].x),   toY(wpts_[i].y));
+        p.drawLine(toX(wpts_[i-1].y), toY(wpts_[i-1].x),
+                   toX(wpts_[i].y),   toY(wpts_[i].x));
       // 中心参考线
       p.setPen(QPen(QColor(40, 80, 200), 2, Qt::SolidLine));
       for (size_t i = 1; i < wpts_.size(); ++i)
-        p.drawLine(toX(wpts_[i-1].x), toY(wpts_[i-1].y),
-                   toX(wpts_[i].x),   toY(wpts_[i].y));
+        p.drawLine(toX(wpts_[i-1].y), toY(wpts_[i-1].x),
+                   toX(wpts_[i].y),   toY(wpts_[i].x));
       // 路径点标记（小圆，蓝色）
       p.setPen(QPen(QColor(40, 80, 200), 1.5));
       p.setBrush(QColor(40, 120, 200, 100));
       for (size_t i = 0; i < wpts_.size(); ++i)
-        p.drawEllipse(QPoint(toX(wpts_[i].x), toY(wpts_[i].y)), 4, 4);
+        p.drawEllipse(QPoint(toX(wpts_[i].y), toY(wpts_[i].x)), 4, 4);
     }
   } else {
     // waypoint 模式：已到达=实线绿色，未到达=虚线红色
@@ -651,8 +655,8 @@ void MapWidget::paintEvent(QPaintEvent *) {
       p.setPen(reached
           ? QPen(QColor(40, 160, 40), 1.5)
           : QPen(QColor(200, 40, 40), 1.5, Qt::DashLine));
-      p.drawLine(toX(wpts_[i-1].x), toY(wpts_[i-1].y),
-                 toX(wpts_[i].x),   toY(wpts_[i].y));
+      p.drawLine(toX(wpts_[i-1].y), toY(wpts_[i-1].x),
+                 toX(wpts_[i].y),   toY(wpts_[i].x));
     }
   }
 
@@ -661,7 +665,7 @@ void MapWidget::paintEvent(QPaintEvent *) {
 
   for (size_t i = 0; i < wpts_.size(); ++i) {
     auto &wp = wpts_[i];
-    int wx = toX(wp.x), wy = toY(wp.y);
+    int wx = toX(wp.y), wy = toY(wp.x);
     int st = (i < wpStatus_.size()) ? wpStatus_[i] : 0;
 
     QColor fill, border;
@@ -710,6 +714,37 @@ void MapWidget::paintEvent(QPaintEvent *) {
   // 恢复裁剪（比例尺和底部信息在裁剪区外渲染）
   p.restore();
 
+  // ---- ★ 2026-09-23 方向罗盘（张老师要求「地图加北标注」）----
+  //   本项目方向约定为 **NED**（+X = 北、+Y = 东），地图已改为「**北朝上**」
+  //   （见 toX/toY 的说明：屏幕=(worldY, worldX)）
+  //   ⇒ 箭头向上 = 北(+X)，向右 = 东(+Y)。
+  {
+    const int ccx = ml() + 24;          // 罗盘中心：绘图区左上角内侧
+    const int ccy = mt() + 28;
+
+    p.save();
+    // 指北箭头
+    p.setPen(QPen(QColor(50, 50, 50), 1.6));
+    p.drawLine(ccx, ccy + 11, ccx, ccy - 11);
+    p.drawLine(ccx, ccy - 11, ccx - 4, ccy - 4);
+    p.drawLine(ccx, ccy - 11, ccx + 4, ccy - 4);
+    // 「北」字（箭头下方）
+    {
+      QFont nf; nf.setPointSize(9); nf.setBold(true);
+      p.setFont(nf);
+      p.setPen(QColor(30, 30, 30));
+      p.drawText(QRect(ccx - 14, ccy + 12, 28, 14), Qt::AlignCenter, QStringLiteral("北"));
+    }
+    // 「东」字（箭头右侧，示意 +Y 方向）
+    {
+      QFont ef; ef.setPointSize(8);
+      p.setFont(ef);
+      p.setPen(QColor(120, 120, 120));
+      p.drawText(QRect(ccx + 13, ccy - 7, 20, 14), Qt::AlignCenter, QStringLiteral("东"));
+    }
+    p.restore();
+  }
+
   // ---- 动作提示（地图下方，不遮挡地图内容；操作说明不随模式误显示"双击设航向"）----
   // 注意：X 轴刻度数字画在 ph+4~ph+16，故提示必须从 ph+18 起，否则两者重叠
   if (!hintText_.isEmpty()) {
@@ -746,7 +781,7 @@ void MapWidget::mousePressEvent(QMouseEvent *_event) {
     return;
   }
 
-  double wx = fromX((int)cx), wy = fromY((int)cy);
+  double wx = fromY((int)cy), wy = fromX((int)cx);
 
   // 只读模式：仅允许平移和缩放
   if (!editable_ && _event->button() != Qt::MiddleButton) return;
@@ -861,7 +896,7 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
 
   // ── tracking 自定义模式：拖拽连续采样 ──
   if (freeDraw_) {
-    double wx = fromX((int)_event->pos().x()), wy = fromY((int)_event->pos().y());
+    double wx = fromY((int)_event->pos().y()), wy = fromX((int)_event->pos().x());
     double d = std::hypot(wx - lastDrawX_, wy - lastDrawY_);
     if (d >= freeDrawInterval_ && wpts_.size() < 2000) {
       wpts_.push_back({wx, wy, -1.0});
@@ -874,8 +909,8 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
   // ── 多边形拖拽 ──
   if (polygonMode_ && dragIdx_ >= 0 &&
       dragIdx_ < (int)polygonVertices_.size()) {
-    polygonVertices_[dragIdx_].first  = fromX((int)_event->pos().x());
-    polygonVertices_[dragIdx_].second = fromY((int)_event->pos().y());
+    polygonVertices_[dragIdx_].first  = fromY((int)_event->pos().y());
+    polygonVertices_[dragIdx_].second = fromX((int)_event->pos().x());
     update();
     return;
   }
@@ -884,8 +919,8 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
   if (polygonMode_ && dragIdx_ < 0) {
     int px = (int)_event->pos().x(), py = (int)_event->pos().y();
     for (size_t i = 0; i < polygonVertices_.size(); ++i) {
-      int vx = toX(polygonVertices_[i].first);
-      int vy = toY(polygonVertices_[i].second);
+      int vx = toX(polygonVertices_[i].second);
+      int vy = toY(polygonVertices_[i].first);
       if (std::hypot(px - vx, py - vy) < 8) {
         QToolTip::showText(_event->globalPos(),
             QString("顶点 %1  X=%2  Y=%3")
@@ -899,8 +934,8 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
   }
 
   if (!editable_ || dragIdx_ < 0) return;
-  wpts_[dragIdx_].x = fromX((int)_event->pos().x());
-  wpts_[dragIdx_].y = fromY((int)_event->pos().y());
+  wpts_[dragIdx_].x = fromY((int)_event->pos().y());
+  wpts_[dragIdx_].y = fromX((int)_event->pos().x());
   update(); emit waypointsChanged();
 }
 
@@ -923,8 +958,12 @@ void MapWidget::mouseDoubleClickEvent(QMouseEvent *_event) {
   if (polygonMode_) {
     int pw = plotW(), ph = plotH();
     if (pw > 0 && ph > 0) {
-      double wx = fromX((int)_event->pos().x()),
-             wy = fromY((int)_event->pos().y());
+      /// ★ 2026-09-23（北朝上映射）修正：`fromX(屏幕X)` 返回的是**世界 Y（东）**，
+      /// `fromY(屏幕Y)` 返回的是**世界 X（北）** —— 原先按旧映射写成
+      /// `wx = fromX(屏幕X)`，导致下游 `polygonVertices_[i].first - wx`
+      /// 拿「世界 X」减「世界 Y」，X/Y 错位。
+      double wx = fromY((int)_event->pos().y()),
+             wy = fromX((int)_event->pos().x());
       double minDist = 8.0 * (viewXMax_ - viewXMin_) / pw;
       int hitIdx = -1; double best = minDist;
       for (size_t i = 0; i < polygonVertices_.size(); ++i) {
@@ -975,7 +1014,7 @@ void MapWidget::mouseDoubleClickEvent(QMouseEvent *_event) {
   if (pw <= 0 || ph <= 0) return;
   double cx = _event->pos().x(), cy = _event->pos().y();
   if (cx < ml() || cx > ml() + pw || cy < mt() || cy > mt() + ph) return;
-  double wx = fromX((int)cx), wy = fromY((int)cy);
+  double wx = fromY((int)cy), wy = fromX((int)cx);
 
   // 找最近的航路点
   double minDist = 8.0 * (viewXMax_ - viewXMin_) / pw;
@@ -1009,7 +1048,7 @@ void MapWidget::wheelEvent(QWheelEvent *_event) {
   if (pw <= 0 || ph <= 0) return;
 
   double cx = _event->position().x(), cy = _event->position().y();
-  double wx = fromX((int)cx), wy = fromY((int)cy);
+  double wx = fromY((int)cy), wy = fromX((int)cx);
   double zoom = (_event->angleDelta().y() > 0) ? 0.8 : 1.25;
   double newDX = (viewXMax_ - viewXMin_) * zoom;
   double newDY = (viewYMax_ - viewYMin_) * zoom;

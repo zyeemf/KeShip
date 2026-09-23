@@ -91,10 +91,19 @@ class MapWidget : public QWidget {
   void autoPanToShip();
   void initViewScale();
   void fitViewToWidget();
-  int toX(double _wx) const;
-  int toY(double _wy) const;
-  double fromX(int _px) const;
-  double fromY(int _py) const;
+  /// ★★ 2026-09-23 地图改为「**北朝上**」（张老师定；本项目方向约定为 NED，北 = +X）。
+  ///
+  /// 映射（与航海地图习惯一致）：
+  ///   · 屏幕**上** = 世界 **+X（北）**   ← toY 接收世界 X
+  ///   · 屏幕**右** = 世界 **+Y（东）**   ← toX 接收世界 Y
+  /// 即 `screen = (worldY, worldX)` —— 与改前的 `(worldX, worldY)` **交换了两轴**。
+  ///
+  /// ⚠ 因此**所有调用点的参数也要成对交换**（`toX(a), toY(b)` → `toX(b), toY(a)`），
+  ///   否则会把 X 当 Y 用。改动处已在 .cc 中统一处理，新增绘图代码务必遵守此约定。
+  int toX(double _wy) const;      ///< 世界 Y（东）→ 屏幕 X（右）
+  int toY(double _wx) const;      ///< 世界 X（北）→ 屏幕 Y（上）
+  double fromX(int _px) const;    ///< 屏幕 X → 世界 Y（东）
+  double fromY(int _py) const;    ///< 屏幕 Y → 世界 X（北）
   int ml() const { return 40; }
   int mr() const { return 20; }
   int mt() const { return 15; }
