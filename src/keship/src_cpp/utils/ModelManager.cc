@@ -29,6 +29,8 @@
 #include <gz/msgs/scene.pb.h>
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
+/// ★ 2026-09-23：解析 mesh uri（`model://…` / 相对路径）用 —— 见 GetCachedModelGeometry
+#include <gz/common/Util.hh>
 
 #include <gz/msgs/world_control.pb.h>
 #include <gz/msgs/stringmsg.pb.h>
@@ -2062,11 +2064,28 @@ bool ModelManager::GetCachedModelGeometry(const std::string &_name,
       if (valStart != std::string::npos && valEnd != std::string::npos)
       {
         std::string uri = sdf.substr(valStart + 1, valEnd - valStart - 1);
+
         /// 去掉 file:// 前缀
         if (uri.find("file://") == 0)
           _meshPath = uri.substr(7);
         else
           _meshPath = uri;
+
+        /// ★★ 2026-09-23 修复（张老师反馈：GUI「加载模型」加载 yanhu.dae 后，
+        ///    2D 地图上看不到该模型，而 Gazebo 3D 里正常）：
+        ///
+        /// SDF 里的 mesh uri 通常是 `model://yanhu/yanhu.dae` 或相对路径
+        /// （如 `robot_model/keship3/keship3.dae`），**Assimp 无法直接解析** ⇒
+        /// `LoadMeshFromFile` 失败返回空 ⇒ 足迹尺寸为 0 ⇒ 地图上画出来看不见。
+        ///
+        /// 这里改用 `gz::common::findFile` 解析成真实文件路径 ——
+        /// 与 `KSPlugin_HydroBuoyancy` 的浮力 mesh 加载（:915 附近）保持一致。
+        /// ⚠ 这是"地图足迹"与"浮力"两条 mesh 加载路径**行为不一致**导致的缺陷：
+        ///   浮力侧一直是对的，所以船能正常浮起来，只有地图足迹悄悄为空。
+        const std::string resolved = gz::common::findFile(_meshPath);
+        if (!resolved.empty())
+          _meshPath = resolved;
+
         return true;
       }
     }

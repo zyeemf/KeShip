@@ -175,6 +175,8 @@ add_library(keship_utils STATIC
 target_link_libraries(keship_utils PUBLIC
   gz-math7
   gz-transport13::gz-transport13
+  # ★ 2026-09-23：ModelManager 解析 mesh uri（model:// 与相对路径）用 gz::common::findFile
+  gz-common5::gz-common5
   assimp::assimp
   Eigen3::Eigen
 )
