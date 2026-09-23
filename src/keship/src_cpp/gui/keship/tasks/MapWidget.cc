@@ -899,10 +899,18 @@ void MapWidget::mouseMoveEvent(QMouseEvent *_event) {
   if (pw <= 0 || ph <= 0) return;
 
   if (panning_) {
-    double dx = (_event->pos().x() - panStart_.x()) / pw * (viewXMax_ - viewXMin_);
-    double dy = (_event->pos().y() - panStart_.y()) / ph * (viewYMax_ - viewYMin_);
-    viewXMin_ -= dx; viewXMax_ -= dx;
-    viewYMin_ += dy; viewYMax_ += dy;
+    /// ★★ 2026-09-23 修正（北朝上）：拖动平移必须"跟手"，即内容随鼠标同向移动。
+    ///   屏幕 X ↔ 世界 Y、屏幕 Y ↔ 世界 X，且缩放按各自跨度：
+    ///     · 右拖(dScreenX>0) ⇒ 内容右移 ⇒ 视野向 −Y（西）移 ⇒ viewY 减小
+    ///     · 下拖(dScreenY>0) ⇒ 内容下移 ⇒ 视野向 +X（北）移 ⇒ viewX 增大
+    ///   原先按旧映射把屏幕 X 位移加到世界 X 上 ⇒ 拖动方向整体差 90°
+    ///   （张老师反馈："往左拖预览往下跑、往上拖预览往右跑"）。
+    const double dScreenX = _event->pos().x() - panStart_.x();
+    const double dScreenY = _event->pos().y() - panStart_.y();
+    const double dWorldY = dScreenX / pw * (viewYMax_ - viewYMin_);   // 屏幕 X → 世界 Y
+    const double dWorldX = dScreenY / ph * (viewXMax_ - viewXMin_);   // 屏幕 Y → 世界 X
+    viewYMin_ -= dWorldY; viewYMax_ -= dWorldY;
+    viewXMin_ += dWorldX; viewXMax_ += dWorldX;
     panStart_ = _event->pos();
     update(); return;
   }
