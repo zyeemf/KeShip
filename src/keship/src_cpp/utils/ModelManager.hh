@@ -488,6 +488,21 @@ namespace keship
     static bool InjectFluidAddedMass(std::string &_sdf,
                                       const double _addedMass[36]);
 
+    /// @brief **通过 `create/blocking` 服务生成实体（统一入口）**
+    ///
+    /// ★ 2026-09-24 新增：原先 **11 个 spawn/rebuild 各自**构造服务名、各自调
+    /// `node->Request(...)`、各自检查结果 —— 且**检查口径不一致**
+    /// （10 处只看 `executed`、1 处连 `result` 都看）⇒ 同名冲突等场景会"假成功"。
+    /// 更糟的是：**逐处打补丁必然漏补**（本轮先补 8 处、漏 2 处，被机械核对抓出）。
+    ///
+    /// 收敛到本函数后：服务名、超时、结果检查、错误日志**只有一处实现**，
+    /// **新增加载路径只需调它一次**（不必再记得"要不要查 result"）。
+    ///
+    /// @param _req 已填好的 EntityFactory（name / allow_renaming / sdf / 可选 pose）
+    /// @return true = 服务成功发出**且** gz 返回成功
+    /// @note 日志用 `_req.name()` 定位，故调用方无需传自己的名字。
+    bool CreateEntityViaService(const gz::msgs::EntityFactory &_req);
+
     /// @brief 从 SDF 字符串中解析静态标记
     static bool ParseStaticFromSDF(const std::string &_sdf, bool &_out);
 

@@ -769,7 +769,8 @@ bool ModelManager::SpawnModelInGazeboFromFile(
 
   /// 调用服务（同步方式）
   std::cout << "正在调用服务create: " << service_create << std::endl;
-  executed = this->node->Request(service_create, req_create, timeout, rep_create, result);
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / **结果检查**只有一处实现）
+  executed = CreateEntityViaService(req_create);
   ///
   if (executed)
   {
@@ -1282,8 +1283,8 @@ bool ModelManager::SpawnCylinderInGazebo(
 
   req.set_sdf(sdf.str());
 
-  std::cout << "正在调用服务create: " << service << std::endl;
-  bool executed = this->node->Request(service, req, timeout, rep, result);
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / **结果检查**只有一处实现）
+  bool executed = CreateEntityViaService(req);
 
   if (executed)
   {
@@ -1418,11 +1419,8 @@ bool ModelManager::SpawnMathHull(
 
   gz::msgs::Boolean rep;
   bool result = false;
-  bool ok = this->node->Request(service, req, 20000, rep, result);
-  if (!ok || !result) {
-    std::cerr << "SpawnMathHull: spawn 失败" << std::endl;
-    return false;
-  }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   // 解析 entity ID 并加入模型列表
   uint32_t id = 0;
@@ -1558,12 +1556,8 @@ bool ModelManager::SpawnModelInGazeboFromSDFString(
 
   std::cout << "正在调用服务: " << service << std::endl;
 
-  bool executed = this->node->Request(service, msg, timeout, rep, result);
-  if (!executed)
-  {
-    std::cerr << "SpawnModelInGazeboFromSDFString: spawn 失败" << std::endl;
-    return false;
-  }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(msg)) return false;
 
   // 等待模型 ID
   uint32_t id = 0;
@@ -2019,12 +2013,8 @@ std::string service = "/world/" + this->worldName + "/create/blocking";
   reqPose->mutable_orientation()->set_z(q.Z());
   reqPose->mutable_orientation()->set_w(q.W());
 
-  bool executed = this->node->Request(service, req, timeout, rep, result);
-  if (!executed)
-  {
-    std::cerr << "RebuildModelWithBuoyancy: spawn 失败" << std::endl;
-    return false;
-  }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   /// 5. 等待模型 ID 就绪（位姿已在 spawn 时设置，无需再移动）
   uint32_t id = 0;
@@ -2665,8 +2655,8 @@ bool ModelManager::SpawnModelWithBuoyancy(
               << _pos[0] << ", " << _pos[1] << ", " << _pos[2] << "]" << std::endl;
   }
 
-  bool executed = this->node->Request(service, req, timeout, rep, result);
-  if (!executed) { std::cerr << "SpawnModelWithBuoyancy: spawn 失败" << std::endl; return false; }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0;
   bool found = false;
@@ -2825,12 +2815,8 @@ bool ModelManager::RebuildModelWithThrust(
   reqPose->mutable_orientation()->set_z(q.Z());
   reqPose->mutable_orientation()->set_w(q.W());
 
-  bool executed = this->node->Request(service, req, timeout, rep, result);
-  if (!executed)
-  {
-    std::cerr << "RebuildModelWithThrust: spawn 失败" << std::endl;
-    return false;
-  }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   /// 6. 等待模型 ID
   uint32_t id = 0;
@@ -2932,8 +2918,8 @@ bool ModelManager::SpawnModelWithThrust(
     ps->mutable_orientation()->set_w(q.W());
   }
 
-  bool executed = this->node->Request(service, req, timeout, rep, result);
-  if (!executed) { std::cerr << "SpawnModelWithThrust: spawn 失败" << std::endl; return false; }
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0;
   bool found = false;
@@ -2965,6 +2951,32 @@ bool ModelManager::GetCachedThrusterConfig(
   if (it == thrusterConfigCache_.end())
     return false;
   _out = it->second;
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// @brief 通过 `create/blocking` 生成实体 —— **11 个 spawn/rebuild 的统一入口**
+///
+/// ★ 2026-09-24 收敛（张老师："不是应该只调用已有函数吗？"）：
+///   原先每个 spawn/rebuild 都自己写一遍「拼服务名 → Request → 查结果」，
+///   而且查法不一（10 处只查 `executed`、1 处连 `result` 都查）⇒ 同名冲突时"假成功"。
+///   我一开始逐处补 `|| !result`，补了 8 处 —— **机械核对发现漏了 2 处**
+///   （`SpawnModelInGazeboFromFile` / `SpawnCylinderInGazebo`）。
+///   **这就是"平行路径 + 逐处打补丁"必然漏补的实证。**
+///
+/// 现在只此一处实现；新增路径调它即可，口径天然一致。
+bool ModelManager::CreateEntityViaService(const gz::msgs::EntityFactory &_req)
+{
+  const std::string service = "/world/" + this->worldName + "/create/blocking";
+  gz::msgs::Boolean rep;
+  bool result = false;
+  const bool executed = this->node->Request(service, _req, 20000, rep, result);
+  if (!executed || !result)
+  {
+    std::cerr << "CreateEntityViaService: spawn 失败 name=" << _req.name()
+              << "（executed=" << executed << ", result=" << result << "）" << std::endl;
+    return false;
+  }
   return true;
 }
 
@@ -3192,7 +3204,8 @@ bool ModelManager::RebuildModelWithHydro(
   rp->mutable_orientation()->set_x(q.X()); rp->mutable_orientation()->set_y(q.Y());
   rp->mutable_orientation()->set_z(q.Z()); rp->mutable_orientation()->set_w(q.W());
 
-  if (!node->Request(service, req, 20000, rep, result)) return false;
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
   while (!found && tries-- > 0) {
@@ -3280,7 +3293,8 @@ bool ModelManager::RebuildModelWithSensors(
   rp->mutable_orientation()->set_x(q.X()); rp->mutable_orientation()->set_y(q.Y());
   rp->mutable_orientation()->set_z(q.Z()); rp->mutable_orientation()->set_w(q.W());
 
-  if (!node->Request(service, req, 20000, rep, result)) return false;
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
   while (!found && tries-- > 0) {
@@ -3527,7 +3541,8 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   rp->mutable_orientation()->set_x(q.X()); rp->mutable_orientation()->set_y(q.Y());
   rp->mutable_orientation()->set_z(q.Z()); rp->mutable_orientation()->set_w(q.W());
 
-  if (!node->Request(service, req, 20000, rep, result)) return false;
+  /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
+  if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
   while (!found && tries-- > 0) {
@@ -4301,6 +4316,22 @@ bool ModelManager::LoadModelFromKsmFile(
   {
     std::cerr << "LoadModelFromKsmFile: 实例名或路径为空" << std::endl;
     return false;
+  }
+
+  /// 0. 同名检查（★ 2026-09-24 修"假成功"）
+  ///
+  /// 实测：`allow_renaming=false` 且场景已有同名时，gz 的 create/blocking
+  /// **返回成功但不创建实体**；随后按名字取 ID 会取到**已存在的旧实体**，
+  /// 于是函数以为 spawn 成功 ⇒ 上层（含世界加载的失败计数）被误导。
+  /// 故这里先显式查一次**活动场景** —— 走 gz 服务，不依赖本进程缓存，跨进程可靠。
+  {
+    uint32_t existingId = 0;
+    if (GetModelIDByInstanceNameFromGazebo(_instanceName, existingId))
+    {
+      std::cerr << "LoadModelFromKsmFile: 场景已有同名模型 " << _instanceName
+                << "（id=" << existingId << "），拒绝重复加载" << std::endl;
+      return false;
+    }
   }
 
   /// 1. 解析五段

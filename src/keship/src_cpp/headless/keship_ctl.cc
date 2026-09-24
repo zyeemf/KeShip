@@ -28,6 +28,8 @@
 /// 运行前必须 source install/setup.bash —— 否则找不到模型 SDF 里的插件 .so
 /// （`GZ_SIM_SYSTEM_PLUGIN_PATH` 由 hooks/resource_paths.dsv.in 注入）。
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -590,6 +592,260 @@ int CmdModelLoadKsm(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
+// ── 前向声明：水域读写辅助（定义见文件下方「水域：读写共用」一节）──
+// 新增的 CmdWorldLoadKsw 在本节之前就要用它们
+std::vector<keship::WaterArea> LoadWaterAreas();
+void SaveWaterAreas(const std::vector<keship::WaterArea> &_areas);
+
+/// 显示模型在 ModelManager 内的**配置与缓存状态** ——
+/// 用于核对"这次加载走了哪条分派路径、缓存了哪些配置、M_A 是否非零、是否进了 2D 足迹缓存"。
+/// 数据全部来自公有查询接口，不改变任何状态。
+int CmdModelInfo(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.empty())
+    Fail("用法：model info <name>");
+  const std::string name = _a.pos[0];
+
+  uint32_t id = 0;
+  const bool inScene = _mm.GetModelIDByInstanceNameFromGazebo(name, id);
+
+  keship::BuoyancyConfig bc;
+  const bool hasB = _mm.GetCachedBuoyancyConfig(name, bc) && !bc.bodies.empty();
+  keship::ThrusterConfig tc;
+  const bool hasT = _mm.GetCachedThrusterConfig(name, tc) && !tc.bodies.empty();
+  keship::HydroConfig hc;
+  const bool hasH = _mm.GetCachedHydroConfig(name, hc);
+  keship::SensorConfig sc;
+  const bool hasS = _mm.GetCachedSensorConfig(name, sc) && !sc.instances.empty();
+  bool isStatic = false;
+  const bool hasSt = _mm.GetCachedModelStatic(name, isStatic);
+
+  /// M_A 是否非零 —— 决定 `<fluid_added_mass>` 会不会被注入
+  bool maNonZero = false;
+  double maAbsSum = 0.0;
+  if (hasH) {
+    for (int i = 0; i < 36; ++i) {
+      if (std::abs(hc.addedMass[i]) > 1e-12) maNonZero = true;
+      maAbsSum += std::abs(hc.addedMass[i]);
+    }
+  }
+
+  /// 会走哪条 spawn 分派路径（与 LoadModelFromKsmFile 的规则一致）
+  const std::string route = hasT ? "SpawnModelWithThrust"
+                           : hasB ? "SpawnModelWithBuoyancy"
+                                  : "SpawnModelInGazeboFromSDFString";
+
+  /// 2D 足迹缓存（注意：2D 地图现在只画静态模型）
+  const bool inFootprint = _mm.GetBBoxCache().count(name) > 0;
+
+  if (g_opt.json) {
+    std::ostringstream js;
+    js << "{\"name\":\"" << name << "\",\"inScene\":" << (inScene ? "true" : "false")
+       << ",\"id\":" << id
+       << ",\"route\":\"" << route << "\""
+       << ",\"buoyancy\":" << (hasB ? "true" : "false")
+       << ",\"thrust\":" << (hasT ? "true" : "false")
+       << ",\"hydro\":" << (hasH ? "true" : "false")
+       << ",\"addedMassNonZero\":" << (maNonZero ? "true" : "false")
+       << ",\"addedMassAbsSum\":" << maAbsSum
+       << ",\"sensors\":" << (hasS ? "true" : "false")
+       << ",\"isStatic\":" << (isStatic ? "true" : "false")
+       << ",\"inFootprintCache\":" << (inFootprint ? "true" : "false")
+       << "}";
+    Out("model_info", js.str(), true);
+    return 0;
+  }
+
+  std::cout << "模型 " << name << std::endl;
+  std::cout << "  在场景        : " << (inScene ? "是" : "否")
+            << (inScene ? ("  (id=" + std::to_string(id) + ")") : "") << std::endl;
+  std::cout << "  静态标记      : " << (hasSt ? (isStatic ? "true" : "false") : "(未知)") << std::endl;
+  std::cout << "  分派路径      : " << route
+            << "   ← 与 LoadModelFromKsmFile 的分派规则一致" << std::endl;
+  std::cout << "  浮力配置      : "
+            << (hasB ? ("有 (" + std::to_string(bc.bodies.size()) + " 个体)") : "无") << std::endl;
+  std::cout << "  推力配置      : "
+            << (hasT ? ("有 (" + std::to_string(tc.bodies.size()) + " 个)") : "无") << std::endl;
+  std::cout << "  水动力配置    : " << (hasH ? "有" : "无");
+  if (hasH)
+    std::cout << "   M_A 非零=" << (maNonZero ? "是" : "否")
+              << "   |M_A| 之和=" << maAbsSum
+              << "   ⇒ <fluid_added_mass> " << (maNonZero ? "会" : "不会") << "注入";
+  std::cout << std::endl;
+  std::cout << "  传感器配置    : "
+            << (hasS ? ("有 (" + std::to_string(sc.instances.size()) + " 个)") : "无") << std::endl;
+  std::cout << "  2D 足迹缓存   : " << (inFootprint ? "有" : "无")
+            << "   （2D 地图只画静态模型）" << std::endl;
+  return 0;
+}
+
+/// 触发模型的插件重建 —— 覆盖 4 个 Rebuild 路径（GUI 里由编辑器改配置后触发）。
+/// 配置一律**从缓存取**（与 GUI 的"编辑器改配置 → 缓存 → 重建"同源），
+/// 故须先 `model load-ksm` 过该模型。
+int CmdModelRebuild(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.empty())
+    Fail("用法：model rebuild <name> [--kind all|buoyancy|thrust|hydro|sensors]\n"
+         "        all = RebuildModelWithAllPlugins（默认）；其余各自对应一条 Rebuild 路径。\n"
+         "        配置从缓存取 ⇒ 须先 load-ksm 过该模型。");
+  const std::string name = _a.pos[0];
+  const std::string kind = _a.Get("kind", "all");
+  bool ok = false;
+
+  if (kind == "all") {
+    ok = _mm.RebuildModelWithAllPlugins(name);
+  } else if (kind == "buoyancy") {
+    keship::BuoyancyConfig c;
+    if (!_mm.GetCachedBuoyancyConfig(name, c)) Fail("无缓存的浮力配置：" + name);
+    ok = _mm.RebuildModelWithBuoyancy(name, c);
+  } else if (kind == "thrust") {
+    keship::ThrusterConfig c;
+    if (!_mm.GetCachedThrusterConfig(name, c)) Fail("无缓存的推力配置：" + name);
+    ok = _mm.RebuildModelWithThrust(name, c);
+  } else if (kind == "hydro") {
+    keship::HydroConfig c;
+    if (!_mm.GetCachedHydroConfig(name, c)) Fail("无缓存的水动力配置：" + name);
+    ok = _mm.RebuildModelWithHydro(name, c);
+  } else if (kind == "sensors") {
+    keship::SensorConfig c;
+    if (!_mm.GetCachedSensorConfig(name, c)) Fail("无缓存的传感器配置：" + name);
+    ok = _mm.RebuildModelWithSensors(name, c);
+  } else {
+    Fail("未知 --kind '" + kind + "'（可选：all|buoyancy|thrust|hydro|sensors）");
+  }
+
+  if (!ok) Fail("重建失败：" + name + "（kind=" + kind + "）");
+  Info("已重建 " + name + "（kind=" + kind + "）");
+  return 0;
+}
+
+/// 把当前模型保存为 .ksm（与 GUI「保存世界」用的是同一个 SaveModelToKSM）——
+/// 用于"加载 → 保存 → 再加载"的往返验证。
+int CmdModelSaveKsm(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.size() < 2)
+    Fail("用法：model save-ksm <name> <file.ksm> [--sdf-name <模型名>]");
+  const std::string name = _a.pos[0], path = _a.pos[1];
+  if (!_mm.SaveModelToKSM(name, path, _a.Get("sdf-name", "")))
+    Fail("保存失败：" + name + " -> " + path);
+  Info("已保存 " + name + " -> " + path);
+  return 0;
+}
+
+/// 合并"命名空间"与"子世界链"（与 GUI 的 mergeSegs 同逻辑：
+/// 反复去掉链首与命名空间尾的重叠段，保证不出现 `w1_w1_sub` 式重复前缀）
+std::vector<std::string> MergeNsAndChain(const std::vector<std::string> &_ns,
+                                         const std::vector<std::string> &_path) {
+  std::vector<std::string> ns = _ns;
+  std::vector<std::string> rest = _path;
+  while (!rest.empty() && !ns.empty() && rest.front() == ns.back())
+    rest.erase(rest.begin());
+  ns.insert(ns.end(), rest.begin(), rest.end());
+  return ns;
+}
+
+/// 用下划线连接各段（可选再拼一个尾段）
+std::string JoinSegs(const std::vector<std::string> &_segs, const std::string &_tail) {
+  std::string s;
+  for (const auto &seg : _segs) { if (!s.empty()) s += "_"; s += seg; }
+  if (!_tail.empty()) { if (!s.empty()) s += "_"; s += _tail; }
+  return s;
+}
+
+/// 加载 .ksw 世界（0.0.4）—— 与 GUI「载入世界」同源：
+///   `LoadWorldManifest` 解析 → 写水域 JSON（物理侧 mtime 热更新）→
+///   静态优先 → 逐个 `LoadModelFromKsmFile` → 登记完整来源元数据。
+/// ⚠ 无头侧**不生成 3D 水面视觉**（那是 GUI 侧 WaterAreaVisualManager 的职责）
+///   ⇒ 本命令验证的是"模型加载 + 水域数据"这一段。
+int CmdWorldLoadKsw(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.empty())
+    Fail("用法：world load-ksw <dir> [--ns <名>[/<子>]] [--offset \"x y z r p y\"] [--no-water]\n"
+         "        <dir> 为 .ksw 目录（内含 keship_world.kswf）");
+  const std::string dir = _a.pos[0];
+  const std::string kswf = dir + "/keship_world.kswf";
+
+  std::vector<keship::ModelManager::WorldManifestItem> items;
+  std::vector<keship::ModelManager::WorldWaterItem> waters;
+  std::string worldName;
+  std::array<double, 6> worldPose{};
+  if (!_mm.LoadWorldManifest(kswf, items, waters, &worldName, &worldPose))
+    Fail("无法解析世界清单（仅支持 0.0.4）：" + kswf);
+  Info("世界「" + worldName + "」：模型 " + std::to_string(items.size())
+       + " 个 / 水域 " + std::to_string(waters.size()) + " 个");
+
+  /// 命名空间（可 / 分隔多层）
+  std::vector<std::string> nsSeg;
+  {
+    std::istringstream ss(_a.Get("ns"));
+    std::string s;
+    while (std::getline(ss, s, '/'))
+      if (!s.empty()) nsSeg.push_back(s);
+  }
+  /// 六向整体偏移
+  double off[6] = {0, 0, 0, 0, 0, 0};
+  if (_a.Has("offset")) {
+    std::istringstream ss(_a.Get("offset"));
+    for (int i = 0; i < 6; ++i) if (!(ss >> off[i])) break;
+  }
+
+  /// 水域：合并进当前 JSON（与 GUI"合并进当前场景"的语义一致）；物理侧靠 mtime 热更新
+  if (!_a.Has("no-water") && !waters.empty()) {
+    GuardSharedState("world load-ksw（写水域）",
+        "水域 JSON 被改写后物理侧会热更新，但 GUI 的内存水域列表与 3D 水面不会同步 → 界面与实际脱节");
+    auto areas = LoadWaterAreas();
+    int added = 0;
+    for (const auto &w : waters) {
+      const std::string inst = JoinSegs(MergeNsAndChain(nsSeg, w.path), w.baseName);
+      bool dup = false;
+      for (const auto &a : areas) if (a.name == inst) { dup = true; break; }
+      if (dup) continue;
+      keship::WaterArea a = w.area;
+      a.name = inst;
+      areas.push_back(a);
+      ++added;
+    }
+    SaveWaterAreas(areas);
+    Info("水域：新增 " + std::to_string(added) + " 个（当前共 " + std::to_string(areas.size()) + "）");
+  }
+
+  /// 模型：静态优先（与 GUI 的 stable_partition 同义）
+  std::stable_partition(items.begin(), items.end(),
+      [](const keship::ModelManager::WorldManifestItem &it) { return it.isStatic; });
+
+  int ok = 0, skip = 0, fail = 0;
+  std::vector<std::string> failNames;
+  for (const auto &it : items) {
+    const std::string inst = JoinSegs(MergeNsAndChain(nsSeg, it.path), it.baseName);
+    if (_mm.GetModelList().count(inst) > 0) { ++skip; continue; }
+    const double pos[6] = {
+        it.pose[0] + worldPose[0] + off[0],
+        it.pose[1] + worldPose[1] + off[1],
+        it.pose[2] + worldPose[2] + off[2],
+        it.pose[3] + worldPose[3] + off[3],
+        it.pose[4] + worldPose[4] + off[4],
+        it.pose[5] + worldPose[5] + off[5]};
+    if (_mm.LoadModelFromKsmFile(inst, it.ksmPath, pos, it.baseName)) {
+      ++ok;
+      /// 完整来源元数据（与 GUI 一致，供后续保存时还原嵌套位置）
+      keship::ModelManager::WorldModelSource src;
+      src.kswPath = kswf;
+      src.ns = nsSeg;
+      src.path = MergeNsAndChain(nsSeg, it.path);
+      src.baseName = it.baseName;
+      _mm.SetModelSource(inst, src);
+    } else {
+      ++fail;
+      failNames.push_back(inst);
+    }
+  }
+
+  Info("模型：成功 " + std::to_string(ok) + " / 跳过重名 " + std::to_string(skip)
+       + " / 失败 " + std::to_string(fail));
+  if (fail > 0) {
+    std::string s;
+    for (const auto &n : failNames) s += " " + n;
+    Fail("有 " + std::to_string(fail) + " 个模型加载失败：" + s);
+  }
+  return 0;
+}
+
 int CmdModelDelete(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.empty()) Fail("用法：model delete <name>");
   const std::string name = _a.pos[0];
@@ -990,6 +1246,10 @@ R"(keship_ctl — KeShip 无头指令入口
 世界:
   world status                     世界状态（模型数 / 暂停 / 仿真时间）
   world pause | world resume       暂停 / 恢复
+  world load-ksw <dir> [--ns <名>[/<子>]] [--offset "x y z r p y"] [--no-water]
+                                   ★ 加载 .ksw 世界（与 GUI「载入世界」同源：
+                                     解析清单 → 写水域 JSON → 静态优先逐个 load-ksm）
+                                     ⚠ 不生成 3D 水面视觉（那是 GUI 侧职责）
 
 模型:
   model list                       列出活动场景中的模型（名字/ID/位姿）
@@ -1006,6 +1266,18 @@ R"(keship_ctl — KeShip 无头指令入口
                            ★ 与 GUI「加载模型」选 .ksm **同一份实现**（ModelManager::
                              LoadModelFromKsmFile）：解析五段 → 缓存 SDF/浮力/推力/
                              水动力/传感器 → 按有无推力·浮力分派 spawn
+  model info <name>                ★ 暴露该模型的内部状态：分派路径 / 有无浮力·推力·
+                                   水动力·传感器 / M_A 是否非零 / 是否进了 2D 足迹缓存
+                                   （验证加载流程的"显微镜"，只读）
+                                   ⚠ **配置与缓存类字段来自本进程内存** —— keship_ctl 每次
+                                     调用都是新进程，故**跨调用时这些字段必然为空**。
+                                     要看真实状态请用 `script` 把加载与查询写进同一个脚本，
+                                     或紧跟在同一次 `load-ksm` 之后查看。
+  model rebuild <name> [--kind all|buoyancy|thrust|hydro|sensors]
+                                   ★ 触发插件重建（覆盖 4 条 Rebuild 路径；
+                                     配置从缓存取 ⇒ 须先 load-ksm）
+  model save-ksm <name> <file.ksm> [--sdf-name <模型名>]
+                                   ★ 保存为 .ksm（与 GUI 同一实现）⇒ 可做往返验证
   model delete <name>
   model delete-all
   model pose <name>
@@ -1095,8 +1367,13 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
 
   // ── world ──
   if (cmd == "world") {
-    if (a.pos.empty()) Fail("用法：world status|pause|resume");
+    if (a.pos.empty()) Fail("用法：world status|pause|resume|load-ksw");
+    /// ⚠ 子命令名要摘掉再传给命令实现（与 model/water/watch 分支一致）——
+    /// 2026-09-24 首版漏了这步，导致 `world load-ksw <dir>` 里 dir 收到的是 "load-ksw"。
+    std::vector<std::string> wtail(a.pos.begin() + 1, a.pos.end());
+    Args wsa = a; wsa.pos = wtail;
     if (a.pos[0] == "status") return CmdWorldStatus(_mm);
+    if (a.pos[0] == "load-ksw") return CmdWorldLoadKsw(_mm, wsa);
     if (a.pos[0] == "pause")  return CmdWorldPause(_mm, true);
     if (a.pos[0] == "resume") return CmdWorldPause(_mm, false);
     Fail("未知 world 子命令：" + a.pos[0]);
@@ -1104,7 +1381,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
 
   // ── model ──
   if (cmd == "model") {
-    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|load-ksm|delete|delete-all|pose|set-pose");
+    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|load-ksm|info|rebuild|save-ksm|delete|delete-all|pose|set-pose");
     const std::string sub = a.pos[0];
     std::vector<std::string> tail(a.pos.begin() + 1, a.pos.end());
     Args sa = a; sa.pos = tail;
@@ -1115,6 +1392,9 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     if (sub == "spawn-cylinder")return CmdModelSpawnCylinder(_mm, sa);
     if (sub == "spawn-file")    return CmdModelSpawnFile(_mm, sa);
     if (sub == "load-ksm")      return CmdModelLoadKsm(_mm, sa);
+    if (sub == "info")          return CmdModelInfo(_mm, sa);
+    if (sub == "rebuild")       return CmdModelRebuild(_mm, sa);
+    if (sub == "save-ksm")      return CmdModelSaveKsm(_mm, sa);
     if (sub == "delete")        return CmdModelDelete(_mm, sa);
     if (sub == "delete-all")    return CmdModelDeleteAll(_mm);
     if (sub == "pose")          return CmdModelPose(_mm, sa);
