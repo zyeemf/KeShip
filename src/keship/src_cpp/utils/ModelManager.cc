@@ -323,6 +323,61 @@ std::string ResolveModelBase(const std::string &_modelName)
   return "";
 }
 
+/// @brief 把 SDF 里**第一个** `<model name="...">` 的名称替换为 _name
+///
+/// 用途：让「实例名」与「文件内模型名」解耦。`SpawnModelWithBuoyancy` /
+/// `SpawnModelWithThrust` / `SpawnModelInGazeboFromSDFString` 的 create/blocking
+/// 都依赖「缓存 SDF 里的模型名 == 实例名」才能按实例名取回 entity ID，
+/// 因此写入缓存前必须统一。兼容单/双引号（历史文件两种都有）。
+/// @return 是否真的替换过（未找到 model name 返回 false）
+bool ReplaceFirstModelName(std::string &_sdf, const std::string &_name)
+{
+  const char *needle = "model name=\"";
+  char quote = '"';
+  size_t pos = _sdf.find(needle);
+  if (pos == std::string::npos)
+  {
+    needle = "model name='";
+    quote = '\'';
+    pos = _sdf.find(needle);
+  }
+  if (pos == std::string::npos)
+    return false;
+  const size_t nameStart = pos + std::strlen(needle);
+  const size_t nameEnd = _sdf.find(quote, nameStart);
+  if (nameEnd == std::string::npos)
+    return false;
+  _sdf.replace(nameStart, nameEnd - nameStart, _name);
+  return true;
+}
+
+/// @brief 若水动力已启用，把 6x6 附加质量注入 SDF 的 `<fluid_added_mass>`
+///
+/// ★ 2026-09-24 新增（修 P0-1）：注入逻辑原先**只写在 `SpawnModelWithBuoyancy` 一处**，
+/// 导致另外 6 条**有 M_A 数据**的路径（`SpawnModelWithThrust` 与 5 个 Rebuild）全部丢失 M_A。
+/// 现在统一走本函数 —— **新增加载路径时只需调它一次**，不必各自抄一遍
+/// （平行路径各自实现正是漏补的成因，见 doc/audit/model_loading_audit_2026-09-24.md）。
+///
+/// 全零矩阵直接跳过（避免生成空的 `<fluid_added_mass>` 标签）。
+/// @param _sdf 已组装完成的 SDF 字符串流（须含 `</inertial>`，否则注入失败并返回）
+/// @param _hasHydro 该路径是否拿到了水动力配置
+/// @param _hydro 水动力配置（提供 addedMass）
+void ApplyAddedMassToSdf(std::ostringstream &_sdf, bool _hasHydro,
+                         const HydroConfig &_hydro)
+{
+  if (!_hasHydro)
+    return;
+  bool anyNonZero = false;
+  for (int i = 0; i < 36; ++i)
+    if (std::abs(_hydro.addedMass[i]) > 1e-12) { anyNonZero = true; break; }
+  if (!anyNonZero)
+    return;
+  std::string s = _sdf.str();
+  ModelManager::InjectFluidAddedMass(s, _hydro.addedMass.data());
+  _sdf.str("");
+  _sdf << s;
+}
+
 /// @brief 把 SDF 里的 mesh uri 解析成本地绝对路径
 /// 支持 model://、file://、相对路径（相对 SDF 目录或 keship 自定义目录）。
 /// 解析不到/不安全返回空串。
@@ -1937,6 +1992,9 @@ bool ModelManager::RebuildModelWithBuoyancy(
   sdf << "  </model>\n"
       << "</sdf>\n";
 
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+
   /// 4. spawn 新模型（直接在保存的位姿生成，避免 spawn 在原点再移动的中间状态）
   
   
@@ -2579,14 +2637,8 @@ bool ModelManager::SpawnModelWithBuoyancy(
       << "</sdf>\n";
 
   
-  /// M_A 注入 DART <fluid_added_mass>（隐式积分）
-  if (hasHydro)
-  {
-    std::string sdfStr = sdf.str();
-    InjectFluidAddedMass(sdfStr, hydroCfg.addedMass.data());
-    sdf.str("");
-    sdf << sdfStr;
-  }
+  /// M_A 注入（统一入口 —— 2026-09-24 起改用 ApplyAddedMassToSdf，行为等价）
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
 
   std::string service = "/world/" + this->worldName + "/create/blocking";
   gz::msgs::EntityFactory req;
@@ -2749,6 +2801,9 @@ bool ModelManager::RebuildModelWithThrust(
   sdf << "  </model>\n"
       << "</sdf>\n";
 
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+
   /// 5. spawn 新模型
   std::string service = "/world/" + this->worldName + "/create/blocking";
   gz::msgs::EntityFactory req;
@@ -2850,6 +2905,10 @@ bool ModelManager::SpawnModelWithThrust(
   sdf << "  </model>\n"
       << "</sdf>\n";
 
+  /// ★ 2026-09-24 修 P0-1：**本路径是影响面最大的一处** ——
+  /// 4 个 ksm 中 3 个含 THRUST 段、都走这里，原先全部丢失 M_A。
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+
   std::string service = "/world/" + this->worldName + "/create/blocking";
   gz::msgs::EntityFactory req;
   gz::msgs::Boolean rep;
@@ -2914,8 +2973,14 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
     const double _addedMass[36])
 {
   // M_A 注入 DART <fluid_added_mass>（隐式积分，无条件稳定）
-  // 空中由 FossenModel::computeAirCorrection 抵消
-  // 详见：program/notes/ma_dart_removal_fix.md
+  //
+  // ⚠ 2026-09-24 审核更正（原文写「空中由 FossenModel::computeAirCorrection 抵消」
+  //    并引用 program/notes/ma_dart_removal_fix.md）：
+  //    · `computeAirCorrection` **在代码库中不存在**（全库仅此注释提及）；
+  //    · 被引用的设计文档 `ma_dart_removal_fix.md` 亦**不存在**；
+  //    ⇒ **模型出水（空中）时 M_A 未做任何抵消** —— DART 的 `<fluid_added_mass>`
+  //      是 link 惯性的组成部分、不区分介质，故跃出水面后仍带附加惯性。
+  //      **待验证 / 待修**，见 doc/audit/model_loading_audit_2026-09-24.md 的 P1-4。
 
   auto vpos = _sdf.find("sdf version=\"1.6\"");
   if (vpos != std::string::npos)
@@ -3112,6 +3177,10 @@ bool ModelManager::RebuildModelWithHydro(
   sdf << "  </model>\n"
       << "</sdf>\n";
 
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入。
+  /// 本函数语义即"用水动力配置重建" ⇒ hydro 恒为启用，故 _hasHydro 传 true。
+  ApplyAddedMassToSdf(sdf, true, _config);
+
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
   req.set_name(_instanceName); req.set_allow_renaming(false); req.set_sdf(sdf.str());
@@ -3196,6 +3265,9 @@ bool ModelManager::RebuildModelWithSensors(
 
   sdf << "  </model>\n"
       << "</sdf>\n";
+
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
 
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
@@ -3440,6 +3512,9 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
         << "        <link_name>base_link</link_name>\n"
         << "      </external_force>\n";
   sdf << "    </plugin>\n  </model>\n</sdf>\n";
+
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
 
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
@@ -4201,5 +4276,100 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
             << " thrust bodies=" << _thrustCfg.bodies.size()
             << " hydro=" << (_hydroCfg.addedMass[0] != 0 ? "yes" : "empty")
             << " sensors=" << _sensorCfg.instances.size() << std::endl;
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-09-24 新增：KSM 加载流程下沉（GUI 与无头入口共用同一份实现）
+///
+/// 原先这套流程写在 `MenuPluginKeship::OnBtn_LoadModel`（GUI 槽）里，
+/// 导致 **ksm 加载路径无法被无头入口驱动** ⇒ 只存在于该路径的缺陷
+/// （如 P0-1 M_A 丢失、P0-2 足迹缓存缺失）进不了可回归范围。
+/// 下沉后：GUI 与 `keship_ctl model load-ksm` 调的是同一个函数。
+///
+/// ⚠ 与 KSW 加载（`MenuPluginKeship::OnBtn_LoadWorld`）的分派规则**必须一致**：
+///   THRUST 非空 → WithThrust；否则 BUOYANCY 非空 → WithBuoyancy；否则 → SDFString。
+///   两处若漂移，同一模型经"单模型加载"与"世界加载"会得到不同物理 —— 这正是
+///   2026-09-24 审核里 P0-1 的成因模式（平行路径各自实现 ⇒ 漏补）。
+bool ModelManager::LoadModelFromKsmFile(
+    const std::string &_instanceName,
+    const std::string &_ksmPath,
+    const double _pos[6],
+    const std::string &_sourceBaseName)
+{
+  if (_instanceName.empty() || _ksmPath.empty())
+  {
+    std::cerr << "LoadModelFromKsmFile: 实例名或路径为空" << std::endl;
+    return false;
+  }
+
+  /// 1. 解析五段
+  std::string baseSDF;
+  BuoyancyConfig buoyCfg;
+  ThrusterConfig thrustCfg;
+  HydroConfig hydroCfg;
+  hydroCfg.linkName = "";          /// 哨兵：仅当 HYDRO 段有 link_name 时才视为"启用了 Fossen"
+  SensorConfig sensorCfg;
+  if (!ParseKSMFile(_ksmPath, baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg))
+  {
+    std::cerr << "LoadModelFromKsmFile: 解析失败 " << _ksmPath << std::endl;
+    return false;
+  }
+
+  /// 2. 模型名统一为实例名（spawn 依赖名字一致以取回 entity ID）
+  if (!ReplaceFirstModelName(baseSDF, _instanceName))
+    std::cerr << "LoadModelFromKsmFile: 警告 — base SDF 中未找到 model name，"
+                 "实例名与文件内名可能不一致（spawn 取 ID 会失败）" << std::endl;
+
+  /// 3. 缓存配置（与 GUI 原实现逐条一致）
+  CacheModelSDF(_instanceName, baseSDF);
+  buoyCfg.linkName = "base_link";
+  thrustCfg.linkName = "base_link";
+  CacheBuoyancyConfig(_instanceName, buoyCfg);
+  CacheThrusterConfig(_instanceName, thrustCfg);
+  if (!hydroCfg.linkName.empty())
+    CacheHydroConfig(_instanceName, hydroCfg);
+  if (!sensorCfg.instances.empty())
+    CacheSensorConfig(_instanceName, sensorCfg);
+
+  /// 4. 按段分派 spawn（规则与 KSW 加载一致，见函数头注释）
+  bool ok = false;
+  const char *route = "";
+  if (!thrustCfg.bodies.empty())
+  {
+    route = "SpawnModelWithThrust";
+    ok = SpawnModelWithThrust(_instanceName, thrustCfg, _pos);
+  }
+  else if (!buoyCfg.bodies.empty())
+  {
+    route = "SpawnModelWithBuoyancy";
+    ok = SpawnModelWithBuoyancy(_instanceName, buoyCfg, _pos);
+  }
+  else
+  {
+    route = "SpawnModelInGazeboFromSDFString";
+    ok = SpawnModelInGazeboFromSDFString(_instanceName, baseSDF);
+  }
+
+  if (!ok)
+  {
+    std::cerr << "LoadModelFromKsmFile: spawn 失败（路径 " << route << "）: "
+              << _instanceName << std::endl;
+    return false;
+  }
+
+  /// 5. 登记来源元数据（保存 ksw 时按原名还原）
+  {
+    WorldModelSource src;
+    src.baseName = _sourceBaseName.empty() ? _instanceName : _sourceBaseName;
+    SetModelSource(_instanceName, src);
+  }
+
+  std::cout << "LoadModelFromKsmFile: 完成 " << _instanceName
+            << " <- " << _ksmPath << "（路径 " << route
+            << "；浮力体 " << buoyCfg.bodies.size()
+            << " / 推进器 " << thrustCfg.bodies.size()
+            << " / 水动力 " << (hydroCfg.linkName.empty() ? "无" : "有")
+            << " / 传感器 " << sensorCfg.instances.size() << "）" << std::endl;
   return true;
 }

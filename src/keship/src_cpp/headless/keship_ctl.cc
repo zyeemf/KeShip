@@ -566,6 +566,30 @@ int CmdModelSpawnFile(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
+/// ★ 2026-09-24 新增：加载 .ksm 模型（与 GUI「加载模型」走**同一份实现**）
+///
+/// 为什么需要它：在它之前，ksm 加载逻辑只存在于 GUI 槽里 ⇒ 无头入口无法驱动，
+/// 导致只发生在该路径上的缺陷（P0-1 M_A 丢失 / P0-2 足迹缓存缺失）**进不了
+/// 可回归范围**（张老师 2026-09-24：GUI 仅供用户使用，不便测试）。
+///
+/// 命令自带**路径回显**：输出里会写明实际走了哪条 spawn 分支
+/// （WithThrust / WithBuoyancy / SDFString）—— 这本身就是判据，
+/// 因为不同分支的横向关注点覆盖不同（见 doc/audit/model_loading_audit_2026-09-24.md）。
+int CmdModelLoadKsm(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.size() < 2)
+    Fail("用法：model load-ksm <name> <file.ksm> [--pos \"x y z r p y\"]\n"
+         "        与 GUI「加载模型」选 .ksm 走**同一份实现**（ModelManager::LoadModelFromKsmFile）：\n"
+         "        解析五段 → 缓存 SDF/浮力/推力/水动力/传感器 → 按有无推力·浮力分派 spawn。\n"
+         "        默认位姿 z=0.1（可用 --pos 覆盖）。");
+  const std::string name = _a.pos[0], path = _a.pos[1];
+  double pos[6];
+  PoseFromArgs(_a, 0.0, pos);   /// _D=0 ⇒ 默认 z = 0.1
+  if (!_mm.LoadModelFromKsmFile(name, path, pos))
+    Fail("LoadModelFromKsmFile 失败：" + name + " <- " + path);
+  Info("已加载 ksm 模型 " + name + " <- " + path);
+  return 0;
+}
+
 int CmdModelDelete(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.empty()) Fail("用法：model delete <name>");
   const std::string name = _a.pos[0];
@@ -978,6 +1002,10 @@ R"(keship_ctl — KeShip 无头指令入口
   model spawn-sdf <name> <file.sdf>   通用逃生口：直接喂 SDF 文件
   model spawn-cylinder <name> [--d 0.5 --len 1.0 --rho 500] [--pos ...]
   model spawn-file <name> <path> [--static] [--buoyancy] [--pos ...]
+  model load-ksm <name> <file.ksm> [--pos ...]
+                           ★ 与 GUI「加载模型」选 .ksm **同一份实现**（ModelManager::
+                             LoadModelFromKsmFile）：解析五段 → 缓存 SDF/浮力/推力/
+                             水动力/传感器 → 按有无推力·浮力分派 spawn
   model delete <name>
   model delete-all
   model pose <name>
@@ -1076,7 +1104,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
 
   // ── model ──
   if (cmd == "model") {
-    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|delete|delete-all|pose|set-pose");
+    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|load-ksm|delete|delete-all|pose|set-pose");
     const std::string sub = a.pos[0];
     std::vector<std::string> tail(a.pos.begin() + 1, a.pos.end());
     Args sa = a; sa.pos = tail;
@@ -1086,6 +1114,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     if (sub == "spawn-sdf")     return CmdModelSpawnSdf(_mm, sa);
     if (sub == "spawn-cylinder")return CmdModelSpawnCylinder(_mm, sa);
     if (sub == "spawn-file")    return CmdModelSpawnFile(_mm, sa);
+    if (sub == "load-ksm")      return CmdModelLoadKsm(_mm, sa);
     if (sub == "delete")        return CmdModelDelete(_mm, sa);
     if (sub == "delete-all")    return CmdModelDeleteAll(_mm);
     if (sub == "pose")          return CmdModelPose(_mm, sa);

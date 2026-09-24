@@ -567,23 +567,15 @@ void MenuPluginKeship::OnBtn_LoadWorld()
 
   int skippedModels = 0;
   std::vector<std::string> skippedModelNames;
+  /// ★ 2026-09-24 修 K1：加载失败必须**可见** —— 原先 spawn 的返回值根本没接收，
+  /// 失败既不报错、不计数、不弹窗，用户以为加载成功（只有控制台一行 stderr）。
+  /// 这里对齐"重名跳过"早已有的提示机制。
+  int failedModels = 0;
+  std::vector<std::string> failedModelNames;
   for (const auto &item : items)
   {
     QString full = fullText(item.path, item.baseName);
     if (!selModels.contains(full)) continue;
-
-    std::string baseSDF;
-    keship::BuoyancyConfig buoyCfg;
-    keship::ThrusterConfig thrustCfg;
-    keship::HydroConfig hydroCfg;
-    hydroCfg.linkName = "";
-    keship::SensorConfig sensorCfg;
-    if (!this->modelManager->ParseKSMFile(item.ksmPath, baseSDF, buoyCfg, thrustCfg,
-                                          hydroCfg, sensorCfg))
-    {
-      std::cerr << "LoadWorld: 无法解析 " << item.ksmPath << std::endl;
-      continue;
-    }
 
     // 实例名：命名空间 + 子 World 链 + 原键名（下划线连接，重叠段去重保证唯一）
     std::string instName;
@@ -601,30 +593,6 @@ void MenuPluginKeship::OnBtn_LoadWorld()
       continue;
     }
 
-    // 缓存 SDF 的模型名统一为实例名（编辑重建 allow_renaming=false 依赖 name 一致；
-    // 保存时 SaveModelToKSM 会还原为原名，不影响文件内容）
-    {
-      auto ns_ = baseSDF.find("model name=\"");
-      if (ns_ != std::string::npos)
-      {
-        ns_ += 12;
-        auto ne = baseSDF.find("\"", ns_);
-        if (ne != std::string::npos)
-          baseSDF.replace(ns_, ne - ns_, instName);
-      }
-    }
-    this->modelManager->CacheModelSDF(instName, baseSDF);
-    buoyCfg.linkName = "base_link";
-    thrustCfg.linkName = "base_link";
-    this->modelManager->CacheBuoyancyConfig(instName, buoyCfg);
-    this->modelManager->CacheThrusterConfig(instName, thrustCfg);
-
-    if (!hydroCfg.linkName.empty())
-      this->modelManager->CacheHydroConfig(instName, hydroCfg);
-
-    if (!sensorCfg.instances.empty())
-      this->modelManager->CacheSensorConfig(instName, sensorCfg);
-
     // 位姿 = 世界整体位姿(attributes.pose) + 模型自身位姿 + 对话框偏移（角度已换算弧度）
     double pos[6] = {
         item.pose[0] + worldPose[0] + off[0],
@@ -634,18 +602,24 @@ void MenuPluginKeship::OnBtn_LoadWorld()
         item.pose[4] + worldPose[4] + off[4],
         item.pose[5] + worldPose[5] + off[5]};
 
-    if (!thrustCfg.bodies.empty())
-      this->modelManager->SpawnModelWithThrust(instName, thrustCfg, pos);
-    else if (!buoyCfg.bodies.empty())
-      this->modelManager->SpawnModelWithBuoyancy(instName, buoyCfg, pos);
-    else
-      this->modelManager->SpawnModelInGazeboFromSDFString(instName, baseSDF);
-
-    uint32_t id = 0; int tries = 100;
-    while (tries-- > 0)
+    /// ★★ 2026-09-24：**改调与"单模型加载"同一个下沉函数**（`LoadModelFromKsmFile`）。
+    /// 原先此处内联了「解析 → 模型名替换 → 缓存 4 类配置 → 分派 spawn → 等 ID」整套逻辑，
+    /// 与 `OnBtn_LoadModel` 的 .ksm 分支构成**两份实现** ⇒ 任何改动都要改两处，
+    /// 漏一处即漂移（这正是审核中 P0-1 的成因模式）。
+    ///
+    /// 保留在世界槽外层的、属世界语义的三件事：
+    ///   · 实例名由「命名空间 + 子世界链 + 原名」合成（上方 mergeSegs）；
+    ///   · 位姿叠加世界整体位姿与对话框偏移（上方 pos）；
+    ///   · 重名先跳过（上方），来源登记**完整链信息**（下方）。
+    if (!this->modelManager->LoadModelFromKsmFile(instName, item.ksmPath, pos, item.baseName))
     {
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
-      if (this->modelManager->GetModelIDByInstanceNameFromGazebo(instName, id)) break;
+      /// ★ 修 K1 + K2：计入失败并**不登记来源元数据** ——
+      /// 原先无论成败都 `SetModelSource`，会在 modelSource_ 里留下实际不存在的模型。
+      std::cerr << "LoadWorld: 加载失败 " << instName
+                << " <- " << item.ksmPath << std::endl;
+      failedModelNames.push_back(instName);
+      ++failedModels;
+      continue;
     }
 
     // 登记来源元数据（后续保存时按子 World 链还原嵌套位置；链与实例名同用 mergeSegs 去重）
@@ -661,13 +635,17 @@ void MenuPluginKeship::OnBtn_LoadWorld()
   // 若加载前用户已手动暂停则保持暂停）
   SetSimulationPaused(wasPaused);
 
-    if (skippedModels > 0 || skippedWaters > 0)
+    if (skippedModels > 0 || skippedWaters > 0 || failedModels > 0)
   {
     QStringList names;
     for (size_t i = 0; i < skippedModelNames.size() && i < 4; ++i)
       names << QString::fromStdString(skippedModelNames[i]);
     for (size_t i = 0; i < skippedWaterNames.size() && i < 4; ++i)
       names << QString::fromStdString(skippedWaterNames[i]);
+    QStringList failNames;
+    for (size_t i = 0; i < failedModelNames.size() && i < 4; ++i)
+      failNames << QString::fromStdString(failedModelNames[i]);
+
     QString detail;
     if (skippedModels > 0)
       detail += QString("重名模型 %1 个").arg(skippedModels);
@@ -676,8 +654,20 @@ void MenuPluginKeship::OnBtn_LoadWorld()
       if (!detail.isEmpty()) detail += "、";
       detail += QString("重名水域 %1 个").arg(skippedWaters);
     }
-    detail += "（保留场景已有）";
+    if (!detail.isEmpty()) detail += "（保留场景已有）";
     if (!names.isEmpty()) detail += "\n被跳过：" + names.join("、");
+
+    /// ★ 2026-09-24 修 K1：失败必须显式告知用户（原先完全静默）
+    if (failedModels > 0)
+    {
+      if (!detail.isEmpty()) detail += "\n";
+      detail += QString("⚠ 加载失败 %1 个").arg(failedModels);
+      if (!failNames.isEmpty()) detail += "：" + failNames.join("、");
+      if (failedModelNames.size() > 4)
+        detail += QString(" 等共 %1 个").arg(failedModelNames.size());
+      detail += "\n（失败原因见控制台输出）";
+    }
+
     QMessageBox::information(nullptr, "载入世界", detail);
   }
 
@@ -1050,58 +1040,19 @@ void MenuPluginKeship::OnBtn_LoadModel()
               << ksmPos[0] << ", " << ksmPos[1] << ", " << ksmPos[2] << ", "
               << ksmPos[3] << ", " << ksmPos[4] << ", " << ksmPos[5] << "]" << std::endl;
 
-    /// 替换 baseSDF 中的模型名为用户输入名（缓存统一为实例名，spawn/重建兼容）
-    auto nameStart = baseSDF.find("model name=\"");
-    if (nameStart != std::string::npos)
+    /// ★ 2026-09-24：加载流程**下沉到 ModelManager::LoadModelFromKsmFile**，
+    /// 与无头入口 `keship_ctl model load-ksm` **共用同一份实现** ——
+    /// 这样「无头验证」验的就是 GUI 真正走的那条路（本次改造的目的）。
+    ///
+    /// 取舍：baseSDF 会被解析两次（上面那次只供对话框展示）——
+    /// 代价是重读一个几 KB 的文本文件（可忽略），换来的是两条入口**零漂移**。
+    /// ⚠ 不要为了省这次解析而在这里重写加载逻辑 —— 那正是 P0-1 的成因模式。
+    if (!this->modelManager->LoadModelFromKsmFile(instanceName, filePath.toStdString(), ksmPos))
     {
-      nameStart += 12;
-      auto nameEnd = baseSDF.find("\"", nameStart);
-      if (nameEnd != std::string::npos)
-        baseSDF.replace(nameStart, nameEnd - nameStart, instanceName);
-    }
-
-    this->modelManager->CacheModelSDF(instanceName, baseSDF);
-    buoyCfg.linkName = "base_link";
-    thrustCfg.linkName = "base_link";
-    this->modelManager->CacheBuoyancyConfig(instanceName, buoyCfg);
-    this->modelManager->CacheThrusterConfig(instanceName, thrustCfg);
-
-    /// HYDRO 段有内容（linkName 被 ParseKSMFile 设置）则缓存，即使系数全零也表示用户启用了 Fossen
-    bool hasHydro = !hydroCfg.linkName.empty();
-    if (hasHydro)
-    {
-      this->modelManager->CacheHydroConfig(instanceName, hydroCfg);
-    }
-
-    /// 只在有传感器配置时才缓存
-    if (!sensorCfg.instances.empty())
-    {
-      this->modelManager->CacheSensorConfig(instanceName, sensorCfg);
-    }
-
-    bool hasBuoyancy = !buoyCfg.bodies.empty();
-    bool hasThrust = !thrustCfg.bodies.empty();
-    if (hasThrust)
-      this->modelManager->SpawnModelWithThrust(instanceName, thrustCfg, ksmPos);
-    else if (hasBuoyancy)
-      this->modelManager->SpawnModelWithBuoyancy(instanceName, buoyCfg, ksmPos);
-    else
-      this->modelManager->SpawnModelInGazeboFromSDFString(instanceName, baseSDF);
-
-    uint32_t id = 0, tries = 100;
-    while (tries-- > 0)
-    {
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
-      if (this->modelManager->GetModelIDByInstanceNameFromGazebo(instanceName, id))
-        break;
+      QMessageBox::warning(nullptr, "错误", "加载 .ksm 模型失败");
+      return;
     }
     NotifyModelListChanged();
-    // 登记来源：原名 = 用户输入的实例名（保存时用用户命名）
-    {
-      keship::ModelManager::WorldModelSource src;
-      src.baseName = instanceName;
-      this->modelManager->SetModelSource(instanceName, src);
-    }
     std::cout << "keship: 成功加载 .ksm 模型: " << instanceName << std::endl;
     return;
   }
@@ -2139,6 +2090,14 @@ std::vector<keship::ModelFootprint> MenuPluginKeship::GatherSceneFootprints() co
   {
     if (name == "sun" || name == "ground_plane" ||
         name.rfind("waves_", 0) == 0)
+      continue;
+
+    /// ★ 2026-09-24 修 P0-2（张老师澄清的设计意图）：**2D 地图只预览静态模型** ——
+    /// 动态模型在 2D 上互相遮挡，"不好确定谁在遮盖谁"，故一律不画。
+    /// 注：`isStatic` 字段一直存在（include/keship/utils/WaterArea.hh:120），
+    /// `CacheModelFootprint` 也一直在填，只是**从未被用于过滤**
+    /// （`MapWidget` 的 4 处 `isStatic` 分支只用于配色）。
+    if (!bbox.isStatic)
       continue;
 
     keship::ModelFootprint fp = bbox;

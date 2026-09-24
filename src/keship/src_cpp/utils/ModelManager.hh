@@ -428,6 +428,34 @@ namespace keship
                              HydroConfig &_hydroCfg,
                              SensorConfig &_sensorCfg);
 
+    /// @brief **从 .ksm 文件加载模型**（解析 → 缓存 → 分派 spawn → 登记来源）
+    ///
+    /// ★ 2026-09-24 新增：把原先散在 `MenuPluginKeship::OnBtn_LoadModel` 里的
+    ///   KSM 加载流程**下沉**到此处，使 GUI 与无头入口 `keship_ctl model load-ksm`
+    ///   **共用同一份实现** —— 这样「无头验证」验的就是 GUI 真正走的那条路。
+    ///
+    /// 流程（与 GUI 原实现逐条等价）：
+    ///   1. `ParseKSMFile` 解析五段；
+    ///   2. 把 base SDF 里第一个 `<model name="...">` 换成 `_instanceName`
+    ///      （缓存 SDF 的模型名必须等于实例名：后续 spawn 依赖名字一致以取回 entity ID）；
+    ///   3. 缓存 base SDF + 浮力/推力配置；HYDRO 段有 `link_name` 才缓存水动力
+    ///      （即使系数全零也表示用户启用了 Fossen）；传感器非空才缓存；
+    ///   4. **按段分派**（与 KSW 加载同一规则）：
+    ///        THRUST 非空 → `SpawnModelWithThrust`；
+    ///        否则 BUOYANCY 非空 → `SpawnModelWithBuoyancy`；
+    ///        否则 → `SpawnModelInGazeboFromSDFString`；
+    ///   5. 登记来源元数据（保存 ksw 时还原原名用）。
+    ///
+    /// @param _instanceName 实例名（同时写入缓存 SDF 的模型名）
+    /// @param _ksmPath .ksm 文件路径
+    /// @param _pos 位姿 [x,y,z,roll,pitch,yaw]，nullptr → 由各 spawn 用默认
+    /// @param _sourceBaseName 来源原名（空 → 用 _instanceName）
+    /// @return true = 解析成功且 spawn 后取到 entity ID
+    bool LoadModelFromKsmFile(const std::string &_instanceName,
+                              const std::string &_ksmPath,
+                              const double _pos[6] = nullptr,
+                              const std::string &_sourceBaseName = "");
+
     /// @brief 将 SDF 字符串中所有文件 mesh <uri> 替换为规范化缓存 OBJ 路径
     ///
     /// 统一加载层坐标系：任意格式（DAE/OBJ/STL/glTF）模型经
@@ -442,8 +470,18 @@ namespace keship
     /// @brief 从 SDF 字符串中解析惯性参数（独立于缓存）
     static bool ParseInertiaFromSDF(const std::string &_sdf, InertiaParams &_out);
 
-    /// @brief [Deprecated] 不再使用。M_A 现在完全在插件中显式计算。
-    ///        之前将 fluid_added_mass 注入 SDF 以便 DART 隐式处理。
+    /// @brief 把 6x6 附加质量注入 SDF 的 `<fluid_added_mass>`（交由 DART 隐式积分）。
+    ///
+    /// ⚠ **2026-09-24 审核更正**（原文写「[Deprecated] 不再使用。M_A 现在完全在插件中
+    ///    显式计算」—— 与事实不符；且正是这句错误陈述，让 `SpawnModelWithThrust` 里
+    ///    写出了"顺理成章"的 `[removed]` 改动）：
+    ///    · 插件侧**不自算** M_A —— `src_cpp/physics/KSPlugin_HydroBuoyancy.cc:450`
+    ///      的注释自证「M_A 通过 `<fluid_added_mass>` 注入 DART 隐式处理」，
+    ///      且该文件对 `addedMass` 的**唯一引用就是那行注释**；
+    ///    · 本函数**仍在被使用**，但全库**只有 1 个调用点**：
+    ///      `ModelManager.cc:2586`（在 `SpawnModelWithBuoyancy` 内）。
+    ///    ⇒ `SpawnModelWithThrust` 与 4 个 Rebuild 路径上 **M_A 实际失效**。
+    ///    详见 `doc/audit/model_loading_audit_2026-09-24.md` 的 P0-1（**待拍板**）。
     /// @param _sdf [in/out] 缓存的 base SDF
     /// @param _addedMass 6x6 row-major 附加质量（无量纲系数）
     /// @return true 注入成功
