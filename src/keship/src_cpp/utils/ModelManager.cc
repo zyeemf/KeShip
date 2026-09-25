@@ -779,7 +779,9 @@ bool ModelManager::SpawnModelInGazeboFromFile(
     uint32_t _id = 0;
     bool found = false;
     uint32_t maxTryTimes = 100;
-    // found = this->GetModelIDByInstanceNameFromGazebo(_instanceName, _id);
+    /// ★ 2026-09-25 性能修复（⑩）：先查再睡（原为"先睡 500ms 再查"，
+    /// 实体已就绪时白等半秒 —— 实测 keship3 单次加载里就有这 0.5s）
+    found = this->GetModelIDByInstanceNameFromGazebo(_instanceName, _id);
     while ((!found) && (maxTryTimes-- > 0))
     {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -829,14 +831,17 @@ bool ModelManager::GetModelIDByInstanceNameFromGazebo(const std::string &_instan
   executed = this->node->Request(service_scene, req_scene, timeout, rep_scene, result);
   if (executed)
   {
-    std::cout << "服务调用scene，模型数量" << rep_scene.model_size() << std::endl;
+    /// ★ 2026-09-25 性能修复（⑩）：去掉两处**常态**打印。
+    /// 原实现每次查询都打印"模型数量" + **逐个模型名**，而 spawn 后的等待循环
+    /// 会反复调用本函数、且每个 spawn 都调 ⇒ 输出量随模型数呈 **O(N²)**；
+    /// 又因每行都用 std::endl（每次都 flush）而实打实地拖慢加载。
+    /// 失败信息（未找到/服务失败）仍然照打 —— 那才是需要看的。
+    /// 需要逐模型细节时用 `keship_ctl model list`。
     for (int i = 0; i < rep_scene.model_size(); i++)
     {
-      std::cout << "服务调用scene，模型名称" << rep_scene.model(i).name() << std::endl;
       if (rep_scene.model(i).name() == _instanceName)
       {
         _id = rep_scene.model(i).id();
-        std::cout << "服务调用成功scene，模型ID为" << _id << std::endl;
         return true;
       }
     }
@@ -942,6 +947,14 @@ std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf,
       ".dae", ".obj", ".stl", ".gltf", ".glb", ".fbx"};
 
   std::string out = _sdf;
+  /// ★ 2026-09-25 性能修复（③）：**同一 SDF 内同一源文件只规范化一次**。
+  /// 船的 base SDF 里 visual 与 collision 各有一个 `<uri>` 且指向同一 mesh
+  /// （例：ke0812_1.ksm 两处都是 `robot_model/keship3/keship3.dae`），
+  /// 原实现对每个 `<uri>` 各调一次 NormalizeMeshToSDFCache ⇒ **同一文件被全量
+  /// 解析两次**（wamv 125MB 时实测第二次多花 4.3s）。
+  /// 去重后语义**逐字不变**：命中的 uri 仍照原样写 meshCacheToSrcUri_
+  /// （保持"后出现的 uri 覆盖"这一原语义）。
+  std::map<std::string, std::string> pathToCachePath;  // 解析后源路径 → 规范化缓存路径
   size_t pos = 0;
   while (true)
   {
@@ -985,7 +998,21 @@ std::string ModelManager::NormalizeMeshUrisInSDF(const std::string &_sdf,
       continue;
     }
 
-    std::string cachePath = NormalizeMeshToSDFCache(path);
+    /// ★ ③：本 SDF 内该源文件已规范化过则复用，不再解析
+    std::string cachePath;
+    auto cached = pathToCachePath.find(path);
+    if (cached != pathToCachePath.end())
+    {
+      cachePath = cached->second;
+    }
+    else
+    {
+      cachePath = NormalizeMeshToSDFCache(path);
+      /// 只缓存**成功**结果 —— 失败仍逐次报错，与改前行为一致
+      if (!cachePath.empty())
+        pathToCachePath[path] = cachePath;
+    }
+
     if (!cachePath.empty())
     {
       meshCacheToSrcUri_[cachePath] = uri;
@@ -1292,6 +1319,8 @@ bool ModelManager::SpawnCylinderInGazebo(
     uint32_t id = 0;
     bool found = false;
     uint32_t maxTryTimes = 100;
+    /// ★ 2026-09-25（⑩）：先查再睡
+    found = this->GetModelIDByInstanceNameFromGazebo(_instanceName, id);
     while ((!found) && (maxTryTimes-- > 0))
     {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -1426,6 +1455,8 @@ bool ModelManager::SpawnMathHull(
   uint32_t id = 0;
   bool found = false;
   int maxTry = 40;
+  /// ★ 2026-09-25（⑩）：先查再睡
+  found = this->GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && maxTry-- > 0) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     found = this->GetModelIDByInstanceNameFromGazebo(_instanceName, id);
@@ -1563,6 +1594,10 @@ bool ModelManager::SpawnModelInGazeboFromSDFString(
   uint32_t id = 0;
   bool found = false;
   uint32_t tries = 100;
+  /// ★ 2026-09-25 性能修复（⑩）：**先查再睡**。
+  /// 原实现先睡一个周期再查 —— 实体若已就绪（常态）就白等 200ms，而每次
+  /// spawn/rebuild 都付这个代价。
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -2467,16 +2502,36 @@ void ModelManager::CacheModelFootprint(const std::string &_name)
   case ModelGeometryType::Mesh:
     if (!meshPath.empty())
     {
-      MeshDataSimple mesh = LoadMeshFromFile(meshPath);
-      if (!mesh.vertices.empty())
+      /// ★ 2026-09-25 性能修复（⑤）：这里只需要**顶点位置**（包围盒 + 2D 凸包），
+      /// 原实现对规范化 OBJ 再做一次 **Assimp 全量解析**（wamv 的 179MB OBJ
+      /// 实测 3790ms）。改为流式只读 `v` 行 —— 规范化 OBJ 是"无变换"产物，
+      /// 顶点行即最终坐标；包围盒取 min/max、凸包内部 sort+unique ⇒ 逐位等价。
+      ///
+      /// ⚠ 仅当 meshPath 确实是 `.obj` 才走流式：规范化失败时上层会兜底成
+      ///   源文件路径（dae/stl），那种情况必须退回 Assimp，否则读 XML 当 OBJ 解析。
+      std::vector<gz::math::Vector3d> verts;
+      bool gotVerts = false;
       {
-        auto bb = ComputeBBoxFromVertices(mesh.vertices);
+        std::string low = boost::to_lower_copy(meshPath);
+        const bool isObj =
+            low.size() >= 4 && low.compare(low.size() - 4, 4, ".obj") == 0;
+        if (isObj)
+          gotVerts = keship::LoadNormalizedObjVertices(meshPath, verts);
+      }
+      if (!gotVerts)
+      {
+        MeshDataSimple mesh = LoadMeshFromFile(meshPath);
+        verts = mesh.vertices;
+      }
+      if (!verts.empty())
+      {
+        auto bb = ComputeBBoxFromVertices(verts);
         fp.localW = bb.w;
         fp.localH = bb.h;
         fp.localXMin = bb.xMin;
         fp.localYMin = bb.yMin;
 
-        ComputeConvexHull(mesh.vertices, fp.convexOutline);
+        ComputeConvexHull(verts, fp.convexOutline);
       }
     }
     break;
@@ -2661,6 +2716,10 @@ bool ModelManager::SpawnModelWithBuoyancy(
   uint32_t id = 0;
   bool found = false;
   uint32_t tries = 100;
+  /// ★ 2026-09-25 性能修复（⑩）：**先查再睡**。
+  /// 原实现先睡一个周期再查 —— 实体若已就绪（常态）就白等 200ms，而每次
+  /// spawn/rebuild 都付这个代价。
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -2822,6 +2881,10 @@ bool ModelManager::RebuildModelWithThrust(
   uint32_t id = 0;
   bool found = false;
   uint32_t tries = 100;
+  /// ★ 2026-09-25 性能修复（⑩）：**先查再睡**。
+  /// 原实现先睡一个周期再查 —— 实体若已就绪（常态）就白等 200ms，而每次
+  /// spawn/rebuild 都付这个代价。
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -2924,6 +2987,10 @@ bool ModelManager::SpawnModelWithThrust(
   uint32_t id = 0;
   bool found = false;
   uint32_t tries = 100;
+  /// ★ 2026-09-25 性能修复（⑩）：**先查再睡**。
+  /// 原实现先睡一个周期再查 —— 实体若已就绪（常态）就白等 200ms，而每次
+  /// spawn/rebuild 都付这个代价。
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -3208,6 +3275,8 @@ bool ModelManager::RebuildModelWithHydro(
   if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
+  /// ★ 2026-09-25（⑩）：先查再睡
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     found = GetModelIDByInstanceNameFromGazebo(_instanceName, id); }
@@ -3297,6 +3366,8 @@ bool ModelManager::RebuildModelWithSensors(
   if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
+  /// ★ 2026-09-25（⑩）：先查再睡
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     found = GetModelIDByInstanceNameFromGazebo(_instanceName, id); }
@@ -3545,6 +3616,8 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   if (!CreateEntityViaService(req)) return false;
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
+  /// ★ 2026-09-25（⑩）：先查再睡
+  found = GetModelIDByInstanceNameFromGazebo(_instanceName, id);
   while (!found && tries-- > 0) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     found = GetModelIDByInstanceNameFromGazebo(_instanceName, id); }

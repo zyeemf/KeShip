@@ -11,6 +11,7 @@
 #include <vector>
 #include <array>
 #include <cstdint>
+#include <utility>
 
 #include <gz/math/Vector3.hh>
 
@@ -82,6 +83,21 @@ std::string MeshFileCacheKey(const std::string &_filePath);
 /// @param _srcPath 模型文件绝对路径（DAE/OBJ/STL/glTF 等，assimp 可读）
 /// @return 缓存 OBJ 的绝对路径（可直接写入 SDF <uri>），失败返回空串
 std::string NormalizeMeshToSDFCache(const std::string &_srcPath);
+
+/// @brief 只读规范化 OBJ 的顶点（**不做 Assimp 全量解析**）
+///
+/// 用途：2D 地图足迹只需要顶点位置（包围盒 + 凸包），而规范化 OBJ 是"无变换"
+/// 产物（`v` 行即最终坐标）⇒ 逐行读即可。
+/// 2026-09-25 性能修复（⑤）：wamv 的 179MB 规范化 OBJ 上，Assimp 全量解析实测
+/// 约 3.8s，本函数预期 <0.4s。
+/// 等价性：Assimp 路径会 JoinIdenticalVertices（合并重复点），而包围盒取 min/max、
+/// 凸包内部本就 sort+unique ⇒ **去重后的点集相同 ⇒ 结果逐位一致**
+/// （由 `data/test/load_cost_probe` 强制验证）。
+/// @param _objPath 规范化 OBJ 路径
+/// @param _out 输出顶点（XY 用于足迹；Z 保留以便将来扩展）
+/// @return 是否读到至少一个顶点
+bool LoadNormalizedObjVertices(const std::string &_objPath,
+                               std::vector<gz::math::Vector3d> &_out);
 
 /// @brief 网格缓存清理结果统计
 struct MeshCacheCleanupResult

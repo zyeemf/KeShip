@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <cstring>
+#include <cstdlib>
 #include <set>
 
 #include "keship/utils/KeshipPaths.hh"
@@ -400,6 +401,31 @@ namespace
     return oss.str();
   }
 
+  /// ★ 2026-09-25 性能修复（④）配套：sidecar 快速路径的"源部分 key"。
+  /// 只依赖源文件本身（绝对路径 + mtime + size），**不依赖 mesh 解析结果** ——
+  /// 正是它让"命中判定"能提到 LoadMeshFromFile 之前。
+  std::string SourceKey8(const std::string &_srcPath)
+  {
+    /// 注意：本函数在匿名 namespace 内，MeshFileCacheKey 属于 keship ⇒ 必须限定
+    return Sha1Hex(keship::MeshFileCacheKey(_srcPath) + "|gzmap1").substr(0, 8);
+  }
+
+  /// ★ 2026-09-25 性能修复（④）：写 sidecar（供下次**免解析**命中缓存）。
+  /// 内容两行：keyInput 原文 + 纹理绝对路径（无纹理则写空行）。
+  /// ⚠ 两个调用点的时序要求**不同**，见各自位置注释：
+  ///   · 缓存**命中**分支：必须补写 —— 否则本次改动前生成的老缓存永远没有 sidecar，
+  ///     快速路径永不生效（命中分支在写盘之前就 return 了）；
+  ///   · 缓存**生成**分支：必须在 CleanupOldCaches **之后**调用，否则被清理规则删掉。
+  void WriteCacheSidecar(const std::string &_cacheDir, const std::string &_srcName,
+                         const std::string &_srcPath,
+                         const std::string &_keyInput, const std::string &_texAbs)
+  {
+    std::ofstream kf(_cacheDir + NormalizeCacheName(_srcName) + "_"
+                     + SourceKey8(_srcPath) + ".key");
+    if (kf.is_open())
+      kf << _keyInput << "\n" << _texAbs << "\n";
+  }
+
   /// 将标准系网格写为"无变换"OBJ（顶点原样输出，不引入坐标变换）
   bool WriteNormalizedObj(const std::string &_objPath,
                           const std::string &_mtlBase,
@@ -504,6 +530,46 @@ std::string MeshFileCacheKey(const std::string &_filePath)
 }
 
 /////////////////////////////////////////////////
+bool LoadNormalizedObjVertices(const std::string &_objPath,
+                               std::vector<gz::math::Vector3d> &_out)
+{
+  _out.clear();
+  if (_objPath.empty())
+    return false;
+
+  std::ifstream f(_objPath);
+  if (!f.is_open())
+  {
+    std::cerr << "MeshUtils: 无法打开规范化 OBJ " << _objPath << std::endl;
+    return false;
+  }
+
+  /// 只认顶点行 "v x y z"。规范化 OBJ 由 WriteNormalizedObj 生成，格式固定；
+  /// 其它行（vt / vn / f / o / usemtl / mtllib / #）一律跳过。
+  /// 用 strtod 而非 istringstream：wamv 有 230 万行，istringstream 的构造/析构
+  /// 开销会让"流式"失去意义。
+  std::string line;
+  line.reserve(160);
+  while (std::getline(f, line))
+  {
+    if (line.size() < 5 || line[0] != 'v' || (line[1] != ' ' && line[1] != '\t'))
+      continue;
+    const char *p = line.c_str() + 1;
+    char *end = nullptr;
+    const double x = std::strtod(p, &end);
+    if (end == p) continue;
+    p = end;
+    const double y = std::strtod(p, &end);
+    if (end == p) continue;
+    p = end;
+    const double z = std::strtod(p, &end);
+    if (end == p) continue;
+    _out.emplace_back(x, y, z);
+  }
+  return !_out.empty();
+}
+
+/////////////////////////////////////////////////
 std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
 {
   if (_srcPath.empty())
@@ -520,6 +586,61 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     std::error_code ec;
     if (std::filesystem::exists(_srcPath, ec))
       return _srcPath;
+  }
+
+  /// ★★★ 2026-09-25 性能修复（④）：**缓存命中判定前置（sidecar 快速路径）**。
+  ///
+  /// 原顺序是「LoadMeshFromFile（全量解析）→ 用解析出的纹理路径算 key
+  /// → 才检查缓存」⇒ **"命中缓存"只省了写盘，没省解析**（实测 wamv 125MB
+  /// 每次调用仍花 3.8s 解析）；而船的 base SDF 有 visual+collision 两个 `<uri>`，
+  /// 单次加载要付两次这个代价（③ 已把两次并成一次）。
+  ///
+  /// 修法：把"算 key 所需输入"落盘成 sidecar（`<stem>_<srcKey8>.key`，两行：
+  ///   第 1 行 = 当时的 keyInput 原文；第 2 行 = 纹理绝对路径 texAbs）。
+  /// 命中判定只需 **读这个小文件 + stat**，无需解析网格：
+  ///   keyInput' = MeshFileCacheKey(源) + "|gzmap1" [+ "|" + MeshFileCacheKey(texAbs)]
+  /// 再校验 `<stem>_<sha1(keyInput')[0..8]>.obj/.mtl` 存在。
+  ///
+  /// ⚠ **失效语义与原来严格一致**（本修法的关键）：
+  ///   · 源文件变化     → MeshFileCacheKey(源) 变     ⇒ keyInput' 变 ⇒ 未命中；
+  ///   · **纹理文件变化** → MeshFileCacheKey(texAbs) 变 ⇒ 同上 ⇒ 未命中并重建；
+  ///   · 纹理被删       → FileStamp 返回 "0"          ⇒ 同样未命中 ⇒ 走原逻辑降级纯色。
+  /// 因此 sidecar **不能只存 keyInput** —— 必须同时存 texAbs，才能重算纹理 stamp。
+  {
+    std::error_code ec;
+    const std::string srcStem = NormalizeCacheName(
+        std::filesystem::path(_srcPath).stem().string());
+    const std::string cdir =
+        std::filesystem::path(_srcPath).parent_path().string() + "/normalized/";
+    const std::string keyFile =
+        cdir + srcStem + "_" + SourceKey8(_srcPath) + ".key";
+    if (std::filesystem::exists(keyFile, ec))
+    {
+      std::ifstream kf(keyFile);
+      if (kf.is_open())
+      {
+        std::string keyInputStored, texAbsStored;
+        std::getline(kf, keyInputStored);
+        std::getline(kf, texAbsStored);
+        if (!keyInputStored.empty())
+        {
+          /// 用 sidecar 里的纹理路径**重算** keyInput（与写盘时同一公式）
+          std::string keyInputNow = MeshFileCacheKey(_srcPath) + "|gzmap1";
+          if (!texAbsStored.empty())
+            keyInputNow += "|" + MeshFileCacheKey(texAbsStored);
+          const std::string k8 = Sha1Hex(keyInputNow).substr(0, 8);
+          const std::string objHit = cdir + srcStem + "_" + k8 + ".obj";
+          const std::string mtlHit = cdir + srcStem + "_" + k8 + ".mtl";
+          if (std::filesystem::exists(objHit, ec) &&
+              std::filesystem::exists(mtlHit, ec))
+          {
+            std::cout << "MeshUtils: 命中规范化缓存（sidecar 快速路径）"
+                      << objHit << std::endl;
+            return objHit;
+          }
+        }
+      }
+    }
   }
 
   MeshDataSimple mesh = LoadMeshFromFile(_srcPath);
@@ -584,6 +705,11 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
         && std::filesystem::exists(mtlPath, ec))
     {
       std::cout << "MeshUtils: 命中规范化缓存 " << objPath << std::endl;
+      /// ★ 2026-09-25（④）：**命中分支也要补写 sidecar**。
+      /// 老缓存（本次改动前生成的）没有 sidecar；若只在本函数末尾的"生成"分支写，
+      /// 那么命中路径永远走不到那里 ⇒ 快速路径永不生效（探针实测过这个缺陷）。
+      /// 这里没有清理风险（不经过 CleanupOldCaches）。
+      WriteCacheSidecar(cacheDir, srcName, _srcPath, keyInput, texAbs);
       return objPath;
     }
   }
@@ -642,6 +768,10 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
 
   /// 6. 清理陈旧缓存（同一源模型的旧 key 文件）
   CleanupOldCaches(cacheDir, NormalizeCacheName(srcName) + "_", base);
+
+  /// 6b. ★ 2026-09-25（④）：写 sidecar，供下次**免解析**命中。
+  /// ⚠ 必须放在 CleanupOldCaches **之后**（清理规则会删掉不匹配 `<base>_*` 的文件）。
+  WriteCacheSidecar(cacheDir, srcName, _srcPath, keyInput, texAbs);
 
   std::cout << "MeshUtils: 规范化缓存已生成 " << objPath << " ("
             << mesh.vertices.size() << " 顶点, "
