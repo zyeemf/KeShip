@@ -3123,6 +3123,26 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-09-25 性能修复（①）：**Camera 传感器规格集中定义在此**（唯一生成点）。
+///
+/// 背景（取证见 doc/audit/model_loading_performance_2026-09-25.md）：
+///   每个模型一路 Camera 会按 `update_rate` **逐帧渲染**（headless 下走软件渲染），
+///   实测**单路约占 0.72~0.75 倍实时预算**：
+///     · 无头 4 路 → 实时率 0.258（把 Camera 行删掉 → 1.146）
+///     · GUI  2 路 → real time factor 0.40（同场景 nocam → 0.99）
+///   成本 ∝ 像素数 × 帧率，原规格 640×480 @ 30 Hz 是"多模型就卡"的**唯一主因**。
+///
+/// 现值 320×240 @ 10 Hz ⇒ 成本约为原来的 **1/12**（4 路 ≈ 0.25 倍预算，实时率回到 ~1.0）。
+///
+/// ⚠ **扩展点**（张老师 2026-09-25 拍板"以后可加用户自选分辨率"）：
+///   将来把下面三个常量换成 `SensorConfig` 的字段（并在传感器编辑对话框暴露）即可。
+///   **本函数必须保持为 Camera SDF 的唯一生成点** —— 不要在别处另开一份拼装，
+///   那正是 09-24 审核里"多条平行 spawn 路径各自实现 ⇒ 漏补成常态"的老毛病。
+static constexpr int    kCameraWidth      = 320;    ///< 图像宽（px）
+static constexpr int    kCameraHeight     = 240;    ///< 图像高（px）
+static constexpr double kCameraUpdateRate = 10.0;   ///< 渲染/发布频率（Hz）
+
 std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
                                          const std::string &_modelName,
                                          const std::string &_worldName)
@@ -3171,12 +3191,15 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
       break;
 
     case SensorType::Camera:
+      /// 规格见文件上方 kCamera* 常量（2026-09-25 性能修复 ①：
+      /// 640×480@30 → 320×240@10，成本约降至 1/12）
       sdf << "      <sensor name=\"" << inst.name << "\" type=\"camera\">\n"
           << "        <topic>" << sensorPath + "/image" << "</topic>\n"
-          << "        <update_rate>30</update_rate>\n"
+          << "        <update_rate>" << kCameraUpdateRate << "</update_rate>\n"
           << "        <camera>\n"
           << "          <horizontal_fov>1.047</horizontal_fov>\n"
-          << "          <image><width>640</width><height>480</height></image>\n"
+          << "          <image><width>" << kCameraWidth << "</width><height>"
+          << kCameraHeight << "</height></image>\n"
           << "          <clip><near>0.1</near><far>100</far></clip>\n"
           << "        </camera>\n"
           << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
