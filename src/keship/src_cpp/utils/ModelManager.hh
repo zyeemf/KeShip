@@ -101,12 +101,77 @@ namespace keship
     return SensorType::IMU; // fallback
   }
 
+  ///////////////////////////////////////////////////////////////////////////////
+  /// ★ 2026-09-26「Camera 规格用户自选」（张老师 2026-09-25 拍板"以后可加"）
+  ///
+  /// 背景：Camera 是唯一"逐帧渲染"的传感器，成本 ∝ 像素数 × 帧率，
+  ///   是"多模型就卡"的唯一主因（见 doc/audit/model_loading_performance_2026-09-25.md）。
+  ///   默认档已从 640×480@30 降到 320×240@10（成本约 1/12），
+  ///   本功能让用户按**实例**覆盖规格。
+  ///
+  /// ⚠ **硬性安全上限**：`像素 × 频率 ≤ 640×480×30`（= 修复前的"原规格"）
+  ///   ⇒ **不允许比改前更重**。
+  ///   `ClampCameraSpec()` 的夹紧顺序：① 分辨率向下吸附到档位 →
+  ///   ② 帧率夹到 [5,60] → ③ 超成本上限时**先降帧率**；若连 5 Hz 都撑不住则
+  ///   **逐档下调分辨率**（保帧率 = 保"流畅"）。
+  ///   ⚠ 取舍理由：验收实测发现"保分辨率只降帧率"会得到 1920×1080@4.4 Hz ——
+  ///     分辨率没降但图像流像幻灯片，比 1280×720@10 更不可用。
+  ///
+  /// ⚠ 与 250 Hz 步长的关系（2026-09-26 实测）：`update_rate` 是**仿真时间**频率，
+  ///   会被量化到步长整数倍；10 / 25 / 50 Hz 在 4 ms 步长下**整除**（25 / 10 / 5 步），
+  ///   而 30 Hz 不整除（8.33 步）⇒ 实测抖动 std 28.1 ms vs 7.6 ms。选档时优先整除值。
+  ///////////////////////////////////////////////////////////////////////////////
+  constexpr int    kCameraDefaultWidth  = 320;   ///< 默认图像宽（px）
+  constexpr int    kCameraDefaultHeight = 240;   ///< 默认图像高（px）
+  constexpr double kCameraDefaultRate   = 10.0;  ///< 默认帧率（Hz）
+  /// 帧率区间。**下限 5 Hz**：低于 5 Hz 的图像流对教学"像幻灯片"，不如降分辨率保流畅。
+  constexpr double kCameraMinRate       = 5.0;
+  constexpr double kCameraMaxRate       = 60.0;
+
+  /// 可选**分辨率档位**（GUI 下拉与夹紧吸附**共用同一份表**，避免两处不一致）。
+  /// 夹紧时"向下吸附"（取不超过请求值的最大档）。
+  constexpr int kCameraResolutionCount = 6;
+  constexpr int kCameraResolutions[kCameraResolutionCount][2] = {
+      {320, 240}, {480, 360}, {640, 480}, {960, 540}, {1280, 720}, {1920, 1080}};
+
+  /// 可选**帧率档位**。前 4 档在 250 Hz 步长（4 ms）下**整除**（50/25/10/5 步）；
+  /// 30 Hz 不整除（8.33 步 ⇒ 实测抖动 std 28.1 ms vs 7.6 ms），
+  /// 仅因"这是性能修复前的原规格"而保留，单模型时才建议用。
+  constexpr int kCameraRateCount = 5;
+  constexpr double kCameraRates[kCameraRateCount] = {5.0, 10.0, 25.0, 30.0, 50.0};
+  /// 成本参照 = 修复前的原规格（640×480@30）；`像素 × 频率` 不得超过它
+  constexpr int    kCameraCostRefWidth  = 640;
+  constexpr int    kCameraCostRefHeight = 480;
+  constexpr double kCameraCostRefRate   = 30.0;
+
+  /// Camera 实际生效规格
+  struct CameraSpec
+  {
+    int width  = kCameraDefaultWidth;
+    int height = kCameraDefaultHeight;
+    double rate = kCameraDefaultRate;
+  };
+
+  /// 把用户给的 Camera 规格夹到**安全且合法**的范围。
+  /// 0 / 负值 = "未指定" ⇒ 用默认档。
+  /// 超成本上限时**只降帧率**（向下取 1 位小数，不低于 kCameraMinRate）。
+  /// @param _outClamped 非空时写回"是否被夹紧过"（GUI 据此提示用户）
+  CameraSpec ClampCameraSpec(int _w, int _h, double _rate,
+                             bool *_outClamped = nullptr);
+
   /// 单个传感器实例配置
   struct SensorInstance
   {
     SensorType type = SensorType::Camera;
     std::string name;
     double pose[6] = {0, 0, 0, 0, 0, 0};  // x y z roll pitch yaw
+
+    /// ★ 2026-09-26「用户自选」：Camera 规格（仅 SensorType::Camera 有效）。
+    /// **0 = 未指定 ⇒ 用默认档**（kCameraDefault*），保持老数据/老 ksm 行为不变。
+    /// 实际生效值一律经 ClampCameraSpec() 夹紧。
+    int    camWidth  = 0;
+    int    camHeight = 0;
+    double camRate   = 0.0;
   };
 
   /// 传感器配置（GUI → ModelManager）

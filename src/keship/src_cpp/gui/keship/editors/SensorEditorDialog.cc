@@ -58,6 +58,26 @@ SensorEditorDialog::SensorEditorDialog(
   nameEdit_ = new QLineEdit;
   formLayout->addRow("名称:", nameEdit_);
 
+  /// ★ 2026-09-26「Camera 规格用户自选」：仅 Camera 类型时可见（updateCameraRows 控制）
+  /// 档位直接取自 ModelManager.hh 的表 ⇒ 与 ClampCameraSpec() 的吸附**同源**，
+  /// 不会出现"GUI 能选但夹紧会改"的不一致。
+  camResCombo_ = new QComboBox;
+  for (int i = 0; i < keship::kCameraResolutionCount; ++i)
+    camResCombo_->addItem(QString("%1×%2")
+        .arg(keship::kCameraResolutions[i][0])
+        .arg(keship::kCameraResolutions[i][1]));
+  formLayout->addRow("分辨率:", camResCombo_);
+
+  camRateCombo_ = new QComboBox;
+  for (int i = 0; i < keship::kCameraRateCount; ++i)
+    camRateCombo_->addItem(QString("%1 Hz").arg(keship::kCameraRates[i]));
+  formLayout->addRow("帧率:", camRateCombo_);
+
+  camCostLabel_ = new QLabel;
+  formLayout->addRow("预计成本:", camCostLabel_);
+
+  formLayout_ = formLayout;
+
   const char *poseLabels[] = {"X:", "Y:", "Z:", "Roll:", "Pitch:", "Yaw:"};
   const char *poseSuffix[] = {" m", " m", " m", "°", "°", "°"};
   for (int i = 0; i < 6; i++)
@@ -111,6 +131,70 @@ SensorEditorDialog::SensorEditorDialog(
   for (int i = 0; i < 6; i++)
     connect(poseSpin_[i], QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &SensorEditorDialog::onParamChanged);
+
+  /// ★ 2026-09-26：规格变化 → 重算"预计成本"
+  connect(camResCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) { onCameraSpecChanged(); });
+  connect(camRateCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+          this, [this](int) { onCameraSpecChanged(); });
+  updateCameraRows();   /// 初始无选中 ⇒ 隐藏
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-09-26「Camera 规格用户自选」：规格三行只在选中 **Camera** 时出现。
+/// QFormLayout 的行标题（label）要单独取出来一起隐藏，否则会留下孤零零的"分辨率:"。
+void SensorEditorDialog::updateCameraRows()
+{
+  const bool isCam = (selectedIdx_ >= 0 && selectedIdx_ < (int)config_.size()
+                      && config_[selectedIdx_].type == keship::SensorType::Camera);
+  camResCombo_->setVisible(isCam);
+  camRateCombo_->setVisible(isCam);
+  camCostLabel_->setVisible(isCam);
+  if (formLayout_)
+  {
+    for (QWidget *w : {static_cast<QWidget *>(camResCombo_),
+                       static_cast<QWidget *>(camRateCombo_),
+                       static_cast<QWidget *>(camCostLabel_)})
+      if (auto *lbl = formLayout_->labelForField(w))
+        lbl->setVisible(isCam);
+  }
+  if (isCam)
+    onCameraSpecChanged();
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+/// 重算并显示"预计成本"：`×N` 相对默认档（320×240@10）。
+/// ⚠ 显示的是 `ClampCameraSpec()` 夹紧后的**实际生效值** —— 若被夹紧，
+///   直接回显"实际生效 WxH @R Hz"，用户立刻知道自己的选择会被改成什么。
+void SensorEditorDialog::onCameraSpecChanged()
+{
+  if (!camResCombo_ || !camRateCombo_ || !camCostLabel_)
+    return;
+  const int ri = std::max(0, camResCombo_->currentIndex());
+  const int fi = std::max(0, camRateCombo_->currentIndex());
+  if (ri >= keship::kCameraResolutionCount || fi >= keship::kCameraRateCount)
+    return;
+
+  const int reqW = keship::kCameraResolutions[ri][0];
+  const int reqH = keship::kCameraResolutions[ri][1];
+  const double reqR = keship::kCameraRates[fi];
+
+  bool clamped = false;
+  const keship::CameraSpec spec =
+      keship::ClampCameraSpec(reqW, reqH, reqR, &clamped);
+
+  const double base = double(keship::kCameraDefaultWidth)
+                    * keship::kCameraDefaultHeight * keship::kCameraDefaultRate;
+  const double ratio = double(spec.width) * spec.height * spec.rate / base;
+
+  QString txt = QString("×%1（默认 ×1.0）").arg(ratio, 0, 'f', 2);
+  if (clamped)
+    txt = QString("×%1 ⚠ 已夹紧 → 实际 %2×%3 @ %4 Hz")
+              .arg(ratio, 0, 'f', 2).arg(spec.width).arg(spec.height)
+              .arg(spec.rate, 0, 'f', 1);
+  camCostLabel_->setText(txt);
+  /// 成本越高越慢（每路相机约 0.06×ratio 倍实时预算）⇒ 高成本用红字提示
+  camCostLabel_->setStyleSheet(ratio > 2.0 ? "color:#c62828;" : "");
 }
 
 //////////////////////////////////////////////////////////////////////////////////
@@ -221,6 +305,22 @@ void SensorEditorDialog::onSelectionChanged()
     poseSpin_[i]->setEnabled(true);
   }
   saveBtn_->setEnabled(true);
+
+  /// ★ 2026-09-26：填充 Camera 规格（0 = 未指定 ⇒ 定位到默认档）
+  {
+    bool cl = false;
+    const keship::CameraSpec sp = keship::ClampCameraSpec(
+        inst.camWidth, inst.camHeight, inst.camRate, &cl);
+    for (int i = 0; i < keship::kCameraResolutionCount; ++i)
+      if (keship::kCameraResolutions[i][0] == sp.width &&
+          keship::kCameraResolutions[i][1] == sp.height)
+        camResCombo_->setCurrentIndex(i);
+    for (int i = 0; i < keship::kCameraRateCount; ++i)
+      if (std::fabs(keship::kCameraRates[i] - sp.rate) < 1e-9)
+        camRateCombo_->setCurrentIndex(i);
+  }
+  updateCameraRows();
+
   rightPanel_->show();
   if (view3d_) view3d_->setSelectedSensorIdx(selectedIdx_);
   isLoading_ = false;
@@ -264,6 +364,21 @@ bool SensorEditorDialog::onSaveInstance()
   inst.name = newName;
   for (int i = 0; i < 6; i++)
     inst.pose[i] = poseSpin_[i]->value();
+
+  /// ★ 2026-09-26：收集 Camera 规格（写**夹紧后的实际生效值**，
+  ///   与 SDF 生成 / ksm 序列化用的是同一个 ClampCameraSpec ⇒ 三处必然一致）
+  if (inst.type == keship::SensorType::Camera &&
+      camResCombo_ && camRateCombo_)
+  {
+    const int ri = std::max(0, camResCombo_->currentIndex());
+    const int fi = std::max(0, camRateCombo_->currentIndex());
+    const keship::CameraSpec sp = keship::ClampCameraSpec(
+        keship::kCameraResolutions[ri][0], keship::kCameraResolutions[ri][1],
+        keship::kCameraRates[fi]);
+    inst.camWidth  = sp.width;
+    inst.camHeight = sp.height;
+    inst.camRate   = sp.rate;
+  }
   int savedIdx = selectedIdx_;
   updateList();
   listWidget_->setCurrentRow(savedIdx);
@@ -312,6 +427,7 @@ void SensorEditorDialog::updateParamPanel()
   saveBtn_->setEnabled(valid);
   for (int i = 0; i < 6; i++)
     poseSpin_[i]->setEnabled(valid);
+  updateCameraRows();   /// ★ 2026-09-26：无选中/非 Camera 时隐藏规格三行
   rightPanel_->setVisible(valid);
 }
 
@@ -363,6 +479,10 @@ keship::SensorConfig SensorEditorDialog::getConfig() const
     inst.pose[3] = s.pose[3] * M_PI / 180.0;  // deg → rad
     inst.pose[4] = s.pose[4] * M_PI / 180.0;
     inst.pose[5] = s.pose[5] * M_PI / 180.0;
+    /// ★ 2026-09-26「Camera 规格用户自选」
+    inst.camWidth  = s.camWidth;
+    inst.camHeight = s.camHeight;
+    inst.camRate   = s.camRate;
     cfg.instances.push_back(inst);
   }
   return cfg;
@@ -384,6 +504,10 @@ void SensorEditorDialog::setConfig(const keship::SensorConfig &_config)
     s.pose[3] = inst.pose[3] * 180.0 / M_PI;  // rad → deg
     s.pose[4] = inst.pose[4] * 180.0 / M_PI;
     s.pose[5] = inst.pose[5] * 180.0 / M_PI;
+    /// ★ 2026-09-26「Camera 规格用户自选」（0 = 未指定 ⇒ 默认档）
+    s.camWidth  = inst.camWidth;
+    s.camHeight = inst.camHeight;
+    s.camRate   = inst.camRate;
     config_.push_back(s);
   }
   selectedIdx_ = -1;

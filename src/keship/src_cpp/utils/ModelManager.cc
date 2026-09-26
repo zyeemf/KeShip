@@ -3139,9 +3139,64 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
 ///   将来把下面三个常量换成 `SensorConfig` 的字段（并在传感器编辑对话框暴露）即可。
 ///   **本函数必须保持为 Camera SDF 的唯一生成点** —— 不要在别处另开一份拼装，
 ///   那正是 09-24 审核里"多条平行 spawn 路径各自实现 ⇒ 漏补成常态"的老毛病。
-static constexpr int    kCameraWidth      = 320;    ///< 图像宽（px）
-static constexpr int    kCameraHeight     = 240;    ///< 图像高（px）
-static constexpr double kCameraUpdateRate = 10.0;   ///< 渲染/发布频率（Hz）
+/// ⚠ 2026-09-26 起：默认档与合法区间已上移到 ModelManager.hh
+///   （`kCameraDefault*` / `kCameraMin*` / `kCameraCostRef*`），
+///   因为「用户自选」需要在**每个实例**上覆盖规格，默认值成为公共契约。
+///   本函数仍是 Camera SDF 的**唯一生成点**。
+///
+/// ⚠ 必须包在 `namespace keship` 里：本文件顶部只有 `using namespace keship;`，
+///   文件其余部分是**全局作用域**，而声明在 keship 内 ⇒ 不包会链接期 undefined。
+namespace keship
+{
+CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
+{
+  CameraSpec s;
+  /// 0 / 负值 ⇒ "未指定"，用默认档
+  s.width  = (_w > 0)     ? _w    : kCameraDefaultWidth;
+  s.height = (_h > 0)     ? _h    : kCameraDefaultHeight;
+  s.rate   = (_rate > 0.0) ? _rate : kCameraDefaultRate;
+
+  const CameraSpec requested = s;   ///< 夹紧前的用户诉求（判定"是否被改过"）
+
+  /// 1. 分辨率**向下吸附**到档位表（取"不超过请求值"的最大档；
+  ///    比最小档还小则用最小档）—— 吸附后结果"整"，且与 GUI 下拉同源。
+  int idx = 0;
+  for (int i = 0; i < kCameraResolutionCount; ++i)
+    if (kCameraResolutions[i][0] <= s.width && kCameraResolutions[i][1] <= s.height)
+      idx = i;
+  s.width  = kCameraResolutions[idx][0];
+  s.height = kCameraResolutions[idx][1];
+
+  /// 2. 帧率夹到 [5, 60]
+  s.rate = std::clamp(s.rate, kCameraMinRate, kCameraMaxRate);
+
+  /// 3. 成本上限：`像素 × 频率 ≤ 640×480×30`（= 性能修复前的原规格）
+  ///    ⇒ "不允许比改前更重"。超限时**先降帧率**；若连 5 Hz 都撑不住，
+  ///    则**逐档下调分辨率**（保帧率 = 保"流畅"）。
+  ///    ⚠ 取舍理由：验收实测发现"保分辨率只降帧率"会得到 1920×1080@4.4 Hz
+  ///      —— 分辨率没降但图像流像幻灯片，比 1280×720@10 更不可用。
+  const double budget = double(kCameraCostRefWidth)
+                      * double(kCameraCostRefHeight) * kCameraCostRefRate;
+  while (true)
+  {
+    double maxRate = budget / (double(s.width) * double(s.height));
+    maxRate = std::floor(maxRate * 2.0) / 2.0;   /// 向下取到 0.5 的倍数
+    if (maxRate >= kCameraMinRate || idx == 0)
+    {
+      s.rate = std::min(s.rate, std::max(kCameraMinRate, maxRate));
+      break;
+    }
+    --idx;                                        /// 该档撑不住 5 Hz ⇒ 降到下一档
+    s.width  = kCameraResolutions[idx][0];
+    s.height = kCameraResolutions[idx][1];
+  }
+
+  if (_outClamped)
+    *_outClamped = (s.width != requested.width || s.height != requested.height ||
+                    s.rate  != requested.rate);
+  return s;
+}
+}  // namespace keship
 
 std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
                                          const std::string &_modelName,
@@ -3191,21 +3246,25 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
       break;
 
     case SensorType::Camera:
-      /// 规格见文件上方 kCamera* 常量（2026-09-25 性能修复 ①：
-      /// 640×480@30 → 320×240@10，成本约降至 1/12）
+    {
+      /// ★ 2026-09-26「用户自选」：规格来自**实例**（0 = 用默认档 320×240@10），
+      /// 并统一经 ClampCameraSpec() 夹紧（含"不得比原规格 640×480@30 更重"的上限）。
+      const CameraSpec camSpec = ClampCameraSpec(inst.camWidth, inst.camHeight,
+                                                 inst.camRate);
       sdf << "      <sensor name=\"" << inst.name << "\" type=\"camera\">\n"
           << "        <topic>" << sensorPath + "/image" << "</topic>\n"
-          << "        <update_rate>" << kCameraUpdateRate << "</update_rate>\n"
+          << "        <update_rate>" << camSpec.rate << "</update_rate>\n"
           << "        <camera>\n"
           << "          <horizontal_fov>1.047</horizontal_fov>\n"
-          << "          <image><width>" << kCameraWidth << "</width><height>"
-          << kCameraHeight << "</height></image>\n"
+          << "          <image><width>" << camSpec.width << "</width><height>"
+          << camSpec.height << "</height></image>\n"
           << "          <clip><near>0.1</near><far>100</far></clip>\n"
           << "        </camera>\n"
           << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
           << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
+    }
 
     case SensorType::Lidar:
       sdf << "      <sensor name=\"" << inst.name << "\" type=\"gpu_lidar\">\n"
@@ -3783,7 +3842,19 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
     {
       ofs << "instance=" << sensorTypeName(inst.type) << "," << inst.name << ","
           << inst.pose[0] << "," << inst.pose[1] << "," << inst.pose[2] << ","
-          << inst.pose[3] << "," << inst.pose[4] << "," << inst.pose[5] << "\n";
+          << inst.pose[3] << "," << inst.pose[4] << "," << inst.pose[5];
+      /// ★ 2026-09-26「Camera 规格用户自选」：**非默认档**才追加 `,宽,高,帧率`。
+      /// 默认档保持 8 字段 ⇒ 与老格式逐字一致（老工具/老资产零影响）。
+      /// 写的是 `ClampCameraSpec()` 夹紧后的**实际生效值**，不是原始输入。
+      if (inst.type == SensorType::Camera)
+      {
+        const CameraSpec cs = ClampCameraSpec(inst.camWidth, inst.camHeight, inst.camRate);
+        /// 只有**与默认档不同**才追加 ⇒ GUI 存具体值（320/240/10）时也不会多出冗余字段
+        if (cs.width != kCameraDefaultWidth || cs.height != kCameraDefaultHeight ||
+            cs.rate != kCameraDefaultRate)
+          ofs << "," << cs.width << "," << cs.height << "," << cs.rate;
+      }
+      ofs << "\n";
     }
     ofs << "===END===\n\n";
   }
@@ -4369,6 +4440,15 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
           inst.pose[0]=std::stod(parts[2]); inst.pose[1]=std::stod(parts[3]);
           inst.pose[2]=std::stod(parts[4]); inst.pose[3]=std::stod(parts[5]);
           inst.pose[4]=std::stod(parts[6]); inst.pose[5]=std::stod(parts[7]);
+          /// ★ 2026-09-26「Camera 规格用户自选」：**可选**追加 3 个字段
+          ///   `,<宽>,<高>,<帧率>`。老 ksm 只有 8 个字段 ⇒ 走默认档（0 = 未指定）
+          ///   ⇒ **向后兼容**，老资产无需迁移。
+          if (parts.size() >= 11)
+          {
+            inst.camWidth  = std::stoi(parts[8]);
+            inst.camHeight = std::stoi(parts[9]);
+            inst.camRate   = std::stod(parts[10]);
+          }
           _sensorCfg.instances.push_back(inst);
         }
       }
