@@ -1244,7 +1244,15 @@ R"(keship_ctl — KeShip 无头指令入口
   help             本帮助
 
 世界:
-  world status                     世界状态（模型数 / 暂停 / 仿真时间）
+  world status                     世界状态（模型数 / 暂停 / 仿真时间 / real_time_factor）
+                                   ⚠ real_time_factor **仅供参考，不作判据**：
+                                     · 它是短窗滚动平均，受加载瞬态影响 —— 实测出现过 1.015 的
+                                       跳变，以及 0.039 与实测 30.058 Hz 明显不自洽；
+                                     · 语义上 **RTF 低只是"慢"，不是"错"** —— 仿真按固定步长推进，
+                                       RTF 不参与物理计算、不影响结果正确性，且可靠更强机器改善；
+                                     · ⇒ **只可用于多档性能对比**（谁比谁快），
+                                       不得用于判定正确性/达标，更**不得据此去改用户的设定**
+                                       （见 doc/plans/model_loading_perf_fix_plan.md §12.4）。
   world pause | world resume       暂停 / 恢复
   world load-ksw <dir> [--ns <名>[/<子>]] [--offset "x y z r p y"] [--no-water]
                                    ★ 加载 .ksw 世界（与 GUI「载入世界」同源：
