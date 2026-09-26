@@ -189,12 +189,15 @@ void SensorEditorDialog::onCameraSpecChanged()
 
   QString txt = QString("×%1（默认 ×1.0）").arg(ratio, 0, 'f', 2);
   if (clamped)
-    txt = QString("×%1 ⚠ 已夹紧 → 实际 %2×%3 @ %4 Hz")
+    txt = QString("×%1 ⚠ 已按合法区间修正 → %2×%3 @ %4 Hz")
               .arg(ratio, 0, 'f', 2).arg(spec.width).arg(spec.height)
               .arg(spec.rate, 0, 'f', 1);
+  /// ★ 2026-09-26：成本**只提示、不干预**（张老师纠正：仿真应保住用户设定）。
+  /// 说清"影响的是什么、不影响什么"，避免用户以为会算错。
+  if (ratio > 2.0)
+    txt += QString("　⚠ 多模型时实时率(RTF)会下降 —— 只影响出结果的快慢，**不影响仿真结果**");
   camCostLabel_->setText(txt);
-  /// 成本越高越慢（每路相机约 0.06×ratio 倍实时预算）⇒ 高成本用红字提示
-  camCostLabel_->setStyleSheet(ratio > 2.0 ? "color:#c62828;" : "");
+  camCostLabel_->setStyleSheet(ratio > 2.0 ? "color:#ef6c00;" : "");
 }
 
 //////////////////////////////////////////////////////////////////////////////////

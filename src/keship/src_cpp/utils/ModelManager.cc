@@ -3158,38 +3158,19 @@ CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
 
   const CameraSpec requested = s;   ///< 夹紧前的用户诉求（判定"是否被改过"）
 
-  /// 1. 分辨率**向下吸附**到档位表（取"不超过请求值"的最大档；
-  ///    比最小档还小则用最小档）—— 吸附后结果"整"，且与 GUI 下拉同源。
-  int idx = 0;
-  for (int i = 0; i < kCameraResolutionCount; ++i)
-    if (kCameraResolutions[i][0] <= s.width && kCameraResolutions[i][1] <= s.height)
-      idx = i;
-  s.width  = kCameraResolutions[idx][0];
-  s.height = kCameraResolutions[idx][1];
-
-  /// 2. 帧率夹到 [5, 60]
-  s.rate = std::clamp(s.rate, kCameraMinRate, kCameraMaxRate);
-
-  /// 3. 成本上限：`像素 × 频率 ≤ 640×480×30`（= 性能修复前的原规格）
-  ///    ⇒ "不允许比改前更重"。超限时**先降帧率**；若连 5 Hz 都撑不住，
-  ///    则**逐档下调分辨率**（保帧率 = 保"流畅"）。
-  ///    ⚠ 取舍理由：验收实测发现"保分辨率只降帧率"会得到 1920×1080@4.4 Hz
-  ///      —— 分辨率没降但图像流像幻灯片，比 1280×720@10 更不可用。
-  const double budget = double(kCameraCostRefWidth)
-                      * double(kCameraCostRefHeight) * kCameraCostRefRate;
-  while (true)
-  {
-    double maxRate = budget / (double(s.width) * double(s.height));
-    maxRate = std::floor(maxRate * 2.0) / 2.0;   /// 向下取到 0.5 的倍数
-    if (maxRate >= kCameraMinRate || idx == 0)
-    {
-      s.rate = std::min(s.rate, std::max(kCameraMinRate, maxRate));
-      break;
-    }
-    --idx;                                        /// 该档撑不住 5 Hz ⇒ 降到下一档
-    s.width  = kCameraResolutions[idx][0];
-    s.height = kCameraResolutions[idx][1];
-  }
+  /// ★ 只做**物理合法性**夹紧：防手滑输入 0 / 负数 / 荒谬值把 gz 打死。
+  ///   **不吸附档位、不因"成本"降级** —— 按用户设定原样执行。
+  ///
+  /// ⚠ 2026-09-26 张老师纠正（**已采纳**）：这是**仿真**软件，Camera 是**纯传感器**，
+  ///   `update_rate` / 分辨率**不参与物理计算** ⇒ RTF 低只是**慢**、**不影响正确性**，
+  ///   且可靠更强的机器改善。**拿用户的设定换 RTF 是错的**（还悄悄改了设定）。
+  ///   ⇒ 代价只在 GUI 里**提示**（"预计成本 ×N"），不在这里干预。
+  ///
+  /// ⚠ 仍**建议**（不强制）`update_rate` 取 250 Hz 步长的整除值（5/10/25/50 Hz）：
+  ///   非整除值实测帧间隔抖动更大（30 Hz → std 28.1 ms vs 10 Hz → 7.6 ms）。
+  s.width  = std::clamp(s.width,  kCameraMinWidth,  kCameraMaxWidth);
+  s.height = std::clamp(s.height, kCameraMinHeight, kCameraMaxHeight);
+  s.rate   = std::clamp(s.rate,   kCameraMinRate,   kCameraMaxRate);
 
   if (_outClamped)
     *_outClamped = (s.width != requested.width || s.height != requested.height ||

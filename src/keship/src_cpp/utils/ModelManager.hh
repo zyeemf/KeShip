@@ -109,13 +109,15 @@ namespace keship
   ///   默认档已从 640×480@30 降到 320×240@10（成本约 1/12），
   ///   本功能让用户按**实例**覆盖规格。
   ///
-  /// ⚠ **硬性安全上限**：`像素 × 频率 ≤ 640×480×30`（= 修复前的"原规格"）
-  ///   ⇒ **不允许比改前更重**。
-  ///   `ClampCameraSpec()` 的夹紧顺序：① 分辨率向下吸附到档位 →
-  ///   ② 帧率夹到 [5,60] → ③ 超成本上限时**先降帧率**；若连 5 Hz 都撑不住则
-  ///   **逐档下调分辨率**（保帧率 = 保"流畅"）。
-  ///   ⚠ 取舍理由：验收实测发现"保分辨率只降帧率"会得到 1920×1080@4.4 Hz ——
-  ///     分辨率没降但图像流像幻灯片，比 1280×720@10 更不可用。
+  /// ★★ **不做任何"为了性能而改用户设定"的取舍**（2026-09-26 张老师纠正，已采纳）。
+  ///
+  /// 理由：这是**仿真**软件 —— Camera 是**纯传感器**，`update_rate` 与分辨率
+  ///   **不参与物理计算**，只影响"墙钟上多久出结果"。
+  ///   **RTF 低只是"慢"，不是"错"**（仿真按固定步长推进，结果不变），
+  ///   而且可以靠更强的机器改善。
+  ///   ⇒ 原先的"成本上限 + 降级（保帧率降分辨率）"是**拿用户的设定换 RTF**，
+  ///     而 RTF 并不是需要保护的指标；更糟的是它**悄悄改了用户的设定**。
+  ///   ⇒ 现在：**按用户设定原样执行**，代价只在 GUI 里**提示**、不干预。
   ///
   /// ⚠ 与 250 Hz 步长的关系（2026-09-26 实测）：`update_rate` 是**仿真时间**频率，
   ///   会被量化到步长整数倍；10 / 25 / 50 Hz 在 4 ms 步长下**整除**（25 / 10 / 5 步），
@@ -124,25 +126,26 @@ namespace keship
   constexpr int    kCameraDefaultWidth  = 320;   ///< 默认图像宽（px）
   constexpr int    kCameraDefaultHeight = 240;   ///< 默认图像高（px）
   constexpr double kCameraDefaultRate   = 10.0;  ///< 默认帧率（Hz）
-  /// 帧率区间。**下限 5 Hz**：低于 5 Hz 的图像流对教学"像幻灯片"，不如降分辨率保流畅。
-  constexpr double kCameraMinRate       = 5.0;
-  constexpr double kCameraMaxRate       = 60.0;
 
-  /// 可选**分辨率档位**（GUI 下拉与夹紧吸附**共用同一份表**，避免两处不一致）。
-  /// 夹紧时"向下吸附"（取不超过请求值的最大档）。
+  /// ⚠ 下面这些是**物理合法性区间**（只为防手滑输入 0 / 负数 / 荒谬值导致崩溃），
+  ///   **不是性能取舍** —— 见本段开头的说明。取值只夹到区间，**不改用户的比例/意图**。
+  constexpr int    kCameraMinWidth  = 16;
+  constexpr int    kCameraMaxWidth  = 7680;    ///< 8K 宽
+  constexpr int    kCameraMinHeight = 16;
+  constexpr int    kCameraMaxHeight = 4320;    ///< 8K 高
+  constexpr double kCameraMinRate   = 0.1;
+  constexpr double kCameraMaxRate   = 240.0;
+
+  /// **GUI 下拉预设**用的分辨率档（**仅作便捷预设，不再用于吸附**）。
   constexpr int kCameraResolutionCount = 6;
   constexpr int kCameraResolutions[kCameraResolutionCount][2] = {
       {320, 240}, {480, 360}, {640, 480}, {960, 540}, {1280, 720}, {1920, 1080}};
 
-  /// 可选**帧率档位**。前 4 档在 250 Hz 步长（4 ms）下**整除**（50/25/10/5 步）；
-  /// 30 Hz 不整除（8.33 步 ⇒ 实测抖动 std 28.1 ms vs 7.6 ms），
-  /// 仅因"这是性能修复前的原规格"而保留，单模型时才建议用。
-  constexpr int kCameraRateCount = 5;
-  constexpr double kCameraRates[kCameraRateCount] = {5.0, 10.0, 25.0, 30.0, 50.0};
-  /// 成本参照 = 修复前的原规格（640×480@30）；`像素 × 频率` 不得超过它
-  constexpr int    kCameraCostRefWidth  = 640;
-  constexpr int    kCameraCostRefHeight = 480;
-  constexpr double kCameraCostRefRate   = 30.0;
+  /// **GUI 下拉预设**用的帧率档。
+  /// ⚠ **建议**（不强制）取 250 Hz 步长的整除值（5/10/25/50 Hz = 50/25/10/5 步）——
+  ///   非整除值（30/60 Hz）实测帧间隔抖动更大（std 28.1 ms vs 7.6 ms）。
+  constexpr int kCameraRateCount = 6;
+  constexpr double kCameraRates[kCameraRateCount] = {5.0, 10.0, 25.0, 30.0, 50.0, 60.0};
 
   /// Camera 实际生效规格
   struct CameraSpec
@@ -152,10 +155,10 @@ namespace keship
     double rate = kCameraDefaultRate;
   };
 
-  /// 把用户给的 Camera 规格夹到**安全且合法**的范围。
+  /// 把用户给的 Camera 规格夹到**物理合法**的范围（**只做合法性校验**）。
   /// 0 / 负值 = "未指定" ⇒ 用默认档。
-  /// 超成本上限时**只降帧率**（向下取 1 位小数，不低于 kCameraMinRate）。
-  /// @param _outClamped 非空时写回"是否被夹紧过"（GUI 据此提示用户）
+  /// **不做任何性能取舍**（不吸附档位、不因"成本"降级）—— 见本段开头说明。
+  /// @param _outClamped 非空时写回"是否被夹紧过"（GUI 据此提示；正常情况下恒 false）
   CameraSpec ClampCameraSpec(int _w, int _h, double _rate,
                              bool *_outClamped = nullptr);
 
