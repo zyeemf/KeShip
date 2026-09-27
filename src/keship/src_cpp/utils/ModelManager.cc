@@ -1739,32 +1739,61 @@ bool ModelManager::GetModelPoseByName(const std::string &_instanceName, gz::msgs
   return false;
 }
 
+/// ★★ 2026-09-28 重写（张老师 2026-09-25 拍板「delete-all 应当删除所有模型、水域、子世界」）：
+///   **改为枚举活动场景**（`/world/<w>/scene/info`），不再遍历本进程的 `modelList`。
+///
+/// 动因（旧实现的两个缺陷）：
+///   ① `keship_ctl` 每次调用都是**新进程** ⇒ `modelList` 恒空
+///      ⇒ 旧实现**什么都不删，却 `return true`**（"假成功"，与 09-24 修的 P1-7 同族）；
+///   ② 旧实现无条件 `return true`，即使部分删除失败也报成功。
+///
+/// ⚠ **必须排除的三类实体**（否则会误删 world 基础设施）：
+///   · `sun` / `ground_plane` —— world 自带，删了会破坏渲染；
+///   · `waves_*` —— **水面视觉**，由水域机制（`WaterAreaVisualManager`）管理，
+///     由调用方在"清空水域"那一步统一删除（见 `MenuPluginKeship::OnBtn_DeleteAllModels`）。
 bool ModelManager::DeleteAllModelsInGazebo()
 {
-  // 先收集所有模型名（DeleteModelInGazeboByName 会 erase modelList 导致迭代器失效）
+  /// 取一帧场景（与 GetModelIDByInstanceNameFromGazebo 同一服务）
+  gz::msgs::Empty req;
+  gz::msgs::Scene scene;
+  bool result = false;
+  const std::string service = "/world/" + this->worldName + "/scene/info";
+  if (!this->node->Request(service, req, 2000, scene, result) || !result)
+  {
+    std::cerr << "DeleteAllModelsInGazebo: 取场景失败（" << service
+              << "）—— 仿真没在运行？" << std::endl;
+    return false;
+  }
+
+  /// 收集待删名单（排除 world 自带与水面视觉）
   std::vector<std::string> names;
-  names.reserve(this->modelList.size());
-  for (const auto &kv : this->modelList)
-    names.push_back(kv.first);
+  names.reserve(scene.model_size());
+  for (int i = 0; i < scene.model_size(); ++i)
+  {
+    const std::string &n = scene.model(i).name();
+    if (n == "sun" || n == "ground_plane") continue;   /// world 自带
+    if (n.rfind("waves_", 0) == 0) continue;           /// 水面视觉（由水域机制删）
+    names.push_back(n);
+  }
 
   bool allSuccess = true;
   for (const auto &name : names)
   {
     if (!this->DeleteModelInGazeboByName(name))
+    {
+      std::cerr << "DeleteAllModelsInGazebo: 删除失败 " << name << std::endl;
       allSuccess = false;
+    }
   }
 
-  if (allSuccess)
-  {
-    this->modelList.clear();
-    std::cout << "所有模型删除成功" << std::endl;
-  }
-  else
-  {
-    std::cout << "部分模型删除失败" << std::endl;
-  }
+  /// 场景已变 ⇒ 本进程缓存一律清空（不论成败）
+  this->modelList.clear();
 
-  return true;
+  std::cout << "DeleteAllModelsInGazebo: 共 " << names.size() << " 个模型，"
+            << (allSuccess ? "全部删除成功" : "**有删除失败**") << std::endl;
+
+  /// ★ 返回**真实**成败（旧实现恒 true ⇒ 上层无法感知失败）
+  return allSuccess;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////

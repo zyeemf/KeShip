@@ -1257,13 +1257,39 @@ void MenuPluginKeship::OnBtn_DeleteModelByIndex(int _index)
 
 void MenuPluginKeship::OnBtn_DeleteAllModels()
 {
-  std::cout << "TODO: keship删除所有模型" << std::endl;
   /// 删除操作二次确认：全部清场属高危操作
-  if (QMessageBox::question(nullptr, "删除所有模型",
-      "确定删除场景中的全部模型吗？\n（不影响水域与子世界结构）",
+  /// ⚠ 文案必须与实际行为一致 —— 2026-09-28 起本操作**会**删水域与子世界结构，
+  ///   旧文案写的是"不影响水域与子世界结构"（已失效）。
+  if (QMessageBox::question(nullptr, "清空场景",
+      "确定清空场景吗？将删除：\n"
+      "  · 全部模型\n"
+      "  · 全部水域（含其波浪/风/流参数与 3D 水面）\n"
+      "  · 子世界结构（模型/水域的来源链）\n"
+      "world 自带的太阳与地面不受影响。",
       QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
     return;
+
+  /// ★ 2026-09-28 新语义（张老师 2026-09-25 拍板）：
+  ///   「delete-all 应当删除所有模型、水域、子世界」
+  ///
+  /// ① **模型** —— `DeleteAllModelsInGazebo` 已改为**枚举活动场景**
+  ///    （旧实现只遍历本进程 modelList ⇒ 会漏删/假成功），
+  ///    并排除 world 自带实体 `sun` / `ground_plane` 与水面 `waves_*`
   this->modelManager->DeleteAllModelsInGazebo();
+
+  /// ② **水域** —— 内存三件套（waterAreaMgr_ / customWaterAreas_）+ 3D 水面 + 水域 JSON。
+  ///    `RebuildWaterAreas()` = 写空 JSON + `SpawnAll(空列表)`（⇒ 删掉全部 waves_*）+ 通知 QML
+  {
+    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+    waterAreaMgr_.Clear();
+  }
+  customWaterAreas_.clear();
+  RebuildWaterAreas();
+
+  /// ③ **子世界** —— 模型/水域的**来源链**元数据（成员已删光，链已无意义）
+  this->modelManager->ClearModelSources();
+  this->modelManager->ClearWaterSources();
+
   NotifyModelListChanged(); // 发送信号通知QML更新
 }
 

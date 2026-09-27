@@ -861,9 +861,20 @@ int CmdModelDelete(keship::ModelManager &_mm, const Args &_a) {
 
 int CmdModelDeleteAll(keship::ModelManager &_mm) {
   GuardSharedState("model delete-all",
-      "会删掉 GUI 正在管理的全部模型 —— GUI 的层次树/缓存不会同步，属破坏性操作");
-  if (!_mm.DeleteAllModelsInGazebo()) Fail("DeleteAllModelsInGazebo 失败");
-  Info("已删除全部模型");
+      "会删掉 GUI 正在管理的全部模型与水域 —— GUI 的层次树/缓存不会同步，属破坏性操作");
+  /// ★ 2026-09-28 新语义（张老师 2026-09-25 拍板）：
+  ///   「delete-all 应当删除所有模型、水域、子世界」
+  ///   · **模型**：`DeleteAllModelsInGazebo` 已改为**枚举活动场景**
+  ///     （旧实现在新进程里 modelList 恒空 ⇒ 什么都不删却报成功）；
+  ///   · **水域**：清空水域 JSON ⇒ 物理侧（WavesModel/HydroBuoyancy）靠 **mtime 热更新**跟上；
+  ///     ⚠ 无头侧**没有 3D 水面**（`WaterAreaVisualManager` 是 GUI 侧类）⇒ 无需删 `waves_*`；
+  ///     若并行驱动的是**张老师的 GUI 实例**，3D 水面需由他在界面上刷新（守卫已默认拒绝）；
+  ///   · **子世界**：来源链元数据（`modelSource_`/`waterSource_`）本就是**本进程**的，
+  ///     无头每次新进程 ⇒ 恒空 ⇒ 无需处理。
+  if (!_mm.DeleteAllModelsInGazebo())
+    Fail("DeleteAllModelsInGazebo 失败（可能部分模型没删掉，见上方 stderr）");
+  SaveWaterAreas({});
+  Info("已删除全部模型，并清空水域（水域 JSON 已置空，物理侧靠 mtime 热更新跟上）");
   return 0;
 }
 
@@ -1287,7 +1298,13 @@ R"(keship_ctl — KeShip 无头指令入口
   model save-ksm <name> <file.ksm> [--sdf-name <模型名>]
                                    ★ 保存为 .ksm（与 GUI 同一实现）⇒ 可做往返验证
   model delete <name>
-  model delete-all
+  model delete-all                 ★ 清空场景：删除**全部模型**并**清空水域**（水域 JSON 置空）。
+                                   语义（张老师 2026-09-25 拍板）：「删除所有模型、水域、子世界」。
+                                   · 枚举**活动场景**（不依赖本进程 modelList）⇒ 跨进程可靠；
+                                   · **排除** world 自带的 sun / ground_plane（删了会破坏渲染）；
+                                   · 无头侧没有 3D 水面 ⇒ 只清 JSON（物理侧靠 mtime 热更新跟上）；
+                                   · 子世界来源链是本进程元数据，无头恒空 ⇒ 无需处理。
+                                   ⚠ 检测到带 GUI 的仿真时默认拒绝（会破坏 GUI 状态），需 --force。
   model pose <name>
   model set-pose <name> x y z roll pitch yaw
 
