@@ -536,13 +536,17 @@ namespace keship
     const std::map<std::string, WaterWorldSource> &GetWaterSources() const
     { return waterSource_; }
 
-    /// @brief 解析 .ksm 文件，返回四段配置
+    /// @brief 解析 .ksm 文件，返回五段配置（+ 可选的碰撞体积计算方式）
+    ///
+    /// ★ 2026-09-28（D2）：`_outCollisionMode` 非空时回填 `===COLLISION===` 段的值；
+    ///   **文件缺该段则不改动**（由调用方保持初值）⇒ 老 ksm 零影响（向后兼容）。
     static bool ParseKSMFile(const std::string &_filepath,
                              std::string &_baseSDF,
                              BuoyancyConfig &_buoyCfg,
                              ThrusterConfig &_thrustCfg,
                              HydroConfig &_hydroCfg,
-                             SensorConfig &_sensorCfg);
+                             SensorConfig &_sensorCfg,
+                             CollisionMode *_outCollisionMode = nullptr);
 
     /// @brief **从 .ksm 文件加载模型**（解析 → 缓存 → 分派 spawn → 登记来源）
     ///
@@ -567,10 +571,13 @@ namespace keship
     /// @param _pos 位姿 [x,y,z,roll,pitch,yaw]，nullptr → 由各 spawn 用默认
     /// @param _sourceBaseName 来源原名（空 → 用 _instanceName）
     /// @return true = 解析成功且 spawn 后取到 entity ID
+    /// @param _overrideCollision ★ 2026-09-28（D2）：非空 ⇒ **以调用方显式指定的碰撞方式为准**
+    ///        （用户刚选的就该赢）；为空 ⇒ 用 ksm 里持久化的（缺段 ⇒ Mesh）。
     bool LoadModelFromKsmFile(const std::string &_instanceName,
                               const std::string &_ksmPath,
                               const double _pos[6] = nullptr,
-                              const std::string &_sourceBaseName = "");
+                              const std::string &_sourceBaseName = "",
+                              const CollisionMode *_overrideCollision = nullptr);
 
     /// @brief 将 SDF 字符串中所有文件 mesh <uri> 替换为规范化缓存 OBJ 路径
     ///

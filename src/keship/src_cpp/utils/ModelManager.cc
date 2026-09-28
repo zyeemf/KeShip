@@ -1961,6 +1961,18 @@ bool ModelManager::RebuildModelWithBuoyancy(
     }
   }
 
+  /// ★ 2026-09-28 修（**成套**：5 个 Rebuild* 同族缺陷之一）：**先查缓存，再做破坏性删除**。
+  ///   原实现是「先删模型 → 后查缓存」⇒ 缓存缺失时模型**已被删掉**，随后才 return false
+  ///   ⇒ **场景凭空少一个模型**（数据丢失级；同族反模式「没做到却报成功」的破坏性版本）。
+  ///   本函数会重建实体 ⇒ 一切「可能失败」的准备工作必须在删除**之前**做完。
+  if (sdfCache_.find(_instanceName) == sdfCache_.end())
+  {
+    std::cerr << "RebuildModelWithBuoyancy: 本进程没有该模型的 SDF 缓存，**拒绝重建以免丢模型**"
+                 "（请先在本进程 load-ksm / spawn）: "
+              << _instanceName << std::endl;
+    return false;   ///< **不删模型**
+  }
+
   /// 2. 删除旧模型 + 等待确认删除完毕
   if (!DeleteModelInGazeboByName(_instanceName, true))
   {
@@ -1983,32 +1995,11 @@ bool ModelManager::RebuildModelWithBuoyancy(
   }
 
   /// 3. 从缓存取基础 SDF 并插入新浮力插件
-  std::string baseSDF;
+  /// ★ 2026-09-28：缓存在**删除之前**已校验存在（见上方检查）⇒ 此处必然命中。
+  ///   原先「缓存缺失 ⇒ 悄悄换成 1 m×1 m×1 m 方块」的回退**已删除** ——
+  ///   那是「悄悄把用户模型换掉」的静默错误结果，不是可接受的行为。
   auto cacheIt = this->sdfCache_.find(_instanceName);
-  if (cacheIt != this->sdfCache_.end())
-  {
-    baseSDF = cacheIt->second;
-  }
-  else
-  {
-    std::cerr << "RebuildModelWithBuoyancy: 无缓存 SDF，使用默认几何体" << std::endl;
-    std::ostringstream fallback;
-    fallback << "<?xml version=\"1.0\"?>\n"
-             << "<sdf version=\"1.10\">\n"
-             << "  <model name=\"" << _instanceName << "\">\n"
-             << "    <pose>0 0 0 0 0 0</pose>\n"
-             << "    <static>false</static>\n"
-             << "    <link name=\"" << configCopy.linkName << "\">\n"
-             << "      <inertial><mass>1.0</mass><inertia>"
-             << "<ixx>1</ixx><ixy>0</ixy><ixz>0</ixz>"
-             << "<iyy>1</iyy><iyz>0</iyz><izz>1</izz></inertia></inertial>\n"
-             << "      <collision name=\"collision\"><geometry>"
-             << "<box><size>1 1 1</size></box></geometry></collision>\n"
-             << "      <visual name=\"visual\"><geometry>"
-             << "<box><size>1 1 1</size></box></geometry></visual>\n"
-             << "    </link>\n";
-    baseSDF = fallback.str();
-  }
+  std::string baseSDF = cacheIt->second;
 
   /// M_A 通过 DART <fluid_added_mass> 注入（隐式积分）
 
@@ -2814,6 +2805,18 @@ bool ModelManager::RebuildModelWithThrust(
     }
   }
 
+  /// ★ 2026-09-28 修（**成套**：5 个 Rebuild* 同族缺陷之一）：**先查缓存，再做破坏性删除**。
+  ///   原实现是「先删模型 → 后查缓存」⇒ 缓存缺失时模型**已被删掉**，随后才 return false
+  ///   ⇒ **场景凭空少一个模型**（数据丢失级；同族反模式「没做到却报成功」的破坏性版本）。
+  ///   本函数会重建实体 ⇒ 一切「可能失败」的准备工作必须在删除**之前**做完。
+  if (sdfCache_.find(_instanceName) == sdfCache_.end())
+  {
+    std::cerr << "RebuildModelWithThrust: 本进程没有该模型的 SDF 缓存，**拒绝重建以免丢模型**"
+                 "（请先在本进程 load-ksm / spawn）: "
+              << _instanceName << std::endl;
+    return false;   ///< **不删模型**
+  }
+
   /// 2. 删除旧模型
   if (!DeleteModelInGazeboByName(_instanceName, true))
   {
@@ -2834,12 +2837,8 @@ bool ModelManager::RebuildModelWithThrust(
   }
 
   /// 3. 从缓存取基础 SDF，从 </link> 截断
+  ///（缓存在删除前已校验存在 ⇒ 必然命中；原「删除后才查缓存」的写法已前置）
   auto cacheIt = this->sdfCache_.find(_instanceName);
-  if (cacheIt == this->sdfCache_.end())
-  {
-    std::cerr << "RebuildModelWithThrust: 无缓存 SDF" << std::endl;
-    return false;
-  }
 
   std::string base = cacheIt->second;
 
@@ -3398,6 +3397,18 @@ bool ModelManager::RebuildModelWithHydro(
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
+  /// ★ 2026-09-28 修（**成套**：5 个 Rebuild* 同族缺陷之一）：**先查缓存，再做破坏性删除**。
+  ///   原实现是「先删模型 → 后查缓存」⇒ 缓存缺失时模型**已被删掉**，随后才 return false
+  ///   ⇒ **场景凭空少一个模型**（数据丢失级；同族反模式「没做到却报成功」的破坏性版本）。
+  ///   本函数会重建实体 ⇒ 一切「可能失败」的准备工作必须在删除**之前**做完。
+  if (sdfCache_.find(_instanceName) == sdfCache_.end())
+  {
+    std::cerr << "RebuildModelWithHydro: 本进程没有该模型的 SDF 缓存，**拒绝重建以免丢模型**"
+                 "（请先在本进程 load-ksm / spawn）: "
+              << _instanceName << std::endl;
+    return false;   ///< **不删模型**
+  }
+
   if (!DeleteModelInGazeboByName(_instanceName, true))
     return false;
 
@@ -3405,8 +3416,8 @@ bool ModelManager::RebuildModelWithHydro(
     while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
       if (!GetModelIDByInstanceNameFromGazebo(_instanceName, sid)) break; } }
 
+  ///（缓存在删除前已校验存在 ⇒ 必然命中；原「删除后才查缓存」的写法已前置）
   auto cacheIt = sdfCache_.find(_instanceName);
-  if (cacheIt == sdfCache_.end()) return false;
 
   std::string base = cacheIt->second;
 
@@ -3487,6 +3498,18 @@ bool ModelManager::RebuildModelWithSensors(
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
+  /// ★ 2026-09-28 修（**成套**：5 个 Rebuild* 同族缺陷之一）：**先查缓存，再做破坏性删除**。
+  ///   原实现是「先删模型 → 后查缓存」⇒ 缓存缺失时模型**已被删掉**，随后才 return false
+  ///   ⇒ **场景凭空少一个模型**（数据丢失级；同族反模式「没做到却报成功」的破坏性版本）。
+  ///   本函数会重建实体 ⇒ 一切「可能失败」的准备工作必须在删除**之前**做完。
+  if (sdfCache_.find(_instanceName) == sdfCache_.end())
+  {
+    std::cerr << "RebuildModelWithSensors: 本进程没有该模型的 SDF 缓存，**拒绝重建以免丢模型**"
+                 "（请先在本进程 load-ksm / spawn）: "
+              << _instanceName << std::endl;
+    return false;   ///< **不删模型**
+  }
+
   if (!DeleteModelInGazeboByName(_instanceName, true))
     return false;
 
@@ -3494,8 +3517,8 @@ bool ModelManager::RebuildModelWithSensors(
     while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
       if (!GetModelIDByInstanceNameFromGazebo(_instanceName, sid)) break; } }
 
+  ///（缓存在删除前已校验存在 ⇒ 必然命中；原「删除后才查缓存」的写法已前置）
   auto cacheIt = sdfCache_.find(_instanceName);
-  if (cacheIt == sdfCache_.end()) return false;
 
   std::string base = cacheIt->second;
 
@@ -3726,15 +3749,29 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
       GetModelPoseByIDFromGazebo(idIt->second, savedPose);
   }
 
+  /// ★ 2026-09-28 修（**成套**：5 个 Rebuild* 同族缺陷之一）：**先查缓存，再做破坏性删除**。
+  ///   原实现是「先删模型 → 后查缓存」⇒ 缓存缺失时模型**已被删掉**，随后才 return false
+  ///   ⇒ **场景凭空少一个模型**（数据丢失级；同族反模式「没做到却报成功」的破坏性版本）。
+  ///   本函数会重建实体 ⇒ 一切「可能失败」的准备工作必须在删除**之前**做完。
+  if (sdfCache_.find(_instanceName) == sdfCache_.end())
+  {
+    std::cerr << "RebuildModelWithAllPlugins: 本进程没有该模型的 SDF 缓存，**拒绝重建以免丢模型**"
+                 "（请先在本进程 load-ksm / spawn）: "
+              << _instanceName << std::endl;
+    return false;   ///< **不删模型**
+  }
+
+  /// 供「创建失败时尽力还原」用（见下方创建失败分支）
+  const std::string origBaseSdf = sdfCache_[_instanceName];
+
   if (!DeleteModelInGazeboByName(_instanceName, true)) return false;
 
   { int retries = 20; uint32_t sid = 0;
     while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
       if (!GetModelIDByInstanceNameFromGazebo(_instanceName, sid)) break; } }
 
+  ///（缓存在删除前已校验存在 ⇒ 必然命中）
   auto it = sdfCache_.find(_instanceName);
-  if (it == sdfCache_.end()) return false;
-
   std::string base = it->second;
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
@@ -3797,7 +3834,40 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   rp->mutable_orientation()->set_z(q.Z()); rp->mutable_orientation()->set_w(q.W());
 
   /// 统一入口（2026-09-24 收敛：服务名 / 超时 / 结果检查只有一处实现）
-  if (!CreateEntityViaService(req)) return false;
+  if (!CreateEntityViaService(req))
+  {
+    /// ★ 2026-09-28：**创建失败也不能「删了不重建」** —— 用缓存里的原始 base SDF
+    ///   + 原保存位姿**尽力还原**（插件配置可能未生效，但**模型不会凭空消失**），
+    ///   并把实际发生了什么**明确报出来**（绝不静默）。
+    std::cerr << "RebuildModelWithAllPlugins: 重建创建失败，尽力还原原模型: "
+              << _instanceName << std::endl;
+    gz::msgs::EntityFactory req2;
+    req2.set_name(_instanceName);
+    req2.set_allow_renaming(false);
+    req2.set_sdf(origBaseSdf);
+    auto rp2 = req2.mutable_pose();
+    rp2->mutable_position()->set_x(savedPose[0]);
+    rp2->mutable_position()->set_y(savedPose[1]);
+    rp2->mutable_position()->set_z(savedPose[2]);
+    rp2->mutable_orientation()->set_x(q.X());
+    rp2->mutable_orientation()->set_y(q.Y());
+    rp2->mutable_orientation()->set_z(q.Z());
+    rp2->mutable_orientation()->set_w(q.W());
+    if (CreateEntityViaService(req2))
+    {
+      uint32_t rid = 0;
+      if (GetModelIDByInstanceNameFromGazebo(_instanceName, rid))
+        modelList[_instanceName] = rid;
+      std::cerr << "RebuildModelWithAllPlugins: 已用原 SDF 还原（插件配置可能未生效）"
+                << std::endl;
+    }
+    else
+    {
+      std::cerr << "RebuildModelWithAllPlugins: **还原也失败，模型已丢失**: "
+                << _instanceName << std::endl;
+    }
+    return false;
+  }
 
   uint32_t id = 0; bool found = false; uint32_t tries = 100;
   /// ★ 2026-09-25（⑩）：先查再睡
@@ -3959,6 +4029,19 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
       ofs << "\n";
     }
     ofs << "===END===\n\n";
+  }
+
+  /// ★ 2026-09-28（D2）：碰撞体积计算方式
+  ///   **只在非默认档（Mesh）时才写** ⇒ 默认档与老 ksm 与改动前**逐字节一致**，
+  ///   老工具与老资产零影响（与 SENSORS 段「非默认档才追加字段」同一策略）。
+  {
+    const CollisionMode cm = GetCollisionMode(_name);
+    if (cm != CollisionMode::Mesh)
+    {
+      ofs << "===COLLISION===\n"
+          << collisionModeName(cm) << "\n"
+          << "===END===\n\n";
+    }
   }
 
   std::cout << "SaveModelToKSM: 已保存 " << _name << " -> " << _filepath << std::endl;
@@ -4385,7 +4468,8 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
                                  BuoyancyConfig &_buoyCfg,
                                  ThrusterConfig &_thrustCfg,
                                  HydroConfig &_hydroCfg,
-                                 SensorConfig &_sensorCfg)
+                                 SensorConfig &_sensorCfg,
+                                 CollisionMode *_outCollisionMode)
 {
   std::ifstream ifs(_filepath);
   if (!ifs)
@@ -4394,7 +4478,7 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     return false;
   }
 
-  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS } section = NONE;
+  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS, COLLISION } section = NONE;
   std::string line;
   std::ostringstream sdfBuf;
 
@@ -4410,6 +4494,8 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     if (line == "===THRUST===")        { section = THRUST;    continue; }
     if (line == "===HYDRO===")         { section = HYDRO;     continue; }
     if (line == "===SENSORS===")       { section = SENSORS;   continue; }
+    /// ★ 2026-09-28（D2）：碰撞体积计算方式（缺段 ⇒ 调用方保持初值 ⇒ 向后兼容）
+    if (line == "===COLLISION===")     { section = COLLISION; continue; }
     if (line == "===END===")           { section = NONE;      continue; }
     if (line.find("[keship_model") == 0) continue;
 
@@ -4526,6 +4612,12 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
         else if (line.find("damping_ratio=") == 0)
           _hydroCfg.dampingRatio = std::stod(line.substr(14));
       }
+      else if (section == COLLISION)
+    {
+      /// ★ 2026-09-28（D2）：一行 `collisionModeName()`（Mesh / ConvexHull / None）
+      if (_outCollisionMode && !line.empty())
+        *_outCollisionMode = collisionModeFromName(line);
+    }
       else if (section == SENSORS)
     {
       if (line.find("link_name=") == 0)
@@ -4588,7 +4680,8 @@ bool ModelManager::LoadModelFromKsmFile(
     const std::string &_instanceName,
     const std::string &_ksmPath,
     const double _pos[6],
-    const std::string &_sourceBaseName)
+    const std::string &_sourceBaseName,
+    const CollisionMode *_overrideCollision)
 {
   if (_instanceName.empty() || _ksmPath.empty())
   {
@@ -4619,7 +4712,9 @@ bool ModelManager::LoadModelFromKsmFile(
   HydroConfig hydroCfg;
   hydroCfg.linkName = "";          /// 哨兵：仅当 HYDRO 段有 link_name 时才视为"启用了 Fossen"
   SensorConfig sensorCfg;
-  if (!ParseKSMFile(_ksmPath, baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg))
+  CollisionMode ksmCollision = CollisionMode::Mesh;   ///< 缺段 ⇒ 默认（向后兼容）
+  if (!ParseKSMFile(_ksmPath, baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
+                    &ksmCollision))
   {
     std::cerr << "LoadModelFromKsmFile: 解析失败 " << _ksmPath << std::endl;
     return false;
@@ -4632,6 +4727,13 @@ bool ModelManager::LoadModelFromKsmFile(
 
   /// 3. 缓存配置（与 GUI 原实现逐条一致）
   CacheModelSDF(_instanceName, baseSDF);
+
+  /// ★ 2026-09-28（D2）：碰撞体积计算方式的**生效口径（只此一处）**
+  ///   · 调用方显式指定（`_overrideCollision` 非空）⇒ 用它（用户刚选的就该赢）；
+  ///   · 否则用 ksm 里持久化的（缺段 ⇒ Mesh）。
+  ///   写进进程缓存后，**编辑对话框就能显示事实**（此前恒显示缺省的「结构网格」）。
+  SetCollisionMode(_instanceName,
+                   _overrideCollision ? *_overrideCollision : ksmCollision);
   buoyCfg.linkName = "base_link";
   thrustCfg.linkName = "base_link";
   CacheBuoyancyConfig(_instanceName, buoyCfg);

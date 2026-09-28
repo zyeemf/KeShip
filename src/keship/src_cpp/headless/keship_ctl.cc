@@ -645,8 +645,16 @@ int CmdModelLoadKsm(keship::ModelManager &_mm, const Args &_a) {
   PoseFromArgs(_a, 0.0, pos);   /// _D=0 ⇒ 默认 z = 0.1
   /// ★ 2026-09-28「加载时可选碰撞方式」：必须在 spawn **之前**设置
   ///（`CreateEntityViaService` 在 spawn 时读该模式）。默认 mesh = 既有行为。
-  _mm.SetCollisionMode(name, keship::collisionModeFromName(_a.Get("collision", "mesh")));
-  if (!_mm.LoadModelFromKsmFile(name, path, pos))
+  /// ★ 2026-09-28（D2）：`--collision` **给了才覆盖** ——
+  ///   不给时尊重 ksm 里持久化的方式（`LoadModelFromKsmFile` 内部统一生效）。
+  keship::CollisionMode collMode = keship::CollisionMode::Mesh;
+  const keship::CollisionMode *collOverride = nullptr;
+  if (_a.Has("collision"))
+  {
+    collMode = keship::collisionModeFromName(_a.Get("collision"));
+    collOverride = &collMode;
+  }
+  if (!_mm.LoadModelFromKsmFile(name, path, pos, "", collOverride))
     Fail("LoadModelFromKsmFile 失败：" + name + " <- " + path);
   Info("已加载 ksm 模型 " + name + " <- " + path);
   return 0;

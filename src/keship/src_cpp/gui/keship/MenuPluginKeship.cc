@@ -1000,7 +1000,10 @@ void MenuPluginKeship::OnBtn_LoadModel()
     keship::HydroConfig hydroCfg;
     hydroCfg.linkName = "";
     keship::SensorConfig sensorCfg;
-    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg))
+    /// ★ 2026-09-28（D2）：一并取出 ksm 里持久化的碰撞方式，用于**回填对话框**
+    keship::CollisionMode ksmCollision = keship::CollisionMode::Mesh;
+    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
+                                          &ksmCollision))
     {
       QMessageBox::warning(nullptr, "错误", "无法解析 .ksm 文件");
       return;
@@ -1021,6 +1024,8 @@ void MenuPluginKeship::OnBtn_LoadModel()
         dialog.setInertiaValues(ip.mass, ip.ixx, ip.ixy, ip.ixz, ip.iyy, ip.iyz, ip.izz);
 
       dialog.setCogValues(ip.cogX, ip.cogY, ip.cogZ);
+      /// ★ 2026-09-28（D2）：把 ksm 里存的碰撞方式**回填**，让用户看到的就是事实
+      dialog.setCollisionMode(ksmCollision);
     }
 
     if (dialog.exec() != QDialog::Accepted)
@@ -1047,12 +1052,12 @@ void MenuPluginKeship::OnBtn_LoadModel()
     /// 取舍：baseSDF 会被解析两次（上面那次只供对话框展示）——
     /// 代价是重读一个几 KB 的文本文件（可忽略），换来的是两条入口**零漂移**。
     /// ⚠ 不要为了省这次解析而在这里重写加载逻辑 —— 那正是 P0-1 的成因模式。
-    /// ★ 2026-09-28：碰撞体积计算方式**加载时可选**（张老师要求）。
-    ///   必须在 spawn **之前**写入缓存 —— `CreateEntityViaService` 在 spawn 时读它。
-    ///   收敛在这一处即可覆盖下游所有 spawn 分支（§16.1 的教训：横向关注点逐处补必漏）。
-    this->modelManager->SetCollisionMode(instanceName, dialog.getCollisionMode());
-
-    if (!this->modelManager->LoadModelFromKsmFile(instanceName, filePath.toStdString(), ksmPos))
+    /// ★ 2026-09-28：碰撞体积计算方式的**生效口径**（D2 起）——
+    ///   对话框的值**已从 ksm 回填**（见上）；用户改过就以用户为准，没改就是 ksm 里的值。
+    ///   故把对话框的值作为**显式覆盖**传下去（口径唯一，不再分两处写）。
+    const keship::CollisionMode chosenColl = dialog.getCollisionMode();
+    if (!this->modelManager->LoadModelFromKsmFile(instanceName, filePath.toStdString(), ksmPos,
+                                                  "", &chosenColl))
     {
       QMessageBox::warning(nullptr, "错误", "加载 .ksm 模型失败");
       return;
