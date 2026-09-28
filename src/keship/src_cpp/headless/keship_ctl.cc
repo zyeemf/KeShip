@@ -530,19 +530,74 @@ int CmdModelSpawnHull(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
+/// 把 `<pose>` 写进 SDF 字符串的 `<model>` 元素内（供 `spawn-sdf --pos` 使用）。
+///
+/// 为什么必须在 create **之前**写进 SDF：`SpawnModelInGazeboFromSDFString` 不接受位姿参数，
+/// create 请求里的位姿只来自 SDF 自身的 `<pose>`；而 **spawn 之后立刻 set-pose 会静默失败**
+/// （实体尚未注册，见 `data/test/` 的历史坑）。
+///
+/// ★ 2026-09-28 修一处**静默失效**：`spawn-sdf` 原先**完全不解析 `--pos`**
+///   （`--pos` 只进 `Args.opt`，本命令从不读）—— 写了 `--pos "40 0 0.7 0 0 0"` 不生效、
+///   也不报错，两个实例都停在 SDF 自带的 `<pose>` 上（= **重叠**）。
+///   该坑直接导致 `doc/plans/model_loading_perf_fix_plan.md` §15.2 的"间隔 40 m"实验
+///   实际是"重叠"实验，并据此得出一条**错误结论**（"与间距无关"）。
+///   按项目纪律（"参数没生效却报成功"是必须消灭的反模式），改为**支持** `--pos`。
+static std::string InjectModelPose(const std::string &_sdf, const double _pose[6])
+{
+  std::ostringstream p;
+  p << "<pose>" << _pose[0] << " " << _pose[1] << " " << _pose[2] << " "
+    << _pose[3] << " " << _pose[4] << " " << _pose[5] << "</pose>";
+  const std::string poseTag = p.str();
+
+  const size_t m = _sdf.find("<model");
+  if (m == std::string::npos) return _sdf;              // 不像 SDF ⇒ 原样返回
+  const size_t mEnd = _sdf.find('>', m);
+  if (mEnd == std::string::npos) return _sdf;
+
+  /// SDF 规范：model 的 `<pose>` 必须在第一个 `<link>` 之前 ⇒ 只在该区间内查找/替换
+  const size_t linkPos = _sdf.find("<link", mEnd);
+  const size_t limit = (linkPos == std::string::npos) ? _sdf.size() : linkPos;
+  const size_t p0 = _sdf.find("<pose>", mEnd);
+  if (p0 != std::string::npos && p0 < limit)
+  {
+    const size_t p1 = _sdf.find("</pose>", p0);
+    if (p1 != std::string::npos)
+    {
+      std::string out = _sdf;
+      out.replace(p0, p1 + 7 - p0, poseTag);
+      return out;
+    }
+  }
+  std::string out = _sdf;
+  out.insert(mEnd + 1, "\n    " + poseTag);
+  return out;
+}
+
 /// 通用逃生口：直接喂一个 SDF 文件（实验模型可由外部脚本生成 / 由对话框导出后复用）
 int CmdModelSpawnSdf(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.size() < 2)
-    Fail("用法：model spawn-sdf <name> <file.sdf>   （SDF 内容原样交给 /world/<w>/create/blocking）");
+    Fail("用法：model spawn-sdf <name> <file.sdf> [--pos \"x y z r p y\"]\n"
+         "        （SDF 内容交给 /world/<w>/create/blocking；给了 --pos 则覆盖 SDF 里的 <pose>）");
   const std::string name = _a.pos[0], path = _a.pos[1];
   std::ifstream in(path, std::ios::binary);
   if (!in) Fail("打不开 SDF 文件：" + path);
   std::ostringstream buf; buf << in.rdbuf();
-  const std::string sdf = buf.str();
+  std::string sdf = buf.str();
   if (sdf.find("<sdf") == std::string::npos) Fail("看起来不是 SDF：" + path);
+  /// ★ 2026-09-28：`--pos` 原先被**静默忽略**（详见 InjectModelPose 注释）
+  std::string poseEcho;
+  if (_a.Has("pos"))
+  {
+    double pos[6]; PoseFromArgs(_a, 0.0, pos);
+    sdf = InjectModelPose(sdf, pos);
+    std::ostringstream e;      /// 回显**实际**位姿（防"参数没生效却报成功"）
+    e << " | --pos 已注入 " << pos[0] << " " << pos[1] << " " << pos[2] << " "
+      << pos[3] << " " << pos[4] << " " << pos[5];
+    poseEcho = e.str();
+  }
   if (!_mm.SpawnModelInGazeboFromSDFString(name, sdf))
     Fail("SpawnModelInGazeboFromSDFString 失败：" + name);
-  Info("已生成模型 " + name + " <- " + path + "（" + std::to_string(sdf.size()) + " 字节）");
+  Info("已生成模型 " + name + " <- " + path + "（" + std::to_string(sdf.size()) + " 字节）" + poseEcho);
   return 0;
 }
 
@@ -1301,7 +1356,11 @@ R"(keship_ctl — KeShip 无头指令入口
                           [--hydro] [--publish-subvol] [--damping <Zw,Kp,Mq>]
                           注：--damping 必须同时给 --hydro（插件在 enable_hydro=false
                               时不走阻尼分支）；--publish-subvol 才发布 /keship/sp01/subvol/<名>
-  model spawn-sdf <name> <file.sdf>   通用逃生口：直接喂 SDF 文件
+  model spawn-sdf <name> <file.sdf> [--pos "x y z r p y"]
+                                  通用逃生口：直接喂 SDF 文件。
+                                  ★ --pos（2026-09-28）：覆盖 SDF 自带的 <pose>；
+                                    原先该参数被**静默忽略**（写了不生效也不报错），
+                                    曾导致一次实验把「间隔 40 m」误做成「重叠」。
   model spawn-cylinder <name> [--d 0.5 --len 1.0 --rho 500] [--pos ...]
   model spawn-file <name> <path> [--static] [--buoyancy] [--pos ...]
                                    [--collision mesh|hull|none]

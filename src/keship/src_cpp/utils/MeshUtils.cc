@@ -583,10 +583,45 @@ ConvexHullTriangles(const std::vector<gz::math::Vector3d> &_verts)
   if (_verts.size() < 4)
     return out;   ///< 3D 凸包至少 4 个顶点
 
+  /// ★★ 2026-09-28 修（**必须保留**）：先按**容差合并重合点**，再算凸包，且**不使用 `QJ`**。
+  ///   原实现用 `QJ`(joggle)：它把所有输入点轻微抖动，使大量"几乎共面"的点变成真极点
+  ///   ⇒ 凸包面片里出现大量**针状三角形**（实测 1,410 面中 115 个 shape ratio < 1e-3，
+  ///   最小 4.2e-6）。而 **dartsim/ODE 的 trimesh 建树无法处理这类面片 ⇒ gz sim SIGSEGV**
+  ///   （实测 `--collision hull` 单实例 spawn 即 exit 139 / 地址 0x4；
+  ///     同一文件作 `<visual>` 完全正常、手写四面体 OBJ 作 collision 也正常
+  ///     ⇒ 问题只在"针状面 + collision 路径"）。
+  ///   改为：按 1e-6·包围盒对角线 合并重合点 + 纯 `Qt` 三角化。
+  ///   若 qhull 仍失败，上层会回退原 collision（既有安全网）。
+  gz::math::Vector3d lo = _verts[0], hi = _verts[0];
+  for (const auto &v : _verts)
+  {
+    /// gz-math 的 `Vector3::Min/Max` 返回 void（就地修改）⇒ 逐分量比较
+    if (v.X() < lo.X()) lo.X(v.X());
+    if (v.Y() < lo.Y()) lo.Y(v.Y());
+    if (v.Z() < lo.Z()) lo.Z(v.Z());
+    if (v.X() > hi.X()) hi.X(v.X());
+    if (v.Y() > hi.Y()) hi.Y(v.Y());
+    if (v.Z() > hi.Z()) hi.Z(v.Z());
+  }
+  const double tol = std::max(1e-12, 1e-6 * (hi - lo).Length());
+  std::map<std::array<long long, 3>, size_t> seen;
+  std::vector<gz::math::Vector3d> merged;
+  merged.reserve(_verts.size());
+  for (const auto &v : _verts)
+  {
+    const std::array<long long, 3> key{
+        (long long)std::llround(v.X() / tol),
+        (long long)std::llround(v.Y() / tol),
+        (long long)std::llround(v.Z() / tol)};
+    if (seen.emplace(key, merged.size()).second)
+      merged.push_back(v);
+  }
+  if (merged.size() < 4)
+    return out;   ///< 合并后不足 4 点 ⇒ 退化，交给上层回退
   /// qhull 要的是连续 double 数组（dim=3）
   std::vector<coordT> pts;
-  pts.reserve(_verts.size() * 3);
-  for (const auto &v : _verts)
+  pts.reserve(merged.size() * 3);
+  for (const auto &v : merged)
   {
     pts.push_back(v.X());
     pts.push_back(v.Y());
@@ -607,9 +642,9 @@ ConvexHullTriangles(const std::vector<gz::math::Vector3d> &_verts)
     return out;
   }
 
-  /// "Qt" = 三角化输出；"QJ" 容忍数值误差（避免退化输入直接失败）
-  char flags[] = "qhull Qt QJ";
-  const int rc = qh_new_qhull(qh, 3, (int)_verts.size(), pts.data(), 0,
+  /// "Qt" = 三角化输出。**刻意不用 `QJ`** —— 见上方注释：joggle 会造出针状面 ⇒ dartsim 崩溃。
+  char flags[] = "qhull Qt";
+  const int rc = qh_new_qhull(qh, 3, (int)(pts.size() / 3), pts.data(), 0,
                               flags, outFile, errFile);
   if (rc == 0)
   {
@@ -658,7 +693,8 @@ std::string GenerateConvexHullCache(const std::string &_srcPath)
       ? std::filesystem::path(_srcPath).parent_path().string() + "/"
       : std::filesystem::path(_srcPath).parent_path().string() + "/normalized/";
   const std::string hullPath =
-      cdir + srcStem + "_" + SourceKey8(_srcPath) + "_hull.obj";
+      /// ⚠ 版本号进文件名：修了退化面过滤后必须换名，否则旧坏缓存被直接命中
+      cdir + srcStem + "_" + SourceKey8(_srcPath) + "_hull_v4.obj";
 
   /// 命中已有凸包缓存（文件名含源 stamp ⇒ 源变化自动失效）
   if (std::filesystem::exists(hullPath, ec))
@@ -699,6 +735,7 @@ std::string GenerateConvexHullCache(const std::string &_srcPath)
   std::map<std::array<double, 3>, int> vmap;
   std::vector<gz::math::Vector3d> verts;
   std::vector<std::array<int, 3>> faces;
+  size_t droppedDegenerate = 0, droppedSliver = 0;
   for (const auto &t : tris)
   {
     std::array<int, 3> idx{};
@@ -718,16 +755,66 @@ std::string GenerateConvexHullCache(const std::string &_srcPath)
         idx[k] = it->second;
       }
     }
+
+    /// ★★ 2026-09-28 修（**必须保留**）：丢弃退化三角形。
+    ///   qhull 的 `QJ`(joggle) 与扇形三角化都会产出"两个顶点坐标完全相同"的面片，
+    ///   经上面的**精确去重**后即变成 `f a b b`（重复索引）—— 零面积面片会让
+    ///   ODE 的 trimesh 算法线时除零 ⇒ **dartsim 直接 SIGSEGV**
+    ///   （实测：`--collision hull` **单实例** spawn 即 `gz sim` exit 139 / 地址 0x4；
+    ///     旧输出 1,708 面中 296 个是这种退化面，而全细节 OBJ 为 0 个）。
+    if (idx[0] == idx[1] || idx[1] == idx[2] || idx[0] == idx[2])
+    {
+      ++droppedDegenerate;
+      continue;
+    }
+    /// 第二道防线：极薄"针状"面片（面积/最长边² < 1e-4）—— dartsim/ODE 对这类面片不安全
+    const auto &A = verts[idx[0] - 1];
+    const auto &B = verts[idx[1] - 1];
+    const auto &C = verts[idx[2] - 1];
+    const double area = 0.5 * ((B - A).Cross(C - A)).Length();
+    double l2 = (A - B).SquaredLength();
+    const double l2b = (B - C).SquaredLength();
+    const double l2c = (A - C).SquaredLength();
+    if (l2b > l2) l2 = l2b;
+    if (l2c > l2) l2 = l2c;
+    if (l2 <= 0.0 || area < 1e-4 * l2)
+    {
+      ++droppedSliver;
+      continue;
+    }
     faces.push_back(idx);
   }
   for (const auto &v : verts)
     ofs << "v " << v.X() << " " << v.Y() << " " << v.Z() << "\n";
+
+  /// ★★ 2026-09-28 修（**必须保留**）：**凸包 OBJ 必须写 `vn` 法线**。
+  ///   实测同一份凸包几何（378 顶点 / 1095 面）：
+  ///     · 只写 `v`+`f`                ⇒ dartsim/ODE 的 collision 建树 **SIGSEGV**
+  ///       （`gz sim` exit 139 / 地址 0x4；同一文件作 `<visual>` 却完全正常）；
+  ///     · 写 `vn` + `f a//n b//n c//n` ⇒ **完全正常**。
+  ///   旁证：全细节 OBJ 自带 `vn`（200,390 条）加载正常；手写四面体虽无 `vn` 但仅 4 面亦正常
+  ///   ⇒ 触发条件是"网格有一定规模 + 缺 `vn`"。**凸包 OBJ 不能省法线。**
+  ///   逐面一条面法线即可（碰撞体不需要平滑法线）。
   for (const auto &f : faces)
-    ofs << "f " << f[0] << " " << f[1] << " " << f[2] << "\n";
+  {
+    const auto &A = verts[f[0] - 1];
+    const auto &B = verts[f[1] - 1];
+    const auto &C = verts[f[2] - 1];
+    gz::math::Vector3d nrm = (B - A).Cross(C - A);
+    const double len = nrm.Length();
+    if (len > 0.0)
+      nrm = nrm / len;
+    ofs << "vn " << nrm.X() << " " << nrm.Y() << " " << nrm.Z() << "\n";
+  }
+  for (size_t i = 0; i < faces.size(); ++i)
+    ofs << "f " << faces[i][0] << "//" << (i + 1) << " "
+        << faces[i][1] << "//" << (i + 1) << " "
+        << faces[i][2] << "//" << (i + 1) << "\n";
   ofs.close();
 
   std::cout << "MeshUtils: 凸包缓存已生成 " << hullPath << "（"
             << verts.size() << " 顶点, " << faces.size() << " 三角面；"
+            << "丢弃退化面 " << droppedDegenerate << " / 针状面 " << droppedSliver << "；"
             << "源网格 " << mesh.vertices.size() << " 顶点）" << std::endl;
   return hullPath;
 }
