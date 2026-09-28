@@ -1047,6 +1047,11 @@ void MenuPluginKeship::OnBtn_LoadModel()
     /// 取舍：baseSDF 会被解析两次（上面那次只供对话框展示）——
     /// 代价是重读一个几 KB 的文本文件（可忽略），换来的是两条入口**零漂移**。
     /// ⚠ 不要为了省这次解析而在这里重写加载逻辑 —— 那正是 P0-1 的成因模式。
+    /// ★ 2026-09-28：碰撞体积计算方式**加载时可选**（张老师要求）。
+    ///   必须在 spawn **之前**写入缓存 —— `CreateEntityViaService` 在 spawn 时读它。
+    ///   收敛在这一处即可覆盖下游所有 spawn 分支（§16.1 的教训：横向关注点逐处补必漏）。
+    this->modelManager->SetCollisionMode(instanceName, dialog.getCollisionMode());
+
     if (!this->modelManager->LoadModelFromKsmFile(instanceName, filePath.toStdString(), ksmPos))
     {
       QMessageBox::warning(nullptr, "错误", "加载 .ksm 模型失败");
@@ -1091,6 +1096,11 @@ void MenuPluginKeship::OnBtn_LoadModel()
 
   bool isStatic = dialog.isStatic();
   bool isAddBuoyancy = dialog.isAddBuoyancy();
+
+  /// ★ 2026-09-28：碰撞体积计算方式**加载时可选**（张老师要求）。
+  ///   写在此处即可覆盖下面**两条** spawn 分支（勾浮力走编辑器链 / 不勾直接 spawn）——
+  ///   因为 `CreateEntityViaService` 是按**实例名**读该缓存，与走哪条分支无关。
+  this->modelManager->SetCollisionMode(instanceName, dialog.getCollisionMode());
 
   ///--- 第三步：勾选浮力时不 spawn，先打开编辑器配置代理几何体
   if (isAddBuoyancy)
@@ -1324,6 +1334,9 @@ void MenuPluginKeship::OnBtn_ShowModelSettingsDialogByIndex(int _index)
   modelManager->GetCachedModelStatic(nameAndId.first, isStatic);
   dialog.setStatic(isStatic);
 
+  /// ★ 2026-09-28：回填当前碰撞体积计算方式（加载后编辑）
+  dialog.setCollisionMode(modelManager->GetCollisionMode(nameAndId.first));
+
   /// 从缓存 SDF 回填惯性到对话框
   keship::InertiaParams ip;
   this->modelManager->GetCachedModelInertia(nameAndId.first, ip);
@@ -1382,16 +1395,35 @@ void MenuPluginKeship::OnBtn_ShowModelSettingsDialogByIndex(int _index)
       std::abs(newCogY - ip.cogY) > 1e-6 ||
       std::abs(newCogZ - ip.cogZ) > 1e-6);
 
-  if (inertiaChanged)
+  /// ★ 2026-09-28：碰撞体积计算方式**加载后也可改**（张老师要求）。
+  const keship::CollisionMode newColl = dialog.getCollisionMode();
+  const bool collisionChanged =
+      (newColl != modelManager->GetCollisionMode(nameAndId.first));
+
+  if (inertiaChanged || collisionChanged)
   {
-    keship::InertiaParams newIp;
-    newIp.mass = newMass;
-    newIp.ixx = newTensor[0]; newIp.ixy = newTensor[1]; newIp.ixz = newTensor[2];
-    newIp.iyy = newTensor[4]; newIp.iyz = newTensor[5]; newIp.izz = newTensor[8];
-    newIp.cogX = newCogX; newIp.cogY = newCogY; newIp.cogZ = newCogZ;
-    this->modelManager->UpdateCachedSDFInertia(nameAndId.first, newIp);
-    /// 全插件重建（保留 buoyancy/thrust/hydro）
+    if (collisionChanged)
+      this->modelManager->SetCollisionMode(nameAndId.first, newColl);
+    if (inertiaChanged)
+    {
+      keship::InertiaParams newIp;
+      newIp.mass = newMass;
+      newIp.ixx = newTensor[0]; newIp.ixy = newTensor[1]; newIp.ixz = newTensor[2];
+      newIp.iyy = newTensor[4]; newIp.iyz = newTensor[5]; newIp.izz = newTensor[8];
+      newIp.cogX = newCogX; newIp.cogY = newCogY; newIp.cogZ = newCogZ;
+      this->modelManager->UpdateCachedSDFInertia(nameAndId.first, newIp);
+    }
+    /// 全插件重建（保留 buoyancy/thrust/hydro）。
+    /// ⚠ 重建会**删除并重建实体** ⇒ 旧 id 失效，且重建内部只沿用**场景里的旧位姿**。
+    ///   因此重建后必须**按名字重新取 id、并把对话框里的位姿再落一次** ——
+    ///   否则"同时改了位姿与惯性/碰撞"时位姿编辑会被静默丢弃（既有缺陷，本次一并修）。
     this->modelManager->RebuildModelWithAllPlugins(nameAndId.first);
+    uint32_t rebuiltId = 0;
+    if (this->modelManager->GetModelIDByInstanceNameFromGazebo(nameAndId.first, rebuiltId))
+    {
+      if (!this->modelManager->SetModelPoseByIDInGazebo(rebuiltId, pose_))
+        std::cout << "keship重建后设置模型位姿失败" << nameAndId.first << std::endl;
+    }
     NotifyModelListChanged();
   }
   else

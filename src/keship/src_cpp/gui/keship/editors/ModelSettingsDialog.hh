@@ -15,9 +15,12 @@
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QHBoxLayout>
 
 #include "../shared/Buoyancy3DView.hh"
+/// 碰撞体积计算方式（`keship::CollisionMode`）—— 与 ModelManager.hh **同源**
+#include "ModelManager.hh"
 
 class ModelSettingsDialog : public QDialog
 {
@@ -67,6 +70,9 @@ public: /// 获取设置的值
   void setBuoyancy(bool _hasBuoyancy);
   void setModelInfo(const Buoyancy3DModelInfo &_info);
   void setShowCoGPreview(bool _show);
+  /// 碰撞体积的**计算方式**（结构网格 / 凸包 / 无）—— 2026-09-28 新增
+  keship::CollisionMode getCollisionMode() const;
+  void setCollisionMode(keship::CollisionMode _mode);
 
 private slots:
   void validateAndAccept();
@@ -92,6 +98,8 @@ private:
   QCheckBox *staticCheckBox;
   /// @brief 添加浮力项复选框
   QCheckBox *addBuoyancyCheckBox;
+  /// @brief 碰撞体积计算方式下拉框（结构网格 / 凸包 / 无）
+  QComboBox *collisionModeCombo = nullptr;
 
   /// @brief 是否设置惯性
   QCheckBox *setInertiaCheckBox;

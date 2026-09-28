@@ -149,6 +149,23 @@ ModelSettingsDialog::ModelSettingsDialog(QWidget *parent)
 
     formLayout->addRow("设置", settingsRow);
 
+    /// ★ 2026-09-28 新增：碰撞体积的**计算方式**（张老师要求"加载时以及加载后都可改"）。
+    ///   选项表**同源**于 `ModelManager.hh` 的 `keship::CollisionMode`
+    ///   （与 SensorEditorDialog 复用相机档位表同一做法：表只此一处，改表即改两端）。
+    collisionModeCombo = new QComboBox(formWidget);
+    collisionModeCombo->addItem("结构网格（全细节，最精确也最贵）",
+                                (int)keship::CollisionMode::Mesh);
+    collisionModeCombo->addItem("凸包（简化几何，三角面大幅减少）",
+                                (int)keship::CollisionMode::ConvexHull);
+    collisionModeCombo->addItem("无碰撞（最便宜，仅用于不需要碰撞的实验）",
+                                (int)keship::CollisionMode::None);
+    collisionModeCombo->setCurrentIndex(0);   ///< 缺省 = 结构网格（保持既有行为）
+    collisionModeCombo->setToolTip(
+        "碰撞体的计算方式，影响碰撞精度与运行开销。\n"
+        "注意：两个**位置完全重合**的网格碰撞体会让物理引擎负担剧增"
+        "（极端情况下仿真会崩溃），放置模型时请避免完全重叠。");
+    formLayout->addRow("碰撞体积", collisionModeCombo);
+
     connect(addBuoyancyCheckBox, &QCheckBox::stateChanged, this, [=](int state)
             {
               if (!addBuoyancyCheckBox->isEnabled()) return;
@@ -503,6 +520,21 @@ void ModelSettingsDialog::setStatic(bool _isStatic)
 void ModelSettingsDialog::setBuoyancy(bool _hasBuoyancy)
 {
   addBuoyancyCheckBox->setChecked(_hasBuoyancy);
+}
+
+keship::CollisionMode ModelSettingsDialog::getCollisionMode() const
+{
+  if (!collisionModeCombo)
+    return keship::CollisionMode::Mesh;   ///< 兜底 = 既有行为
+  return (keship::CollisionMode)collisionModeCombo->currentData().toInt();
+}
+
+void ModelSettingsDialog::setCollisionMode(keship::CollisionMode _mode)
+{
+  if (!collisionModeCombo)
+    return;
+  const int idx = collisionModeCombo->findData((int)_mode);
+  collisionModeCombo->setCurrentIndex(idx >= 0 ? idx : 0);
 }
 
 void ModelSettingsDialog::updateCoGPreview()
