@@ -99,6 +99,19 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath);
 bool LoadNormalizedObjVertices(const std::string &_objPath,
                                std::vector<gz::math::Vector3d> &_out);
 
+/// @brief 由网格文件生成 **3D 凸包** 并写为 OBJ 缓存（★ 2026-09-28 新增）
+///
+/// 用途：碰撞体积的"凸包"模式 —— 全细节网格作 `<collision>` 会让碰撞检测成本
+/// **呈对数增长**（实测 2 个实例即把实时率从 1.15 压到 0.26，见
+/// `doc/plans/model_loading_perf_fix_plan.md` §15），换成凸包可大幅降低三角面数。
+///
+/// 实现：用系统自带的 **qhull**（重入版）算凸包 → 三角化 facet → 写 OBJ。
+/// 缓存位置与命名：源目录 `normalized/<stem>_<srcKey8>_hull.obj`
+/// （与规范化缓存同目录、同生命周期，源文件变化自动失效）。
+/// @param _srcPath 源网格文件（dae/obj/stl…，Assimp 可读）
+/// @return 凸包 OBJ 的绝对路径；失败返回空串
+std::string GenerateConvexHullCache(const std::string &_srcPath);
+
 /// @brief 网格缓存清理结果统计
 struct MeshCacheCleanupResult
 {

@@ -172,6 +172,10 @@ add_library(keship_utils STATIC
   src_cpp/utils/ModelManager.cc
   src_cpp/utils/ForceAccumulator.cc
 )
+# ★ 2026-09-28：碰撞体积"凸包"模式需要 3D 凸包 ⇒ 用系统自带的 qhull（重入版）
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(QHULL_R REQUIRED qhull_r)
+
 target_link_libraries(keship_utils PUBLIC
   gz-math7
   gz-transport13::gz-transport13
@@ -179,7 +183,9 @@ target_link_libraries(keship_utils PUBLIC
   gz-common5::gz-common5
   assimp::assimp
   Eigen3::Eigen
+  ${QHULL_R_LIBRARIES}          # ★ 2026-09-28 qhull（凸包）
 )
+target_include_directories(keship_utils PUBLIC ${QHULL_R_INCLUDE_DIRS})
 target_include_directories(keship_utils PUBLIC
   src_cpp/utils
   extern/toml++

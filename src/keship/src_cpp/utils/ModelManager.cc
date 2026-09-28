@@ -3061,15 +3061,107 @@ bool ModelManager::GetCachedThrusterConfig(
 ///   **这就是"平行路径 + 逐处打补丁"必然漏补的实证。**
 ///
 /// 现在只此一处实现；新增路径调它即可，口径天然一致。
+/// ★★ 2026-09-28 碰撞体积"计算方式"的**施加点**（张老师要求三选一：
+///   结构网格 / 凸包 / 无）。
+///
+/// 设计要点：
+///   · **Mesh ⇒ 原样返回**（零成本、零风险；也是默认，保持既有行为）；
+///   · **None ⇒ 删掉 `<collision>` 段**；
+///   · **ConvexHull ⇒ 用 qhull 生成凸包 OBJ**（缓存到源目录 normalized/），
+///     并把 `<collision>` 指向它；**失败则回退原样**（安全优先，`_outOk=false`）。
+///   · 源网格 uri 从 collision 段内取（取不到就用全 SDF 的第一个 `<uri>`）。
+std::string ModelManager::ApplyCollisionModeToSdf(const std::string &_sdf,
+                                                  CollisionMode _mode,
+                                                  bool *_outOk) const
+{
+  if (_outOk) *_outOk = true;
+
+  /// Mesh ⇒ 不动（默认路径，零开销）
+  if (_mode == CollisionMode::Mesh)
+    return _sdf;
+
+  /// 定位第一个 <collision ...> ... </collision>
+  static const std::string kOpen = "<collision";
+  static const std::string kClose = "</collision>";
+  const size_t c0 = _sdf.find(kOpen);
+  if (c0 == std::string::npos)
+    return _sdf;                       ///< 本来就没有 collision ⇒ 无需处理
+  const size_t c1 = _sdf.find(kClose, c0);
+  if (c1 == std::string::npos)
+    return _sdf;
+  const size_t cEnd = c1 + kClose.size();
+
+  /// None ⇒ 删除该段
+  if (_mode == CollisionMode::None)
+    return _sdf.substr(0, c0) + _sdf.substr(cEnd);
+
+  /// ConvexHull ⇒ 先取源网格 uri
+  auto pickUri = [&](size_t _from, size_t _to) -> std::string {
+    const size_t u0 = _sdf.find("<uri>", _from);
+    if (u0 == std::string::npos || u0 >= _to) return "";
+    const size_t u1 = _sdf.find("</uri>", u0);
+    if (u1 == std::string::npos) return "";
+    return _sdf.substr(u0 + 5, u1 - u0 - 5);
+  };
+  std::string uri = pickUri(c0, cEnd);
+  if (uri.empty())
+    uri = pickUri(0, _sdf.size());
+  if (uri.empty())
+  {
+    std::cerr << "ApplyCollisionModeToSdf: 找不到网格 uri，保持原 collision" << std::endl;
+    if (_outOk) *_outOk = false;
+    return _sdf;
+  }
+
+  /// uri → 真实路径（支持 `file://` 与 `model://`/相对形式）
+  std::string path = uri;
+  if (path.rfind("file://", 0) == 0)
+  {
+    path = path.substr(7);
+  }
+  else
+  {
+    const std::string resolved = gz::common::findFile(path);
+    if (!resolved.empty())
+      path = resolved;
+  }
+
+  const std::string hullPath = keship::GenerateConvexHullCache(path);
+  if (hullPath.empty())
+  {
+    std::cerr << "ApplyCollisionModeToSdf: 凸包生成失败，**回退原 collision**: "
+              << path << std::endl;
+    if (_outOk) *_outOk = false;
+    return _sdf;                       ///< 失败 ⇒ 回退（绝不把模型弄成没碰撞）
+  }
+
+  const std::string repl =
+      "<collision name=\"collision\"><geometry><mesh><uri>file://" + hullPath +
+      "</uri></mesh></geometry></collision>";
+  std::cout << "ApplyCollisionModeToSdf: collision → 凸包 " << hullPath << std::endl;
+  return _sdf.substr(0, c0) + repl + _sdf.substr(cEnd);
+}
+
 bool ModelManager::CreateEntityViaService(const gz::msgs::EntityFactory &_req)
 {
+  /// ★★ 2026-09-28：**统一在此施加"碰撞体积计算方式"**（张老师要求三选一）。
+  /// 本函数是 **11 条 spawn/rebuild 路径的必经之路**，且能从 `_req.name()` 取实例名
+  /// ⇒ **一处生效，不必逐处补**（09-24 的教训：横向关注点逐处补必漏）。
+  /// ⚠ Mesh 模式直接原样返回 ⇒ 默认路径零开销、零行为变化。
+  gz::msgs::EntityFactory req = _req;
+  {
+    const CollisionMode cm = GetCollisionMode(req.name());
+    if (cm != CollisionMode::Mesh && !req.sdf().empty())
+      req.set_sdf(ApplyCollisionModeToSdf(req.sdf(), cm));
+  }
+
   const std::string service = "/world/" + this->worldName + "/create/blocking";
   gz::msgs::Boolean rep;
   bool result = false;
-  const bool executed = this->node->Request(service, _req, 20000, rep, result);
+  const bool executed = this->node->Request(service, req, 20000, rep, result);
   if (!executed || !result)
   {
-    std::cerr << "CreateEntityViaService: spawn 失败 name=" << _req.name()
+    std::cerr << "CreateEntityViaService: spawn 失败 name=" << req.name()
               << "（executed=" << executed << ", result=" << result << "）" << std::endl;
     return false;
   }

@@ -147,6 +147,39 @@ namespace keship
   constexpr int kCameraRateCount = 6;
   constexpr double kCameraRates[kCameraRateCount] = {5.0, 10.0, 25.0, 30.0, 50.0, 60.0};
 
+  ///////////////////////////////////////////////////////////////////////////////
+  /// ★★ 2026-09-28 碰撞体积的**计算方式**（张老师要求：三选一）
+  ///
+  /// 背景（见 doc/plans/model_loading_perf_fix_plan.md §15）：
+  ///   主要加载路径的 `<collision>` 都是**全细节网格**，而实测"2 个实例"就把实时率
+  ///   从 1.15 压到 **0.26**（日志刷 45 万行 `Trimesh-trimesh` 警告），
+  ///   且**与模型间距无关**、**与是否漂浮无关** ⇒ 碰撞检测本身极贵。
+  ///   `box` 或无 collision 则 ≈ 1.0 ⇒ **换简化几何是有效手段**。
+  enum class CollisionMode : int
+  {
+    Mesh = 0,        ///< **结构网格**：全细节（最精确、最贵；默认，保持现状）
+    ConvexHull = 1,  ///< **凸包**：qhull 算的 3D 凸包（简化，三角面数少得多）
+    None = 2         ///< **无碰撞**：最便宜
+  };
+
+  inline const char *collisionModeName(CollisionMode _m)
+  {
+    switch (_m)
+    {
+      case CollisionMode::Mesh:       return "Mesh";
+      case CollisionMode::ConvexHull: return "ConvexHull";
+      case CollisionMode::None:       return "None";
+    }
+    return "Mesh";
+  }
+
+  inline CollisionMode collisionModeFromName(const std::string &_s)
+  {
+    if (_s == "ConvexHull" || _s == "convex" || _s == "hull") return CollisionMode::ConvexHull;
+    if (_s == "None" || _s == "none" || _s == "no")           return CollisionMode::None;
+    return CollisionMode::Mesh;
+  }
+
   /// Camera 实际生效规格
   struct CameraSpec
   {
@@ -349,6 +382,21 @@ namespace keship
      * @return true 成功
      * @return false 失败
      */
+    /// ★ 2026-09-28 碰撞体积计算方式（缺省 Mesh = 保持既有行为）
+    /// 设置后**下次 spawn/rebuild 生效**；要"立即生效"请随后调 rebuild 系列。
+    void SetCollisionMode(const std::string &_instanceName, CollisionMode _mode)
+    { collisionModeCache_[_instanceName] = _mode; }
+    CollisionMode GetCollisionMode(const std::string &_instanceName) const
+    {
+      auto it = collisionModeCache_.find(_instanceName);
+      return (it == collisionModeCache_.end()) ? CollisionMode::Mesh : it->second;
+    }
+    /// 把 SDF 里第一个 `<collision>` 段按模式重写（Mesh ⇒ **原样返回**，零成本）
+    /// @return 改写后的 SDF；`_outOk=false` 表示凸包生成失败（已回退为原样）
+    std::string ApplyCollisionModeToSdf(const std::string &_sdf,
+                                        CollisionMode _mode,
+                                        bool *_outOk = nullptr) const;
+
     bool DeleteModelInGazeboByName(const std::string &_instanceName,
         bool _preserveSource = false);
     bool DeleteModelInGazeboByIndex(int _index);
@@ -679,6 +727,8 @@ namespace keship
     std::map<std::string, SensorConfig> sensorConfigCache_;
     /// \brief 静态模型标记缓存
     mutable std::map<std::string, bool> staticCache_;
+    /// ★ 2026-09-28 碰撞体积计算方式缓存（缺省 = Mesh，保持既有行为）
+    std::map<std::string, CollisionMode> collisionModeCache_;
     /// \brief 模型局部包围盒缓存（spawn 时填充，删除时清理）
     std::map<std::string, keship::ModelFootprint> modelBBoxCache_;
     /// \brief 模型来源元数据（0.0.4 世界实例化登记，保存子 World 嵌套使用）

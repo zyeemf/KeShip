@@ -562,6 +562,8 @@ int CmdModelSpawnFile(keship::ModelManager &_mm, const Args &_a) {
   const std::string name = _a.pos[0], path = _a.pos[1];
   double pos[6]; PoseFromArgs(_a, 1.0, pos);
   bool isStatic = _a.Has("static"), addBuoy = _a.Has("buoyancy");
+  /// ★ 2026-09-28「加载时可选碰撞方式」（默认 mesh = 既有行为）
+  _mm.SetCollisionMode(name, keship::collisionModeFromName(_a.Get("collision", "mesh")));
   if (!_mm.SpawnModelInGazeboFromFile(name, path, pos, isStatic, addBuoy))
     Fail("SpawnModelInGazeboFromFile 失败：" + name + " <- " + path);
   Info("已生成模型 " + name + " <- " + path);
@@ -586,6 +588,9 @@ int CmdModelLoadKsm(keship::ModelManager &_mm, const Args &_a) {
   const std::string name = _a.pos[0], path = _a.pos[1];
   double pos[6];
   PoseFromArgs(_a, 0.0, pos);   /// _D=0 ⇒ 默认 z = 0.1
+  /// ★ 2026-09-28「加载时可选碰撞方式」：必须在 spawn **之前**设置
+  ///（`CreateEntityViaService` 在 spawn 时读该模式）。默认 mesh = 既有行为。
+  _mm.SetCollisionMode(name, keship::collisionModeFromName(_a.Get("collision", "mesh")));
   if (!_mm.LoadModelFromKsmFile(name, path, pos))
     Fail("LoadModelFromKsmFile 失败：" + name + " <- " + path);
   Info("已加载 ksm 模型 " + name + " <- " + path);
@@ -856,6 +861,24 @@ int CmdModelDelete(keship::ModelManager &_mm, const Args &_a) {
     Fail("场景中没有这个模型，未删除：" + name);
   if (!_mm.DeleteModelInGazeboByName(name)) Fail("删除失败：" + name);
   Info("已删除 " + name + " (id=" + std::to_string(id) + ")");
+  return 0;
+}
+
+/// ★ 2026-09-28：设置**碰撞体积的计算方式**（张老师要求三选一：
+///   结构网格 / 凸包 / 无）并**立即重建**使其生效 —— "加载后可改"的无头通路。
+int CmdModelSetCollision(keship::ModelManager &_mm, const Args &_a) {
+  if (_a.pos.size() < 2)
+    Fail("用法：model set-collision <name> <mesh|hull|none>\n"
+         "       mesh = 结构网格（全细节，最贵）/ hull = 凸包（qhull 简化）/ none = 无碰撞。\n"
+         "       设置后**立即重建**模型。\n"
+         "       ⚠ 重建要读**本进程**的配置缓存 ⇒ 请与 load-ksm 写在同一个 script 里。");
+  const std::string name = _a.pos[0];
+  const auto mode = keship::collisionModeFromName(_a.pos[1]);
+  _mm.SetCollisionMode(name, mode);
+  if (!_mm.RebuildModelWithAllPlugins(name))
+    Fail(std::string("已把碰撞方式记为 ") + keship::collisionModeName(mode) +
+         "，但**重建失败**（多半是配置缓存不全 —— 请用 script 先 load-ksm）");
+  Info(std::string("碰撞方式 = ") + keship::collisionModeName(mode) + "（已重建）: " + name);
   return 0;
 }
 
@@ -1281,7 +1304,10 @@ R"(keship_ctl — KeShip 无头指令入口
   model spawn-sdf <name> <file.sdf>   通用逃生口：直接喂 SDF 文件
   model spawn-cylinder <name> [--d 0.5 --len 1.0 --rho 500] [--pos ...]
   model spawn-file <name> <path> [--static] [--buoyancy] [--pos ...]
-  model load-ksm <name> <file.ksm> [--pos ...]
+                                   [--collision mesh|hull|none]
+                                   ★ --collision（2026-09-28）：碰撞体积计算方式，
+                                     mesh = 结构网格（默认，既有行为）/ hull = 凸包 / none = 无。
+  model load-ksm <name> <file.ksm> [--pos ...] [--collision mesh|hull|none]
                            ★ 与 GUI「加载模型」选 .ksm **同一份实现**（ModelManager::
                              LoadModelFromKsmFile）：解析五段 → 缓存 SDF/浮力/推力/
                              水动力/传感器 → 按有无推力·浮力分派 spawn
@@ -1305,6 +1331,15 @@ R"(keship_ctl — KeShip 无头指令入口
                                    · 无头侧没有 3D 水面 ⇒ 只清 JSON（物理侧靠 mtime 热更新跟上）；
                                    · 子世界来源链是本进程元数据，无头恒空 ⇒ 无需处理。
                                    ⚠ 检测到带 GUI 的仿真时默认拒绝（会破坏 GUI 状态），需 --force。
+  model set-collision <name> <mesh|hull|none>
+                                   ★ 设置**碰撞体积的计算方式**并**立即重建**（张老师 2026-09-28 要求）：
+                                     mesh = 结构网格（全细节；最精确、最贵）
+                                     hull = **凸包**（qhull 算的 3D 凸包；三角面数少得多）
+                                     none = **无碰撞**（最便宜）
+                                   背景：全细节网格作 collision 时，**2 个实例**就把实时率
+                                     从 1.15 压到 0.26（日志刷 45 万行 Trimesh 警告），
+                                     且与间距/是否漂浮无关（见 doc/plans/..._fix_plan.md §15）。
+                                   ⚠ 重建要读**本进程**配置缓存 ⇒ 与 load-ksm 写在同一个 script 里。
   model pose <name>
   model set-pose <name> x y z roll pitch yaw
 
@@ -1406,7 +1441,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
 
   // ── model ──
   if (cmd == "model") {
-    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|load-ksm|info|rebuild|save-ksm|delete|delete-all|pose|set-pose");
+    if (a.pos.empty()) Fail("用法：model list|spawn-hull|spawn-cylinder|spawn-file|load-ksm|info|rebuild|save-ksm|delete|delete-all|set-collision|pose|set-pose");
     const std::string sub = a.pos[0];
     std::vector<std::string> tail(a.pos.begin() + 1, a.pos.end());
     Args sa = a; sa.pos = tail;
@@ -1422,6 +1457,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     if (sub == "save-ksm")      return CmdModelSaveKsm(_mm, sa);
     if (sub == "delete")        return CmdModelDelete(_mm, sa);
     if (sub == "delete-all")    return CmdModelDeleteAll(_mm);
+    if (sub == "set-collision") return CmdModelSetCollision(_mm, sa);
     if (sub == "pose")          return CmdModelPose(_mm, sa);
     if (sub == "set-pose")      return CmdModelSetPose(_mm, sa);
     Fail("未知 model 子命令：" + sub);
