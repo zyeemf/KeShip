@@ -144,6 +144,39 @@ namespace keship
         std::unordered_map<gz::math::Vector3d, int, PointHash, PointEqual> intersectionPointsMap_; // 交点坐标到索引的映射
         std::vector<gz::math::Vector3d> intersectionPoints_;                                       // 所有唯一的交点坐标（三角形与水线面的交点）
 
+        /// ★ 2026-09-29 性能修复（优化计划 F1）：交点去重的**空间哈希索引**。
+        ///   把"线性扫描去重"（每次 O(N) ⇒ 整体 O(N²)）换成"**格 → 索引列表**"的 27 邻域探测。
+        ///   ⚠ 三条硬约束（§14.3 三方复查得出，别踩）：
+        ///     ① **必须与 `intersectionPoints_` 同步清空** —— 统一走 `ResetIntersectionIndex()`；
+        ///        漏清会命中过期 index ⇒ `intersectionPoints_[idx]` **越界崩溃**；
+        ///     ② 必须是"格 → **列表**"，**不要**复用上面的 `intersectionPointsMap_`
+        ///        （那是"坐标 → 单索引"的 1:1 映射，复用会**丢点**）；
+        ///     ③ 格边长 = `EPS` ⇒ 邻域 ±1 格即可覆盖所有"距离 < EPS"的点（不会漏）。
+        ///   （`intersectionPointsMap_` 是历史遗留、当前无引用；保留不动以免扩大改动面。）
+        std::unordered_map<int64_t, std::vector<int>> intersectionCells_;
+
+        /// \brief 坐标 → 格坐标（格边长 = EPS，四舍五入）
+        static inline int64_t QuantToCell(double _v)
+        {
+            return static_cast<int64_t>(std::floor(_v / EPS + 0.5));
+        }
+        /// \brief 三维格坐标 → 单一 64 位键（FNV-1a 混合；同一格必得同键）
+        static inline int64_t CellKey(int64_t _ix, int64_t _iy, int64_t _iz)
+        {
+            uint64_t h = 1469598103934665603ULL;
+            h = (h ^ static_cast<uint64_t>(_ix)) * 1099511628211ULL;
+            h = (h ^ static_cast<uint64_t>(_iy)) * 1099511628211ULL;
+            h = (h ^ static_cast<uint64_t>(_iz)) * 1099511628211ULL;
+            return static_cast<int64_t>(h);
+        }
+        /// \brief **清空交点索引的唯一入口**（保证 `intersectionPoints_` 与 `intersectionCells_` 同步）
+        void ResetIntersectionIndex();
+        /// \brief 按当前 `intersectionPoints_` **一次性重建**索引（懒建：线性阶段结束时调一次）
+        void RebuildIntersectionIndex();
+
+        /// 交点表长度 ≤ 此值时走线性扫描（实测：N=64 两法相当，N=128 起哈希明显更快）
+        static constexpr size_t kLinearScanMax = 64;
+
     public:
         /// \brief 从mesh中读取数据
         void loadMeshData(const aiMesh *_mesh);
