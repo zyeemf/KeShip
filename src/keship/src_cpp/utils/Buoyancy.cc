@@ -380,12 +380,33 @@ std::vector<keship::Polygon> keship::Buoyancy::buildPolygonFromSegments()
         // [DEBUG disabled] std::cout.flush();
 
     std::set<int> visited;
+
+    /// ★ 2026-09-29 性能修复（计划 §21.5 第 1 项）：把"当前环成员"的判定从
+    ///   `std::find(loop…)`（每步 O(|loop|) ⇒ 整体 **O(N²)**，N = 水线交点数）
+    ///   换成 **O(1) 成员标记**。
+    ///
+    ///   实现：按点 id 的"代号(generation)"数组 —— 每开始一个新环就 `++loopGen`
+    ///   （等价于清空标记，O(1)），判定 = `inLoopGen[id] == loopGen`。
+    ///
+    ///   ⚠ **语义完全等价**：判定的仍是"该点是否已在本环中"，push 的时机与顺序均不变
+    ///   ⇒ `loop` 的内容与顺序**逐位不变** ⇒ 返回体积逐位不变
+    ///   （由 `data/test/perf_buoyance_equiv.cc` 的改动前后高精度对照验证）。
+    ///
+    ///   尺寸取 `max(intersectionPoints_.size(), adj 最大键 + 1)` —— 两者都是点 id 的合法上界
+    ///   （所有 id 都来自 `getIntersectionPointIndex`，且 `intersectionPoints_` 每次调用前清空）。
+    size_t idBound = intersectionPoints_.size();
+    for (const auto &kv : adj)
+        idBound = std::max(idBound, static_cast<size_t>(kv.first) + 1);
+    std::vector<int> inLoopGen(idBound, 0);
+    int loopGen = 0;
+
     for (const auto &entry : adj)
     {
         int start = entry.first;
         if (visited.count(start) || entry.second.empty())
             continue;
 
+        ++loopGen;   /// 新环 ⇒ 新一代（等价于清空成员标记，O(1)）
         std::vector<int> loop;
         int current = start;
         int prev = -1;
@@ -407,8 +428,10 @@ std::vector<keship::Polygon> keship::Buoyancy::buildPolygonFromSegments()
                 visited.insert(current);
             }
             /// 如果还没添加，则添加到环中
-            if (std::find(loop.begin(), loop.end(), current) == loop.end())
+            /// （★ 2026-09-29：O(1) 成员标记，语义与原先的 std::find 等价 —— 见函数开头说明）
+            if (inLoopGen[static_cast<size_t>(current)] != loopGen)
             {
+                inLoopGen[static_cast<size_t>(current)] = loopGen;
                 loop.push_back(current);
             }
 
