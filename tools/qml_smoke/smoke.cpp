@@ -218,7 +218,11 @@ int main(int argc, char *argv[])
     rowModel["kind"] = "model"; rowModel["gtype"] = "";
     rowModel["text"] = QString::fromUtf8("probe_model"); rowModel["chain"] = "w1";
     rowModel["depth"] = 1; rowModel["midx"] = 0; rowModel["widx"] = -1;
-    rowModel["isStatic"] = false; rowModel["mathHull"] = false;
+    /// ★ 2026-09-29：`QML_SMOKE_STATIC_ROW=1` ⇒ 注入**静态模型行**。
+    ///   用途：静态模型下「⋯ 菜单里 浮力体/推进器/流体动力 应消失」这类判据 ——
+    ///   此前 harness 只能注入动态行 ⇒ **该场景测不到**（正是"空白行"问题的成因）。
+    const bool staticRow = !qgetenv("QML_SMOKE_STATIC_ROW").isEmpty();
+    rowModel["isStatic"] = staticRow; rowModel["mathHull"] = false;
     rowWater["kind"] = "water"; rowWater["gtype"] = "";
     rowWater["text"] = QString::fromUtf8("probe_water"); rowWater["chain"] = "w1";
     rowWater["depth"] = 1; rowWater["midx"] = -1; rowWater["widx"] = 0;
@@ -377,7 +381,82 @@ int main(int argc, char *argv[])
                      << " 宽 =" << menus[menuIndex]->property("width").toDouble()
                      << " 可见 =" << menus[menuIndex]->property("visible").toBool()
                      << " 不透明度 =" << menus[menuIndex]->property("opacity").toDouble();
+
+            /// ★ 2026-09-29 新增：**逐条目转储** —— 让"隐藏条目是否仍占高度"可量化。
+            ///   判据：`visible=false` 的条目 height 应为 0，且 Menu.implicitHeight 应随之减少；
+            ///   若隐藏项仍 h=30 ⇒ **菜单里就会出现空白行**（本轮张老师反馈的问题）。
+            {
+                QList<QObject *> lvs;
+                collectByClass(menus[menuIndex], "QQuickListView", lvs);
+                if (!lvs.isEmpty()) {
+                    QObject *lv = lvs.first();
+                    qDebug() << "[菜单条目] ListView.count =" << lv->property("count").toInt()
+                             << " contentHeight =" << lv->property("contentHeight").toDouble();
+                    QList<QObject *> its;
+                    collectByClass(lv, "QQuickMenuItem", its);
+                    int idx = 0;
+                    for (QObject *it : its) {
+                        qDebug().nospace().noquote() << "  [条目 " << idx++ << "] text='"
+                            << it->property("text").toString() << "'"
+                            << " visible=" << it->property("visible").toBool()
+                            << " h=" << it->property("height").toDouble()
+                            << " implicitH=" << it->property("implicitHeight").toDouble();
+                    }
+                    int nSep = 0;
+                    QList<QObject *> seps;
+                    collectByClass(lv, "QQuickSeparator", seps);
+                    nSep = seps.size();
+                    qDebug() << "[菜单条目] 分隔线数 =" << nSep;
+                }
+            }
         }
+    });
+
+    /// ★ 2026-09-29 新增：`QML_SMOKE_REDUMP=1` ⇒ 首次转储后 **+350ms 再读一次**同一菜单。
+    ///   用途：区分「布局尚未 pass ⇒ 读到旧值」与「真的没刷新」。
+    QTimer::singleShot(1250, [&]() {
+        if (qgetenv("QML_SMOKE_REDUMP").isEmpty()) return;
+        if (menuIndex < 0 || menuIndex >= menus.size()) return;
+        QObject *m = menus[menuIndex];
+        QList<QObject *> lvs;
+        collectByClass(m, "QQuickListView", lvs);
+        qDebug() << "[复读] Menu[" << menuIndex << "]"
+                 << " implicitH =" << m->property("implicitHeight").toDouble()
+                 << " h =" << m->property("height").toDouble()
+                 << " ListView.count =" << (lvs.isEmpty() ? -1 : lvs.first()->property("count").toInt())
+                 << " contentHeight =" << (lvs.isEmpty() ? -1 : lvs.first()->property("contentHeight").toDouble());
+    });
+
+    /// ★ 2026-09-29 新增：`QML_SMOKE_DUMP_ALL=1` ⇒ **逐个弹出并转储所有菜单**。
+    ///   必要性：QML 里每个委托都声明三个菜单 ⇒ 按下标抓很容易抓到"别的行的那一份实例"，
+    ///   看不出"静态行下应隐藏的条目"（本轮就误判过一次）。转储全部才能找到真正的那份。
+    QTimer::singleShot(940, [&]() {
+        if (qgetenv("QML_SMOKE_DUMP_ALL").isEmpty()) return;
+        qDebug() << "[全部菜单] 开始逐个转储，共" << menus.size() << "个";
+        for (int mi = 0; mi < menus.size(); ++mi) {
+            QObject *m = menus[mi];
+            QMetaObject::invokeMethod(m, "open");
+            QList<QObject *> lvs;
+            collectByClass(m, "QQuickListView", lvs);
+            if (lvs.isEmpty()) { qDebug() << "  [菜单" << mi << "] 无内部 ListView"; continue; }
+            QObject *lv = lvs.first();
+            QList<QObject *> its;
+            collectByClass(lv, "QQuickMenuItem", its);
+            qDebug() << "  [菜单" << mi << "] count =" << lv->property("count").toInt()
+                     << " contentHeight =" << lv->property("contentHeight").toDouble()
+                     << " Menu.implicitH =" << m->property("implicitHeight").toDouble()
+                     << " Menu.h =" << m->property("height").toDouble()
+                     << " 条目数 =" << its.size();
+            int k = 0;
+            for (QObject *it : its) {
+                qDebug().nospace().noquote() << "      条目" << k++ << " text='"
+                    << it->property("text").toString() << "'"
+                    << " visible=" << it->property("visible").toBool()
+                    << " h=" << it->property("height").toDouble();
+            }
+            QMetaObject::invokeMethod(m, "close");
+        }
+        qDebug() << "[全部菜单] 转储结束";
     });
 
     /// 可选：搜索功能端到端验证（QML_SMOKE_SEARCH=<词>）

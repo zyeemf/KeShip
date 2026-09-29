@@ -786,17 +786,31 @@ Rectangle {
                                     StyledMenuItem { text: "移动到子世界"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_MoveModelByIndex(modelData.midx); } }
                                     StyledSeparator {}
-                                    StyledMenuItem { text: "浮力体"
-                                        visible: !modelData.isStatic && !modelData.mathHull
+                                    /// ★ 2026-09-29 修：静态模型下**不能**用 `visible: false` 隐藏这三项 ——
+                                    ///   Qt 5.15 的 Menu 内部是 ListView，`visible:false` 的条目**仍占高度**
+                                    ///   ⇒ 会留下 3 行**空白行**（张老师 2026-09-29 反馈）。
+                                    ///   改为在**委托创建时用 `Menu.removeItem()` 真正移出菜单**
+                                    ///   （Qt 官方 API，专为动态增删菜单项设计；**不是** `Menu.delegate` ⇒ 不触红线）。
+                                    ///   ⚠ 不要试图改条目尺寸（`height`/`implicitHeight`）来塌缩 ——
+                                    ///     实测会破坏 Controls2 的隐式尺寸推导：整个菜单 `contentHeight`
+                                    ///     塌成 9~18（只剩分隔线），与 `implicitWidth` 的历史坑同源。
+                                    StyledMenuItem { id: miBuoy; text: "浮力体"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditBuoyancy(modelData.midx); } }
-                                    StyledMenuItem { text: "推进器"
-                                        visible: !modelData.isStatic
+                                    StyledMenuItem { id: miThrust; text: "推进器"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditThrust(modelData.midx); } }
-                                    StyledMenuItem { text: "流体动力"
-                                        visible: !modelData.isStatic
+                                    StyledMenuItem { id: miHydro; text: "流体动力"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditHydro(modelData.midx); } }
                                     StyledMenuItem { text: "传感器"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditSensor(modelData.midx); } }
+                                    Component.onCompleted: {
+                                        // 与原先的 visible 条件等价：mathHull 只影响浮力体；静态则三项全去
+                                        if (modelData.isStatic || modelData.mathHull)
+                                            modelRowMenu.removeItem(miBuoy)
+                                        if (modelData.isStatic) {
+                                            modelRowMenu.removeItem(miThrust)
+                                            modelRowMenu.removeItem(miHydro)
+                                        }
+                                    }
                                     StyledSeparator {}
                                     StyledMenuItem { text: "保存"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_SaveModel(modelData.midx); } }
