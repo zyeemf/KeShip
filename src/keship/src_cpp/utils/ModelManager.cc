@@ -1869,7 +1869,12 @@ std::string ModelManager::MakeBuoyancyPluginSDF(
   sdf << "    <plugin filename=\"libKSPlugin_HydroBuoyancy.so\""
       << " name=\"keship::KSPlugin_HydroBuoyancy\">\n"
       << "      <link_name>" << _config.linkName << "</link_name>\n"
-      << "      <enable_buoyancy>true</enable_buoyancy>\n"
+      /// ★ 2026-09-30 优化计划 F3：**没有浮力体时不要启用浮力**。
+      ///   原先恒为 true ⇒ 插件会走 `LoadSingleMeshBuoyancy`（拿**整船碰撞网格**当浮力体）
+      ///   ⇒ 而 `loadMeshData` 的顶点索引查找是 O(三角数 × 顶点数)，实测会**挂死**（>900 s）✗
+      ///   现在：bodies 非空才 true；为空（如"只开水动力"）⇒ false，浮力块整体跳过，水动力不受影响 ✓
+      << "      <enable_buoyancy>" << (_config.bodies.empty() ? "false" : "true")
+      << "</enable_buoyancy>\n"
       << "      <enable_hydro>" << (hasHydro ? "true" : "false") << "</enable_hydro>\n"
       << "      <fluid_density>" << _config.fluidDensity << "</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n";

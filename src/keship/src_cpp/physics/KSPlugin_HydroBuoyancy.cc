@@ -754,6 +754,15 @@ void KSPlugin_HydroBuoyancy::LoadParameters(
 }
 
 /////////////////////////////////////////////////
+namespace
+{
+/// ★ 2026-09-30 优化计划 F2：「用网格当浮力体」的**三角数上限**。
+///   根因：`Buoyancy::loadMeshData(MeshDataSimple)` 的顶点索引查找是 **O(nt × nv)**
+///   （每个三角形顶点都扫一遍全部顶点）⇒ 78k 三角 × 200k 顶点 ≈ 4.7e10 次 ⇒ **实测 >900 s 未返回**。
+///   上限依据：F1 之后每步 ≈ 50 ns/三角 ⇒ 1 万三角 ≈ 0.5 ms/步（可接受）；78k 三角 ≈ 4 ms/步 ✗。
+static constexpr size_t kMaxMeshBuoyancyTriangles = 10000;
+}  // namespace
+
 void KSPlugin_HydroBuoyancy::LoadSingleMeshBuoyancy(
     gz::sim::EntityComponentManager &_ecm)
 {
@@ -800,6 +809,19 @@ void KSPlugin_HydroBuoyancy::LoadSingleMeshBuoyancy(
   if (meshData.vertices.empty())
   {
     gzerr << "KSPlugin_HydroBuoyancy: 加载网格失败" << std::endl;
+    return;
+  }
+
+  /// ★ F2：三角数上限 —— 超限直接拒绝并说明替代做法，**不要让它在 loadMeshData 里挂死**
+  if (meshData.triangles.size() > kMaxMeshBuoyancyTriangles)
+  {
+    gzerr << "KSPlugin_HydroBuoyancy: 该网格三角数 " << meshData.triangles.size()
+          << " 超过「网格当浮力体」的上限 " << kMaxMeshBuoyancyTriangles
+          << "（顶点索引查找为 O(三角数 × 顶点数)，实测会挂死）。\n"
+             "        ⇒ 请改用 **Box / Cylinder 浮力体**（在浮力体编辑器里添加），"
+             "或换一个三角数更少的网格。\n"
+             "        本次**跳过该网格**（不启用网格浮力），仿真继续。"
+          << std::endl;
     return;
   }
 
@@ -931,6 +953,16 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
 
     if (meshData.vertices.empty())
       continue;
+
+    /// ★ F2：三角数上限（与单网格路径同一口径，见文件头常量说明）
+    if (meshData.triangles.size() > kMaxMeshBuoyancyTriangles)
+    {
+      gzerr << "KSPlugin_HydroBuoyancy: 浮力体 '" << body.name << "' 的网格三角数 "
+            << meshData.triangles.size() << " 超过上限 " << kMaxMeshBuoyancyTriangles
+            << " ⇒ **跳过该浮力体**（改用 Box / Cylinder 浮力体，或换更少的网格）"
+            << std::endl;
+      continue;
+    }
 
     body.buoyancy = std::make_shared<Buoyancy>();
     body.buoyancy->setDiagLogPrefix(this->logPrefix_);
