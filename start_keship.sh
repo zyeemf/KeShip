@@ -35,6 +35,7 @@ set -e
 NO_BUILD=false
 HEADLESS=false
 NO_GPU_WARM=false
+NO_D3D12=false
 EXTRA_GZ_ARGS=""
 
 while [ $# -gt 0 ]; do
@@ -42,11 +43,13 @@ while [ $# -gt 0 ]; do
         --no-build)     NO_BUILD=true; shift ;;
         --headless)     HEADLESS=true; shift ;;
         --no-gpu-warm)  NO_GPU_WARM=true; shift ;;
+        --no-d3d12)     NO_D3D12=true; shift ;;
         --help|-h)
             echo "KeShip 启动脚本"
             echo "  --no-build     跳过编译，直接启动（运行时可能是旧版本）"
             echo "  --headless     无头模式（gz sim -s，无 GUI）"
             echo "  --no-gpu-warm  跳过 GPU 预热"
+            echo "  --no-d3d12     退回 Mesa 默认渲染（软件渲染），用于对比/回滚"
             echo "  其余参数       转发为 Gazebo 的 extra_gz_args"
             echo "退出码: 0 正常 / 1 已有实例或启动失败 / 2 编译失败 / 3 环境缺失"
             exit 0
@@ -182,6 +185,29 @@ if [ -f "$KSHIP_WS/tools/auto_check.sh" ]; then
     bash "$KSHIP_WS/tools/auto_check.sh" --quick || true
     echo ""
 fi
+
+# ═══════════════════════════════════════════════════════════
+# Step 3.5: 渲染后端 —— 显式启用 Mesa 的 D3D12 后端（走 NVIDIA 独显）
+#   背景（2026-10-01 实测，详见 doc/plans/performance_optimization_plan.md §18）：
+#     WSL2 上 Mesa 默认走 WSLg 的 X11/DRI3 路径 ⇒ 依赖 /dev/dri（本机不存在）
+#     ⇒ 静默回落 CPU 软件渲染 llvmpipe。
+#     显式 GALLIUM_DRIVER=d3d12 即可走 D3D12 → NVIDIA RTX 5060，实测
+#     4 路相机 0.9622→0.9952、4 路 lidar 0.7221→0.9950（约 8× / 80×）。
+#   ⚠ 只用 export（不写 ~/.bashrc）⇒ 仅影响 KeShip，不污染全局环境。
+#   ⚠ MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA 必须给，否则默认落到 AMD 集显。
+# ═══════════════════════════════════════════════════════════
+if [ "$NO_D3D12" = true ]; then
+    echo "[渲染] 已禁用 D3D12 (--no-d3d12)，使用 Mesa 默认（通常为 llvmpipe 软件渲染）"
+else
+    export GALLIUM_DRIVER=d3d12
+    export MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA
+    unset MESA_LOADER_DRIVER_OVERRIDE   # 该变量不是选 Gallium 后端的方式，留着会干扰
+    echo "[渲染] 已启用 D3D12 后端（NVIDIA 独显）:"
+    echo "         GALLIUM_DRIVER=$GALLIUM_DRIVER"
+    echo "         MESA_D3D12_DEFAULT_ADAPTER_NAME=$MESA_D3D12_DEFAULT_ADAPTER_NAME"
+fi
+
+echo ""
 
 # ═══════════════════════════════════════════════════════════
 # Step 4: GPU 预热（解决 WSLg D3D12/NVIDIA 驱动竞争条件）
