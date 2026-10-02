@@ -18,6 +18,9 @@ class KeshipWorldBridge(Node):
         self.sub_ = self.create_subscription(
             String, '/keship/model_ready', self.on_model_ready, 10)
         self.bridges_ = {}
+        # ★ 2026-10-02：YAML 中间产物目录（代码生成、随模型生命周期创建/删除，
+        #   不是需要人工维护的配置文件）
+        self.bridge_dir_ = '/tmp/keship_bridges'
         self.get_logger().info('KeshipWorldBridge 就绪，等待模型事件...')
 
     def on_model_ready(self, msg: String):
@@ -44,44 +47,58 @@ class KeshipWorldBridge(Node):
         'Lidar':        ('scan',         'sensor_msgs/msg/LaserScan',      'gz.msgs.LaserScan'),
     }
 
+    # ★ 2026-10-02：**渲染型**传感器（会拉起渲染管线）→ 桥接采用 lazy。
+    #   依据：零订阅 ⇒ 传感器不启动 ⇒ 不渲染 ⇒ 不泄漏（实测）；
+    #        取消订阅 ⇒ 立即停止增长（实测）；而 d3d12 后端在渲染时持续泄漏。
+    #   非渲染型（IMU/NavSat/Magnetometer）保持持续桥接，行为不变。
+    RENDER_SENSOR_TYPES = {'Camera', 'Lidar'}
+
+    def _bridge_yaml_path(self, model_name: str) -> str:
+        return os.path.join(self.bridge_dir_, f'{model_name}.yaml')
+
+    @staticmethod
+    def _yaml_entry(ros_topic: str, gz_topic: str, ros_type: str,
+                    gz_type: str, direction: str, lazy: bool = False) -> str:
+        """生成单条 bridge 的 YAML 片段（字符串拼接，不依赖 PyYAML）。"""
+        lines = [
+            f'- ros_topic_name: "{ros_topic}"',
+            f'  gz_topic_name: "{gz_topic}"',
+            f'  ros_type_name: "{ros_type}"',
+            f'  gz_type_name: "{gz_type}"',
+            f'  direction: {direction}',
+        ]
+        if lazy:
+            lines.append('  lazy: true')
+        return '\n'.join(lines)
+
     def _spawn_bridge(self, model_name: str, thrusters: list, sensors: list):
-        """sensors 是实例列表: [{"type":"Camera","name":"front_cam","link":"base_link"}, ...]"""
+        """sensors 是实例列表: [{"type":"Camera","name":"front_cam","link":"base_link"}, ...]
+
+        ★ 2026-10-02 改动：由「CLI 参数 + -r remap」改为「生成 YAML + config_file」。
+          原因：`lazy` 只能通过 YAML 配置项设置（CLI 与 -p lazy:=true 均实测无效）。
+          YAML 里两端话题名各自显式给出，因此**不再需要 -r remap**，
+          且**ROS 话题名与改前逐字一致**（GUI 相机查看器按此名订阅）。
+        """
         if model_name in self.bridges_:
             self._delete_bridge(model_name)
 
-        # Phase 1: 基础参数 + ROS remaps
-        args = [
-            'ros2', 'run', 'ros_gz_bridge', 'parameter_bridge',
-            '--ros-args',
-            '-r', f'__node:={model_name}_bridge',
-            '-r', f'/world/keship_world/pose/info:={model_name}/pose',
-        ]
+        entries = []
 
-        # 传感器 topic remap (长路径 → 短名: {model}/{sensor_name})
-        sensor_count = 0
-        for s in sensors:
-            s_type = s.get('type', '')
-            s_name = s.get('name', '')
-            s_link = s.get('link', 'base_link')
-            info = self.SENSOR_MAP.get(s_type)
-            if not info or not s_name:
-                continue
-            data_type = info[0]
-            gz_topic = f'/world/keship_world/model/{model_name}/link/{s_link}/sensor/{s_name}/{data_type}'
-            ros_topic = f'{model_name}/{s_type.lower()}/{s_name}'
-            args += ['-r', f'{gz_topic}:={ros_topic}']
-            sensor_count += 1
+        # 位姿（非渲染，持续桥接）
+        entries.append(self._yaml_entry(
+            f'{model_name}/pose',
+            '/world/keship_world/pose/info',
+            'geometry_msgs/msg/PoseStamped', 'gz.msgs.Pose', 'GZ_TO_ROS'))
 
-        # Phase 2: bridge specs
-        args.append('--')
-        args.append(f'/world/keship_world/pose/info@geometry_msgs/msg/PoseStamped[gz.msgs.Pose')
-
+        # 推进器（ROS → GZ，持续）
         for t in thrusters:
-            args.append(
-                f'/keship/thrust/{model_name}/{t}'
-                f'@std_msgs/msg/Float64]gz.msgs.Double')
+            topic = f'/keship/thrust/{model_name}/{t}'
+            entries.append(self._yaml_entry(
+                topic, topic, 'std_msgs/msg/Float64', 'gz.msgs.Double', 'ROS_TO_GZ'))
 
-        # 传感器 bridge spec (GZ → ROS 方向，使用 [ 分隔符)
+        # 传感器（GZ → ROS）；渲染型走 lazy
+        sensor_count = 0
+        lazy_count = 0
         for s in sensors:
             s_type = s.get('type', '')
             s_name = s.get('name', '')
@@ -90,11 +107,32 @@ class KeshipWorldBridge(Node):
             if not info or not s_name:
                 continue
             data_type, ros_msg, gz_msg = info
-            args.append(
-                f'/world/keship_world/model/{model_name}/link/{s_link}/sensor/{s_name}/{data_type}'
-                f'@{ros_msg}[{gz_msg}')
+            gz_topic = (f'/world/keship_world/model/{model_name}'
+                        f'/link/{s_link}/sensor/{s_name}/{data_type}')
+            ros_topic = f'{model_name}/{s_type.lower()}/{s_name}'
+            is_lazy = s_type in self.RENDER_SENSOR_TYPES
+            entries.append(self._yaml_entry(
+                ros_topic, gz_topic, ros_msg, gz_msg, 'GZ_TO_ROS', lazy=is_lazy))
+            sensor_count += 1
+            if is_lazy:
+                lazy_count += 1
 
-        self.get_logger().info(f'[{model_name}] 启动 bridge: {len(thrusters)} 个推进器, {sensor_count} 个传感器')
+        os.makedirs(self.bridge_dir_, exist_ok=True)
+        yaml_path = self._bridge_yaml_path(model_name)
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(entries) + '\n')
+
+        args = [
+            'ros2', 'run', 'ros_gz_bridge', 'parameter_bridge',
+            '--ros-args',
+            '-r', f'__node:={model_name}_bridge',
+            '-p', f'config_file:={os.path.abspath(yaml_path)}',
+        ]
+
+        self.get_logger().info(
+            f'[{model_name}] 启动 bridge: {len(thrusters)} 个推进器, '
+            f'{sensor_count} 个传感器（其中 {lazy_count} 个 lazy 渲染型）'
+            f' | YAML={yaml_path}')
         proc = subprocess.Popen(args, start_new_session=True,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.bridges_[model_name] = proc
@@ -106,11 +144,17 @@ class KeshipWorldBridge(Node):
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except ProcessLookupError:
-                return
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                pass
+            else:
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        # 清理 YAML 中间产物
+        try:
+            os.remove(self._bridge_yaml_path(model_name))
+        except OSError:
+            pass
 
     def destroy_node(self):
         for name in list(self.bridges_.keys()):
