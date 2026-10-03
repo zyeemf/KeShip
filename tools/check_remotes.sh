@@ -15,8 +15,8 @@ export GIT_ASKPASS=/bin/true
 cd "$HOME/keship_ws" || { echo "[FAIL] 找不到仓库"; exit 2; }
 
 LOCAL="$(git rev-parse HEAD 2>/dev/null)"
-HW="$(timeout 20 git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)"
-GH="$(timeout 20 git ls-remote github refs/heads/main 2>/dev/null | cut -f1)"
+HW="$(timeout 45 git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)"
+GH="$(timeout 45 git ls-remote github refs/heads/main 2>/dev/null | cut -f1)"
 
 echo "本地      : ${LOCAL:-（取不到）}"
 echo "华为云    : ${HW:-（取不到）}"
