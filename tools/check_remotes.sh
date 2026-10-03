@@ -8,11 +8,15 @@
 # 用法: bash check_remotes.sh
 # ============================================================
 set -u
+# 禁用交互式凭据提示：避免某端无凭据/仓库不存在时挂起等待输入
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=/bin/true
+
 cd "$HOME/keship_ws" || { echo "[FAIL] 找不到仓库"; exit 2; }
 
 LOCAL="$(git rev-parse HEAD 2>/dev/null)"
-HW="$(git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)"
-GH="$(git ls-remote github refs/heads/main 2>/dev/null | cut -f1)"
+HW="$(timeout 20 git ls-remote origin refs/heads/main 2>/dev/null | cut -f1)"
+GH="$(timeout 20 git ls-remote github refs/heads/main 2>/dev/null | cut -f1)"
 
 echo "本地      : ${LOCAL:-（取不到）}"
 echo "华为云    : ${HW:-（取不到）}"
