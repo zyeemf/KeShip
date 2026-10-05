@@ -193,6 +193,14 @@ namespace keship
     /// \brief 当前水区的波浪场实体 ID（缓存在此，供**每帧**读 EnvFlow 组件用；
     /// 流速/风速可能被环境编辑器即时改动，不能只在"水区切换时"读一次）
     gz::sim::Entity activeWfEntity_{gz::sim::kNullEntity};
+
+    /// \brief 该 link 是否有**非零**流体附加质量（Configure 时判定一次）。
+    /// 为 false 时"出水取消 M_A"整段不生效 ⇒ 其他模型完全不受影响。
+    bool hasAddedMass_ = false;
+
+    /// \brief 当前是否处于"附加质量已取消"状态（用于**只在翻转时**下发命令，
+    /// 避免每帧调用 Link::SetFluidAddedMass 触发引擎重算惯性）。
+    bool maCancelled_ = false;
   };
 
 } // namespace keship

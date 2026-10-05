@@ -1018,7 +1018,7 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                         }
                     }
                     break;
-                case 0: // 水上水上都是三角形
+                case 0: // 水上水下都是三角形
                 {
                     int a = -1, b = -1, c = -1;
                     gz::math::Vector3d bc_mid;
@@ -1031,6 +1031,12 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
                         else
                             c = tri.v[i];
                     }
+                    /// ★ 2026-10-05 修复（退化三角形 ⇒ NaN）：
+                    ///   若三个顶点**全部**落在水线面内（signs 全 0），则 b/c 保持 -1，
+                    ///   下一行会 `vertices_[-1]` 越界 ⇒ subVol 变 NaN、仿真冻结。
+                    ///   该三角形体积贡献为 0 ⇒ 正确做法是**跳过**。
+                    if (b < 0 || c < 0)
+                        break;
                     bc_mid = vertices_[b] + (vertexDistances_[b] / (vertexDistances_[b] - vertexDistances_[c])) * (vertices_[c] - vertices_[b]);
                     /// 记录水线面多边形的边
                     waterPlaneSegments_.emplace_back(

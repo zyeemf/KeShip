@@ -40,6 +40,42 @@ find_package(ros_gz_sim REQUIRED)
 # 查找Gazebo依赖
 find_package(gz-sim8 REQUIRED) 
 set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
+
+# ── 能力探测（2026-10-05）：gz-sim 是否支持**运行时**设置流体附加质量 ──────────
+#   KeShip 的「完全出水时取消 M_A」(S2) 需要 `gz::sim::Link::SetFluidAddedMass()`。
+#   该接口**不是上游 8.11.0 自带的** —— 本工程给 gz-sim 打了补丁才有
+#   （见 doc/plans/ma_air_upstream_setter_feasibility.md）。
+#   为让**未打补丁**的环境也能正常编译，这里做能力探测：
+#     具备  ⇒ 定义 KESHIP_HAS_SET_FLUID_ADDED_MASS，启用 S2
+#     不具备 ⇒ 自动降级（S2 段不参与编译），其余功能完全不受影响
+include(CheckCXXSourceCompiles)
+set(_keship_saved_libs "${CMAKE_REQUIRED_LIBRARIES}")
+set(_keship_saved_incs "${CMAKE_REQUIRED_INCLUDES}")
+set(CMAKE_REQUIRED_LIBRARIES gz-sim8::core)
+get_target_property(_keship_gzs_incs gz-sim8::core INTERFACE_INCLUDE_DIRECTORIES)
+if(_keship_gzs_incs)
+  set(CMAKE_REQUIRED_INCLUDES ${_keship_gzs_incs})
+endif()
+check_cxx_source_compiles("
+  #include <gz/sim/Link.hh>
+  #include <gz/math/Matrix6.hh>
+  int main()
+  {
+    gz::sim::Link link;
+    gz::math::Matrix6d m = gz::math::Matrix6d::Zero;
+    link.SetFluidAddedMass(*(gz::sim::EntityComponentManager *)nullptr, m);
+    return 0;
+  }
+" KESHIP_HAS_SET_FLUID_ADDED_MASS)
+set(CMAKE_REQUIRED_LIBRARIES "${_keship_saved_libs}")
+set(CMAKE_REQUIRED_INCLUDES "${_keship_saved_incs}")
+
+if(KESHIP_HAS_SET_FLUID_ADDED_MASS)
+  add_definitions(-DKESHIP_HAS_SET_FLUID_ADDED_MASS)
+  message(STATUS "KeShip: gz-sim 具备 SetFluidAddedMass ⇒ 启用「完全出水取消 M_A」(S2)")
+else()
+  message(STATUS "KeShip: gz-sim **不具备** SetFluidAddedMass ⇒ 跳过 S2（自动降级，其余功能不变）")
+endif()
 find_package(gz-common5 REQUIRED) 
 set(GZ_COMMON_VER ${gz-common5_VERSION_MAJOR})
 find_package(Eigen3 REQUIRED)

@@ -3,6 +3,8 @@
  */
 /* KeShip 浮力-水动力合并插件实现 — 统一 PreUpdate 计算并一次性写入 ECM */
 
+#include <cstdlib>
+
 #include "KSPlugin_HydroBuoyancy.hh"
 
 #include <gz/sim/Model.hh>
@@ -121,6 +123,39 @@ void KSPlugin_HydroBuoyancy::Configure(
   }
   this->linkObj_ = gz::sim::Link(this->linkEntity_);
   this->linkObj_.EnableVelocityChecks(_ecm, true);
+
+#ifdef KESHIP_HAS_SET_FLUID_ADDED_MASS
+  /// ★ S2（2026-10-05）：读取 SDF 注入的**原始**流体附加质量。
+  ///   用于"完全出水时取消 M_A、重新入水时恢复"。
+  ///   注：`Link::SetFluidAddedMass` 只写命令组件、**不改 ECM 的 Inertial**，
+  ///   所以 ECM 里始终保存着 SDF 的原始值，可随时安全回读。
+  {
+    auto inertialComp =
+        _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_);
+    if (inertialComp && inertialComp->Data().FluidAddedMass().has_value())
+    {
+      const auto &m = inertialComp->Data().FluidAddedMass().value();
+      bool anyNonZero = false;
+      for (std::size_t r = 0; r < 6 && !anyNonZero; ++r)
+      {
+        for (std::size_t c = 0; c < 6; ++c)
+        {
+          if (std::abs(m(r, c)) > 1e-12)
+          {
+            anyNonZero = true;
+            break;
+          }
+        }
+      }
+      this->dataPtr->hasAddedMass_ = anyNonZero;
+      if (anyNonZero)
+      {
+        gzmsg << "KSPlugin_HydroBuoyancy: 检出流体附加质量"
+              << "（完全出水时将自动取消）" << std::endl;
+      }
+    }
+  }
+#endif  // KESHIP_HAS_SET_FLUID_ADDED_MASS
 
   /// 初始化 Fossen 模型（如已配置）
   if (this->enableHydro_)
@@ -445,6 +480,51 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       }
     }
   }
+
+#ifdef KESHIP_HAS_SET_FLUID_ADDED_MASS
+  /// ═══════════════════════════════════════════════
+  /// 5b. ★ S2（2026-10-05）：完全出水时取消流体附加质量
+  ///
+  ///   背景：SDF `<fluid_added_mass>` 只在**创建时**注入 DART 惯性张量，
+  ///   此后无法随介质变化 ⇒ 模型跃出水面后**仍带附加惯性**，空中运动失真
+  ///   （实测：垂荡自由落体加速度只有正确值的 **53%**，见
+  ///   `doc/plans/ma_air_correction_plan.md` §5.3）。
+  ///
+  ///   做法：在**状态翻转**时调用 `Link::SetFluidAddedMass`（依赖 gz-sim 侧 S1）：
+  ///     完全出水（浸水体积 ≈ 0 或不在水区）→ **零矩阵**
+  ///     重新入水                        → **恢复 ECM 中的原始值**
+  ///
+  ///   ★ 只在**翻转**时下发（每帧下发会触发引擎重算惯性）⇒ 静水 / 半浸场景
+  ///     **零开销、行为逐位不变**。
+  ///   ★ 仅对 `hasAddedMass_` 的模型生效 ⇒ 其他模型完全不受影响。
+  /// ═══════════════════════════════════════════════
+  /// ★ 调试/对照开关（2026-10-05）：`KESHIP_MA_CANCEL=0` 时**禁用**本段，
+  ///   等价于 S1 行为 —— 用于两态对照实验与快速回退。
+  static const bool maCancelEnabled = []() {
+    const char *e = std::getenv("KESHIP_MA_CANCEL");
+    return !(e && std::string(e) == "0");
+  }();
+
+  if (maCancelEnabled && this->dataPtr->hasAddedMass_)
+  {
+    const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
+    if (outOfWater != this->dataPtr->maCancelled_)
+    {
+      gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
+      if (!outOfWater)
+      {
+        auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
+        if (orig)
+          target = *orig;
+      }
+      this->linkObj_.SetFluidAddedMass(_ecm, target);
+      this->dataPtr->maCancelled_ = outOfWater;
+      gzmsg << "KSPlugin_HydroBuoyancy: 流体附加质量 "
+            << (outOfWater ? "已取消（完全出水）" : "已恢复（重新入水）")
+            << std::endl;
+    }
+  }
+#endif  // KESHIP_HAS_SET_FLUID_ADDED_MASS
 
   /// ═══════════════════════════════════════════════
   /// 6. 阻尼（水中，M_A 通过 <fluid_added_mass> 注入 DART 隐式处理）
