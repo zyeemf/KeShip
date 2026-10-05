@@ -9,6 +9,14 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+# ★ 2026-10-05：rclpy 新版本在 SIGINT 时让 spin 抛出本异常（非
+#   KeyboardInterrupt）；老版本无此类 ⇒ 兼容导入。
+try:
+    from rclpy.executors import ExternalShutdownException
+except ImportError:  # pragma: no cover - 老版 rclpy
+    class ExternalShutdownException(Exception):
+        pass
+
 
 class KeshipWorldBridge(Node):
     """监听 /keship/model_ready，动态创建/销毁 per-model ros_gz_bridge 子进程"""
@@ -165,11 +173,33 @@ class KeshipWorldBridge(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = KeshipWorldBridge()
+
+    # ★ 2026-10-05 修复（缺陷 ⑩）：ros2 launch 关闭时发 SIGTERM，
+    #   SIGINT 由 rclpy 默认处理。原实现只 `except KeyboardInterrupt`
+    #   ⇒ 两条路径都跳过 node.destroy_node() ⇒ per-model 的
+    #   `ros2 run ... parameter_bridge` 子进程（以 start_new_session 独立进程组
+    #   启动，不随父进程组终止）成为孤儿残留（实测 SIGINT/SIGTERM 均复现）。
+    #   修法：
+    #     · SIGTERM —— rclpy.spin() 阻塞在 C 层 rcl_wait，Python signal
+    #       handler **没有字节码边界、根本不被调用**（实测：进程既不
+    #       清理也不退出）⇒ 改用 `spin_once(timeout_sec=0.1)` 循环，
+    #       每轮回到 Python 层；handler 内直接清理并 os._exit(0)。
+    #     · SIGINT  —— rclpy 默认处理让 spin 抛异常 ⇒ 清理放 finally 即可（实测有效）。
+    def _on_sigterm(_signum, _frame):
+        try:
+            node.destroy_node()
+        finally:
+            os._exit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
-    node.destroy_node()
+    finally:
+        node.destroy_node()
 
 
 if __name__ == '__main__':
