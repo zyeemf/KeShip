@@ -4,6 +4,7 @@
 /* KeShip 浮力-水动力合并插件实现 — 统一 PreUpdate 计算并一次性写入 ECM */
 
 #include <cstdlib>
+#include <dlfcn.h>
 
 #include "KSPlugin_HydroBuoyancy.hh"
 
@@ -505,7 +506,20 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     return !(e && std::string(e) == "0");
   }();
 
-  if (maCancelEnabled && this->dataPtr->hasAddedMass_)
+  /// ★ 运行期二次确认（2026-10-05，紧急修复）：
+  ///   编译期有头文件 **≠** 运行期有实现 —— CMake 探测只保证"能编译"，
+  ///   但若本进程加载的是**未打补丁**的 gz-sim（如 ROS vendor 的那份），
+  ///   直接调用 `Link::SetFluidAddedMass` 会 `symbol lookup error` 并让
+  ///   **gz sim 进程直接死亡**（实测 exit code 127）。
+  ///   故此处用 dlsym 探测符号；**缺失时跳过 S2**（功能降级，但不崩）。
+  ///   ⚠ mangled name 随 gz 大版本变化；失配时同样降级（安全方向）。
+  static const bool maSymAvailable = []() {
+    return dlsym(RTLD_DEFAULT,
+        "_ZNK2gz3sim2v84Link17SetFluidAddedMassERNS1_22EntityComponentManager"
+        "ERKNS_4math2v77Matrix6IdEE") != nullptr;
+  }();
+
+  if (maSymAvailable && maCancelEnabled && this->dataPtr->hasAddedMass_)
   {
     const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
     if (outOfWater != this->dataPtr->maCancelled_)
