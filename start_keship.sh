@@ -210,6 +210,56 @@ fi
 echo ""
 
 # ═══════════════════════════════════════════════════════════
+# Step 3.6: 自建 gz-sim 优先（若存在）—— 让 GUI 也吃到 S2（运行时取消 M_A）
+#   背景（2026-10-06，详见 doc/plans/env_setup_automation_plan.md §6-T4）：
+#     S2 依赖 KeShip 给 gz-sim 打的补丁（Link::SetFluidAddedMass），上游没有。
+#     若运行时加载的是系统/vendor 那份 gz-sim ⇒ 符号缺失 ⇒ S2 自动降级
+#     （f7cdc6a 的运行期 dlsym 探测保证"降级不崩"，但功能不生效）。
+#   ⇒ 这里把自建前缀插到最前，使 GUI 下 S2 真正生效。
+#   ⚠ 两个变量都要设：LD_LIBRARY_PATH 管库；GZ_SIM_SYSTEM_PLUGIN_PATH 管 gz 系统插件。
+#   ⚠ 前缀不存在时保持原行为（走系统/vendor，S2 降级），不报错、不中断启动。
+# ═══════════════════════════════════════════════════════════
+KESHIP_GZ_PREFIX="${KESHIP_GZ_PREFIX:-/opt/keship-gz}"
+if [ -d "$KESHIP_GZ_PREFIX/lib" ]; then
+    export LD_LIBRARY_PATH="$KESHIP_GZ_PREFIX/lib:$LD_LIBRARY_PATH"
+    if [ -d "$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins" ]; then
+        export GZ_SIM_SYSTEM_PLUGIN_PATH="$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins:$GZ_SIM_SYSTEM_PLUGIN_PATH"
+    fi
+    echo "[环境] 已启用自建 gz-sim: $KESHIP_GZ_PREFIX （S2 出水取消 M_A 生效）"
+else
+    echo "[环境] 未发现自建 gz-sim（$KESHIP_GZ_PREFIX）—— S2 将自动降级"
+fi
+
+# ═══════════════════════════════════════════════════════════
+# Step 3.7: 自建 gz-physics 引擎插件（A）+ DART 告警静默（B）
+#   背景：DART 的 Inertia 语义是「刚体参数 (m,c,I)」，而附加质量 M_A 是各向异性
+#         对称阵 ⇒ M_RB+M_A 不再是刚体惯性形式 ⇒ verifySpatialTensor 告警刷屏。
+#         该告警**已判定良性**（求解器用原始 6×6，M_A 正确生效）。
+#         见 doc/audit/inertia_warning_2026-10-07.md §6.5。
+#   A: 自建 gz-physics7 的 dartsim 引擎插件（AddedMassFeatures 调 setSpatialTensor(M,false)）
+#      ⇒ 12 行/次 → 1 行/次（降 92%）。**需同时设两个变量**（gz-sim 默认引擎路径优先）。
+#   B: LD_PRELOAD 静默库（覆盖 dart::common::colorErr，吞 Inertia.cpp 的告警）⇒ 归零。
+#   ⚠ 两者都不改物理、不改数据；回退：KESHIP_PHYSICS_PREFIX="" / KESHIP_QUIET_INERTIA=0
+# ═══════════════════════════════════════════════════════════
+KESHIP_PHYSICS_PREFIX="${KESHIP_PHYSICS_PREFIX-/home/keship/gz-build/install-physics-7.8.0}"
+if [ -n "$KESHIP_PHYSICS_PREFIX" ] && [ -d "$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins" ]; then
+    export GZ_SIM_PHYSICS_ENGINE_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${GZ_SIM_PHYSICS_ENGINE_PATH:+:$GZ_SIM_PHYSICS_ENGINE_PATH}"
+    export LD_LIBRARY_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    echo "[环境] 已启用自建 gz-physics 引擎插件（A：关闭 DART 惯性自校验）: $KESHIP_PHYSICS_PREFIX"
+else
+    echo "[环境] 未发现自建 gz-physics（$KESHIP_PHYSICS_PREFIX）—— 走系统/vendor（告警照旧）"
+fi
+
+KESHIP_QUIET_INERTIA="${KESHIP_QUIET_INERTIA-1}"
+KESHIP_QUIET_SO=/home/keship/gz-build/kship_quiet_inertia.so
+if [ "$KESHIP_QUIET_INERTIA" = "1" ] && [ -f "$KESHIP_QUIET_SO" ]; then
+    export LD_PRELOAD="$KESHIP_QUIET_SO${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "[环境] 已启用 DART 告警静默库（B）: $KESHIP_QUIET_SO"
+fi
+
+echo ""
+
+# ═══════════════════════════════════════════════════════════
 # Step 4: GPU 预热（解决 WSLg D3D12/NVIDIA 驱动竞争条件）
 #   放在编译之后、紧邻启动 —— 见顶部顺序约束 2
 # ═══════════════════════════════════════════════════════════
