@@ -18,6 +18,7 @@
 
 #include <gz/sim/Link.hh>
 #include <gz/math/Pose3.hh>
+#include <gz/math/Matrix6.hh>
 #include <gz/msgs/param.pb.h>
 
 #include "Wavefield.hh"
@@ -48,6 +49,12 @@ namespace keship
     gz::math::Vector3d bboxMin{0, 0, 0};
     gz::math::Vector3d bboxMax{0, 0, 0};
     bool bboxValid = false;
+
+    /// ★ S3（2026-10-07）：浮力体几何 —— 供「按几何计算 M_A」用（Configure 时一次）。
+    /// 目前只对 **圆柱** 启用（解析式只对圆柱成立）；Box / Mesh 保持 false。
+    bool hasCylinder = false;
+    double cylRadius = 0.0;
+    double cylLength = 0.0;
   };
 
   class KSPlugin_HydroBuoyancy : public gz::sim::System,
@@ -201,6 +208,29 @@ namespace keship
     /// \brief 当前是否处于"附加质量已取消"状态（用于**只在翻转时**下发命令，
     /// 避免每帧调用 Link::SetFluidAddedMass 触发引擎重算惯性）。
     bool maCancelled_ = false;
+
+    /// ★ S3（2026-10-07） 按吃水、逐浮体的 M_A 参数化。
+    ///   KESHIP_MA_DRAFT=1 ⇒ 启用（每帧按各浮体浸没比 τ_i 计算并合成整船 6×6）；
+    ///   未设 / =0 ⇒ 现状（S2 二值），行为逐位不变。
+    bool maDraftEnabled_ = false;
+    /// 逐浮体浸没比 τ_i = V_sub,i / V_i（每帧更新；水外或未算 ⇒ 0）。
+    std::vector<double> bodySubFrac_;
+    /// 下发门控：上次实际下发的 M_A 与其有效性。
+    gz::math::Matrix6d lastMaSent_{gz::math::Matrix6d::Zero};
+    bool maSentValid_ = false;
+
+    /// ★ S3′（2026-10-07）：解析平衡浸没比 tau0 = (m/ρ) / ΣV（Configure 时一次算）。
+    ///   ≤0 ⇒ 不可用（运行时退回读 ECM 原值）。S3′ 用**固定 tau0**（不随帧变），
+    ///   只在首次入水下发一次 ⇒ 不每帧改惯性、不破坏动量守恒。
+    double maTau0_ = 0.0;
+    /// ★ S3′：跟踪"是否已下发过归零"（完全出水置位、重新入水清位）。
+    bool maZeroed_ = false;
+
+    /// ★ S3′（2026-10-07）：静止门控用 —— 上一步世界位姿（差分求速度）与其有效性。
+    gz::math::Vector3d lastPosePos_{gz::math::Vector3d::Zero};
+    bool lastPoseValid_ = false;
+    /// 最近一次算得的线速度（诊断用）。
+    double maLastVn_ = 0.0;
   };
 
 } // namespace keship
