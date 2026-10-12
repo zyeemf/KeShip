@@ -1,0 +1,62 @@
+# KeShip 环境依赖清单（单一事实来源 / Single Source of Truth）
+# ------------------------------------------------------------------
+# 供 env/keship-env.sh 的 check / install / repair 三种模式共用
+# —— 两类用户（高级用户全自动 / 学生用户自检修复）共用此文件，避免两轨漂移。
+#
+# 格式： <层>|<检查方式>|<标识>|<基线版本>|<说明>
+#   层      : base | gazebo | ros | keship
+#   检查方式: pkg  = dpkg 包（用 dpkg-query -W 检查）
+#             cmd  = 可执行文件（用 command -v 检查）
+#   标识    : 包名 / 命令名
+#   基线版本: KeShipV0010 实测版本（"-" 表示不参与判定，仅作参考）
+#   说明    : 为什么需要它（对应 CMakeLists.txt 的哪项 find_package 等）
+#
+# ⚠ 检查方式不能混用（2026-10-05 两次实测踩到）：
+#   * ca-certificates 是"包"，没有同名命令 —— 用 command -v 判会误报缺失；
+#   * lsb-release 是"包名"，而命令叫 lsb_release（下划线）—— 照抄包名会误报缺失。
+#   ⇒ 凡是 cmd 类，必须写"实际可执行的命令名"，不能照抄包名。
+#   ⇒ ★ 判据自检方法：在**已知完整**的基线环境上跑 check，**必须全绿**；
+#     不全绿即说明判据/清单有 bug，必须先修判据再往下走。
+#
+# 基线：KeShipV0010（Ubuntu 24.04.3 LTS + ROS Jazzy + gz-harmonic 1.0.0），2026-10-05 实测
+# ------------------------------------------------------------------
+
+# ===== base：基础工具链（空镜像 Ubuntu2404-Empty 缺 cmake / g++ / make）=====
+# 注：基线未安装 python3-pip（colcon 由 apt 提供），故不列入。
+base|pkg|ca-certificates|20260601~24.04.1|证书链；apt 走 https 源必需（⚠ 无同名命令）
+base|pkg|build-essential|12.10ubuntu1|编译工具链（含 g++ / make）
+base|pkg|cmake|3.28.3-1build7|CMake >= 3.28
+base|pkg|dpkg-dev|1.22.6ubuntu6.6|dpkg 开发工具
+base|pkg|pkg-config|1.8.1-2build1|find_package(PkgConfig)
+base|cmd|git|-|clone KeShip 仓库
+base|cmd|curl|-|下载依赖
+base|cmd|wget|-|下载依赖
+base|cmd|lsb_release|-|发行版识别（⚠ 包名 lsb-release，命令 lsb_release）
+
+# ===== gazebo：Gazebo Harmonic（元包，带 gz-sim8 / gz-physics7 / gz-common5 / gz-rendering8 / gz-gui8）=====
+gazebo|pkg|gz-harmonic|1.0.0-1~noble|仿真引擎元包（含 gz-sim8 8.10.0 / gz-physics7 7.6.0）
+gazebo|cmd|gz|-|gz 命令行（gz sim 等）
+
+# ===== ros：ROS 2 Jazzy =====
+# 注：cmd 类需先 source /opt/ros/jazzy/setup.bash 才可见（keship-env.sh 已处理）。
+ros|pkg|ros-jazzy-desktop|0.11.0-1noble|含 rclcpp / sensor_msgs / geometry_msgs / ament_* 等
+ros|pkg|ros-jazzy-ros-gz-sim|1.0.22|编译必需：find_package(ros_gz_sim REQUIRED)
+ros|pkg|ros-jazzy-ros-gz-bridge|1.0.22|运行必需：parameter_bridge 动态桥
+ros|pkg|python3-colcon-common-extensions|0.3.0-100|构建工具（colcon）
+ros|cmd|ros2|-|ros2 CLI（需 source ROS 后可见）
+
+# ===== keship：KeShip 直接依赖（逐项对应 src/keship/CMakeLists.txt 的 find_package）=====
+keship|pkg|libassimp-dev|5.3.1+ds-2build1|find_package(assimp)
+keship|pkg|libeigen3-dev|3.4.0-4build0.1|find_package(Eigen3)
+keship|pkg|qtbase5-dev|5.15.13|find_package(Qt5 5.15) —— 核心（⚠ 是 Qt5，不是 Qt6）
+keship|pkg|qtdeclarative5-dev|5.15.13|Qt5 QML 开发包
+keship|pkg|qml-module-qtquick2|5.15.13|QML 运行时
+keship|pkg|qml-module-qtquick-controls2|5.15.13|QML 控件（界面用）
+keship|pkg|libqt5opengl5-dev|5.15.13|Qt5 OpenGL 开发包
+keship|pkg|fonts-noto-cjk|20230817|中文字体（缺则 GUI 中文显示为方框）
+
+# ===== L1 附加：自建 gz-sim 部署（可选层，见 plan §6-T4）=====
+# L1 不使用 apt 包，而是把自建 gz-sim 8.11.0（含 S1 patch）装到 /opt/keship-gz/，
+# 由 start_keship.sh 探测后 export LD_LIBRARY_PATH（张老师要求 GUI 也要有 S2 能力）。
+# 检查项由 keship-env.sh 单独实现，此处仅记录约定：
+#   /opt/keship-gz/lib/libgz-sim8.so.8.11.0   自建 gz-sim 部署产物
