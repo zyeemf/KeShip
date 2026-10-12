@@ -1,0 +1,168 @@
+--- include/gz/sim/Link.hh.bak_s1	2026-03-13 04:36:00.000000000 +0800
++++ include/gz/sim/Link.hh	2026-10-05 16:43:19.427698541 +0800
+@@ -357,6 +357,23 @@
+                                   const math::Vector3d &_torque,
+                                   const math::Vector3d &_offset) const;
+ 
++      /// \brief Set the fluid added mass of this link **at runtime**.
++      ///
++      /// By default the added mass is only injected once, from the SDF
++      /// `<fluid_added_mass>` element, when the entity is created; it can never
++      /// be changed afterwards. This method writes an
++      /// `ExternalFluidAddedMassCmd` component which the Physics system
++      /// forwards to `gz::physics::AddedMass::Link::SetAddedMass()`, so the
++      /// value takes effect on the next physics step.
++      ///
++      /// \note Added by KeShip (2026-10-05).
++      /// \param[in] _ecm Mutable Entity-component manager.
++      /// \param[in] _addedMass 6x6 added-mass matrix, row-major. Units match
++      /// the SDF `<fluid_added_mass>` element (kg for the top-left 3x3 block,
++      /// kg*m^2 for the bottom-right 3x3 block).
++      public: void SetFluidAddedMass(EntityComponentManager &_ecm,
++                                     const math::Matrix6d &_addedMass) const;
++
+       /// \brief By default, Gazebo will not report bounding box for a link, so
+       /// functions like `AxisAlignedBox` and `WorldAxisAlignedBox` will return
+       /// nullopt. This function can be used to enable bounding box checks and
+--- src/Link.cc.bak_s1	2026-03-13 04:36:00.000000000 +0800
++++ src/Link.cc	2026-10-05 16:43:19.428274180 +0800
+@@ -28,6 +28,7 @@
+ #include "gz/sim/components/CanonicalLink.hh"
+ #include "gz/sim/components/Collision.hh"
+ #include "gz/sim/components/ExternalWorldWrenchCmd.hh"
++#include "gz/sim/components/ExternalFluidAddedMassCmd.hh"
+ #include "gz/sim/components/Inertial.hh"
+ #include "gz/sim/components/Joint.hh"
+ #include "gz/sim/components/LinearAcceleration.hh"
+@@ -536,6 +537,34 @@
+   }
+ }
+ 
++//////////////////////////////////////////////////
++void Link::SetFluidAddedMass(EntityComponentManager &_ecm,
++                             const math::Matrix6d &_addedMass) const
++{
++  // Flatten to row-major 36 doubles (the component stores a std::vector<double>
++  // so that it can reuse the existing VectorDoubleSerializer).
++  std::vector<double> flat(36, 0.0);
++  for (std::size_t r = 0; r < 6; ++r)
++  {
++    for (std::size_t c = 0; c < 6; ++c)
++    {
++      flat[r * 6 + c] = _addedMass(r, c);
++    }
++  }
++
++  auto comp =
++      _ecm.Component<components::ExternalFluidAddedMassCmd>(this->dataPtr->id);
++  if (comp)
++  {
++    comp->Data() = flat;
++  }
++  else
++  {
++    _ecm.CreateComponent(this->dataPtr->id,
++        components::ExternalFluidAddedMassCmd(flat));
++  }
++}
++
+ //////////////////////////////////////////////////
+ void Link::EnableBoundingBoxChecks(
+   EntityComponentManager & _ecm,
+--- src/systems/physics/Physics.cc.bak_s1	2026-03-13 04:36:00.000000000 +0800
++++ src/systems/physics/Physics.cc	2026-10-05 16:43:39.476470450 +0800
+@@ -51,6 +51,7 @@
+ #include <gz/physics/RelativeQuantity.hh>
+ #include <gz/physics/RequestEngine.hh>
+ 
++#include <gz/physics/AddedMass.hh>
+ #include <gz/physics/BoxShape.hh>
+ #include <gz/physics/ConeShape.hh>
+ #include <gz/physics/ContactProperties.hh>
+@@ -133,6 +134,7 @@
+ #include "gz/sim/components/ParentLinkName.hh"
+ #include "gz/sim/components/RaycastData.hh"
+ #include "gz/sim/components/ExternalWorldWrenchCmd.hh"
++#include "gz/sim/components/ExternalFluidAddedMassCmd.hh"
+ #include "gz/sim/components/JointTransmittedWrench.hh"
+ #include "gz/sim/components/JointForceCmd.hh"
+ #include "gz/sim/components/Physics.hh"
+@@ -568,6 +570,12 @@
+   public: struct LinkForceFeatureList : physics::FeatureList<
+             physics::AddLinkExternalForceTorque>{};
+ 
++  //////////////////////////////////////////////////
++  // Added mass (KeShip, 2026-10-05)
++  /// \brief Feature list for setting a link's fluid added mass at runtime.
++  public: struct AddedMassFeatureList : physics::FeatureList<
++            physics::AddedMass>{};
++
+ 
+   //////////////////////////////////////////////////
+   // Model Bounding box
+@@ -721,7 +729,8 @@
+             HeightmapFeatureList,
+             LinkForceFeatureList,
+             MeshFeatureList,
+-            LinkBoundingBoxFeatureList>;
++            LinkBoundingBoxFeatureList,
++            AddedMassFeatureList>;
+ 
+   /// \brief A map between link entity ids in the ECM to Link Entities in
+   /// gz-physics.
+@@ -2442,6 +2451,55 @@
+ 
+         return true;
+       });
++
++  // Fluid added mass commands (KeShip, 2026-10-05)
++  // Forwards the commanded 6x6 matrix to gz-physics so the link's added mass
++  // can change at runtime. Nothing writes this component unless a plugin
++  // explicitly asks for it, so this loop is a no-op by default.
++  _ecm.Each<components::ExternalFluidAddedMassCmd>(
++      [&](const Entity &_entity,
++          const components::ExternalFluidAddedMassCmd *_maComp)
++      {
++        if (!this->entityLinkMap.HasEntity(_entity))
++        {
++          return true;
++        }
++
++        auto linkAddedMassFeature =
++            this->entityLinkMap.EntityCast<AddedMassFeatureList>(_entity);
++        if (!linkAddedMassFeature)
++        {
++          static bool informed{false};
++          if (!informed)
++          {
++            gzdbg << "Attempting to set the fluid added mass, but the physics "
++                   << "engine doesn't support feature [AddedMass]. Command will "
++                   << "be ignored." << std::endl;
++            informed = true;
++          }
++          return false;
++        }
++
++        const auto &flat = _maComp->Data();
++        if (flat.size() != 36u)
++        {
++          gzerr << "ExternalFluidAddedMassCmd must hold 36 values, got "
++                << flat.size() << ". Ignoring." << std::endl;
++          return true;
++        }
++
++        math::Matrix6d m;
++        for (std::size_t r = 0; r < 6; ++r)
++        {
++          for (std::size_t c = 0; c < 6; ++c)
++          {
++            m(r, c) = flat[r * 6 + c];
++          }
++        }
++        linkAddedMassFeature->SetAddedMass(m);
++
++        return true;
++      });
+ 
+   // Update model pose
+   auto olderWorldPoseCmdsToRemove = std::move(this->worldPoseCmdsToRemove);

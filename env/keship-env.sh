@@ -240,7 +240,20 @@ do_install() {
   echo ""
 
   if [ "$profile" = "full" ]; then
-    echo "[L1] 自建 gz-sim 部署 —— 尚未实现（T4）"
+    echo "[L1] 自建 gz-sim（含 S1 patch）部署"
+    local here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$here/gz/deploy_gz.sh" ]; then
+      if [ "$(id -u)" -eq 0 ]; then
+        bash "$here/gz/deploy_gz.sh" \
+          || echo "  [警告] L1 部署失败 —— 可稍后手动: sudo bash env/gz/deploy_gz.sh"
+      else
+        echo "  [跳过] 需 root（装到 /opt/keship-gz）"
+        echo "         请手动执行: sudo bash env/gz/deploy_gz.sh"
+      fi
+    else
+      echo "  [警告] 找不到 $here/gz/deploy_gz.sh"
+    fi
     echo ""
   fi
 
