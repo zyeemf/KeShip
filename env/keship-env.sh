@@ -248,8 +248,10 @@ do_install() {
         bash "$here/gz/deploy_gz.sh" \
           || echo "  [警告] L1 部署失败 —— 可稍后手动: sudo bash env/gz/deploy_gz.sh"
       else
-        echo "  [跳过] 需 root（装到 /opt/keship-gz）"
-        echo "         请手动执行: sudo bash env/gz/deploy_gz.sh"
+        # 非 root：免 sudo 装用户前缀（start_keship.sh 已能自动探测 $HOME/keship-gz）
+        echo "  [L1] 非 root ⇒ 安装到用户前缀 \$HOME/keship-gz（免 sudo）"
+        bash "$here/gz/deploy_gz.sh" --prefix="$HOME/keship-gz" \
+          || echo "  [警告] L1 部署失败 —— 可稍后手动: bash env/gz/deploy_gz.sh --prefix=\$HOME/keship-gz"
       fi
     else
       echo "  [警告] 找不到 $here/gz/deploy_gz.sh"
