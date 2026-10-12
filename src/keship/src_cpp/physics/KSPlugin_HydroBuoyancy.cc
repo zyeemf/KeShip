@@ -36,6 +36,104 @@
 using namespace keship;
 
 /////////////////////////////////////////////////
+
+namespace
+{
+  /// 下发门控：目标 M_A 相对「上次下发值」的变化超过 **max(1e-6, eps·量级)** 才调用引擎。
+  /// ★ 可用环境变量 **KESHIP_MA_EPS** 覆盖（默认 0.005）——
+  ///   设成极大值（如 1e9）⇒ **只在首次下发一次**，用于判别漂移根因。
+  inline double MaRelEps()
+  {
+    static const double v = []() {
+      const char *e = std::getenv("KESHIP_MA_EPS");
+      return (e && *e) ? std::stod(std::string(e)) : 0.005;
+    }();
+    return v;
+  }
+
+  /// 3×3 反对称矩阵 [p]×（gz::math::Matrix3d 为行主序构造）
+  inline gz::math::Matrix3d SkewSym(const gz::math::Vector3d &_p)
+  {
+    return gz::math::Matrix3d(0.0, -_p.Z(), _p.Y(),
+                              _p.Z(), 0.0, -_p.X(),
+                              -_p.Y(), _p.X(), 0.0);
+  }
+
+  /// 单个浮力体在**自身坐标系**（圆柱轴 = z）下的附加质量 6×6。
+  /// 线性在前（surge/sway/heave, roll/pitch/yaw），与 SDF <fluid_added_mass> 同序。
+  /// 解析式复用 GUI 侧 HydrodynamicsEditorDialog::cylinderAddedMass（:489）：
+  ///   径向 1.0·ρV（二维势流 C_a = 1）、轴向 0.02·ρV（细长体）、
+  ///   绕横轴 0.25·ρV·L²/12、绕轴 0.02·ρV·r²。
+  /// ⚠ 这是**全浸**值；吃水影响由调用方乘 γ(τ)。
+  inline gz::math::Matrix6d BodyAddedMassLocal(double _r, double _L, double _rho)
+  {
+    const double kPi = 3.14159265358979323846;
+    const double V = kPi * _r * _r * _L;
+    const double mV = _rho * V;
+    gz::math::Matrix6d m = gz::math::Matrix6d::Zero;
+    m(0, 0) = 1.00 * mV;
+    m(1, 1) = 1.00 * mV;
+    m(2, 2) = 0.02 * mV;
+    m(3, 3) = 0.25 * mV * _L * _L / 12.0;
+    m(4, 4) = 0.25 * mV * _L * _L / 12.0;
+    m(5, 5) = 0.02 * mV * _r * _r;
+    return m;
+  }
+
+  /// 把 6×6 空间惯性从浮体自身系变换到 link 系（线性在前）：
+  ///   M_link = X^{-T} · M_body · X^{-1},   X = [[R, [p]×R], [0, R]]
+  /// （Featherstone 空间变换；已用"质点平移"算例手验，见 plans/s3_*.md）
+  inline gz::math::Matrix6d TransformAddedMass(const gz::math::Matrix6d &_m,
+                                               const gz::math::Pose3d &_pose)
+  {
+    const gz::math::Matrix3d R(_pose.Rot());
+    const gz::math::Matrix3d Rt = R.Transposed();
+    const gz::math::Matrix3d px = SkewSym(_pose.Pos());
+
+    gz::math::Matrix6d Xi = gz::math::Matrix6d::Zero;      // X^{-1}
+    Xi.SetSubmatrix(gz::math::Matrix6d::TOP_LEFT,     Rt);
+    gz::math::Matrix3d mRtPx = Rt * px;                 // -Rᵀ[p]×
+    for (int ii = 0; ii < 3; ++ii)
+      for (int jj = 0; jj < 3; ++jj)
+        mRtPx(ii, jj) = -mRtPx(ii, jj);
+    Xi.SetSubmatrix(gz::math::Matrix6d::TOP_RIGHT,    mRtPx);
+    Xi.SetSubmatrix(gz::math::Matrix6d::BOTTOM_RIGHT, Rt);
+
+    gz::math::Matrix6d Xit = gz::math::Matrix6d::Zero;     // X^{-T}
+    Xit.SetSubmatrix(gz::math::Matrix6d::TOP_LEFT,     R);
+    Xit.SetSubmatrix(gz::math::Matrix6d::BOTTOM_LEFT,  px * R);
+    Xit.SetSubmatrix(gz::math::Matrix6d::BOTTOM_RIGHT, R);
+
+    return Xit * _m * Xi;
+  }
+
+  /// 整船合成：逐浮体（几何值 × γ(τ_i)）→ 变换到 link 系 → 相加。
+  inline gz::math::Matrix6d ShipGeometricAddedMass(
+      const std::vector<keship::BuoyancyBody> &_bodies,
+      const std::vector<double> &_tau,
+      double _rho)
+  {
+    gz::math::Matrix6d sum = gz::math::Matrix6d::Zero;
+    for (std::size_t i = 0; i < _bodies.size(); ++i)
+    {
+      const auto &b = _bodies[i];
+      if (!b.hasCylinder)
+        continue;
+      const double tau = (i < _tau.size()) ? _tau[i] : 0.0;
+      if (tau <= 0.0)
+        continue;
+      /// γ(τ) = τ —— 浸没体积比（纯几何量；阶段 1 占位，阶段 2 可换更精确的形状函数）
+      gz::math::Matrix6d local =
+          BodyAddedMassLocal(b.cylRadius, b.cylLength, _rho);
+      for (int ii = 0; ii < 6; ++ii)
+        for (int jj = 0; jj < 6; ++jj)
+          local(ii, jj) *= tau;
+      sum = sum + TransformAddedMass(local, b.poseOffset);
+    }
+    return sum;
+  }
+}  // namespace
+
 KSPlugin_HydroBuoyancy::KSPlugin_HydroBuoyancy()
     : System(), dataPtr(gz::utils::MakeUniqueImpl<Implementation>())
 {
@@ -215,6 +313,44 @@ void KSPlugin_HydroBuoyancy::Configure(
   else
     this->LoadSingleMeshBuoyancy(_ecm);
 
+  /// ★ S3（2026-10-07）：按吃水逐浮体 M_A 参数化开关（默认关 ⇒ 行为与现状逐位一致）。
+  {
+    const char *e = std::getenv("KESHIP_MA_DRAFT");
+    this->dataPtr->maDraftEnabled_ = (e && std::string(e) == "1");
+    this->dataPtr->bodySubFrac_.assign(this->dataPtr->bodies.size(), 0.0);
+    if (this->dataPtr->maDraftEnabled_)
+    {
+      int nCyl = 0;
+      for (const auto &b : this->dataPtr->bodies)
+        if (b.hasCylinder) ++nCyl;
+      gzmsg << "KSPlugin_HydroBuoyancy: S3 按吃水逐浮体 M_A 已启用 — 浮力体 "
+            << this->dataPtr->bodies.size() << " 个（圆柱 " << nCyl << " 个）"
+            << std::endl;
+
+      /// ★ S3′（2026-10-07）：一次性算出**解析平衡浸没比** tau0 = (m/ρ) / ΣV。
+      ///   m 从 ECM Inertial 读（与 KSPlugin_VariableMass 同源）；
+      ///   ΣV 用**全部**浮力体的 totalVolume（不限于圆柱体）。
+      ///   mass 或 ΣV 无效（≤0）⇒ tau0 = 0（不可用，运行时退回读 ECM 原值）。
+      double mass = 0.0;
+      auto inerComp =
+          _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_);
+      if (inerComp)
+        mass = inerComp->Data().MassMatrix().Mass();
+      double sumV = 0.0;
+      for (const auto &b : this->dataPtr->bodies)
+        sumV += b.totalVolume;
+      if (mass > 0.0 && sumV > 1e-12 && this->dataPtr->fluidDensity_ > 0.0)
+        this->dataPtr->maTau0_ =
+            (mass / this->dataPtr->fluidDensity_) / sumV;
+      else
+        this->dataPtr->maTau0_ = 0.0;
+      gzmsg << "KSPlugin_HydroBuoyancy: [S3′] 解析平衡浸没比 tau0="
+            << this->dataPtr->maTau0_ << " (mass=" << mass
+            << ", sumV=" << sumV << ", rho=" << this->dataPtr->fluidDensity_
+            << ")" << std::endl;
+    }
+  }
+
   gzmsg << "KSPlugin_HydroBuoyancy: 配置完成 — "
         << "buoyancy=" << (enableBuoyancy_?"on":"off")
         << ", hydro=" << (enableHydro_?"on":"off")
@@ -362,6 +498,9 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   keship::ForceAccumulator acc(linkWorldPos);
   double totalSubVol = 0.0;
 
+  /// ★ S3（2026-10-07）：逐浮体浸没比每帧从 0 起算（水外 / 未算即为 0）。
+  this->dataPtr->bodySubFrac_.assign(this->dataPtr->bodies.size(), 0.0);
+
   /// 时间记录（波浪时间全局统一，无 per-model 缓起）
   this->dataPtr->simTime_ = _info.simTime;
 
@@ -414,6 +553,11 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       gz::math::Plane<double> waterPlane(waveNormal, waveOffset);
       double subVol = body.buoyancy->calculateTotalVolumeContribution(
           bodyWorldPose, waterPlane);
+
+      /// ★ S3（2026-10-07）：该浮力体的浸没体积比 τ_i（几何量，供 M_A 参数化）。
+      if (bodyIdx < static_cast<int>(this->dataPtr->bodySubFrac_.size()))
+        this->dataPtr->bodySubFrac_[bodyIdx] =
+            (body.totalVolume > 1e-12) ? (subVol / body.totalVolume) : 0.0;
 
       /// [DIAG-D1] 每 body 浮力计算诊断（写日志文件，限频）
       {
@@ -522,20 +666,116 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   if (maSymAvailable && maCancelEnabled && this->dataPtr->hasAddedMass_)
   {
     const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
-    if (outOfWater != this->dataPtr->maCancelled_)
+
+    /// ★ S3′（2026-10-07 最终形态）：**静止门控**。
+    ///   机理（三组受控实验得出）：改 link 惯性时若速度 v≠0，动量 p=M·v 会跳变
+    ///   ⇒ 等效冲量 ⇒ 水平漂移。实测：静止稳态改惯性漂移仅 0.003 m；
+    ///   入水冲击期（v 大）改惯性漂 0.14~0.25 m。
+    ///   ⇒ 把"改惯性"推迟到运动量很小时；剧烈运动中保持当前惯性（安全降级）。
+    bool outStable = outOfWater;
+    bool inStable = !outOfWater;
+    if (this->dataPtr->maDraftEnabled_)
     {
-      gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
-      if (!outOfWater)
+      /// 速度用**位姿差分**求（不依赖 velocity-check 组件 ——
+      /// 实测该组件未被写入时恒返回 nullopt，会把合法情形也挡掉）。
+      static const double kQuiescentV = 0.02;  // m/s
+      double vn = 0.0;
+      const auto wpose = this->linkObj_.WorldPose(_ecm);
+      if (wpose)
+      {
+        if (this->dataPtr->lastPoseValid_)
+        {
+          const double dt = std::chrono::duration<double>(_info.dt).count();
+          if (dt > 1e-9)
+            vn = (wpose->Pos() - this->dataPtr->lastPosePos_).Length() / dt;
+        }
+        this->dataPtr->lastPosePos_ = wpose->Pos();
+        this->dataPtr->lastPoseValid_ = true;
+      }
+      this->dataPtr->maLastVn_ = vn;
+      const bool quiescent = (vn < kQuiescentV);
+      outStable = outOfWater && quiescent;
+      inStable  = (!outOfWater) && quiescent;
+    }
+
+    /// ★ S3′（2026-10-07）：目标 M_A —— 出水 ⇒ 0；
+    ///   入水 ⇒ 按**解析平衡浸没比 tau0** 的几何值（S3 开）或 ECM 原值（S3 关，= 现状）。
+    gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
+    if (!outStable)
+    {
+      if (this->dataPtr->maDraftEnabled_ && !this->dataPtr->bodies.empty()
+          && this->dataPtr->maTau0_ > 0.0)
+      {
+        /// ★ S3′：用**固定的解析平衡浸没比 tau0**（而非当前帧 bodySubFrac_），
+        ///   每个浮力体同取 tau0 ⇒ 整船 M_A 恒定，只在下发时机上受门控。
+        const std::vector<double> tau0Vec(this->dataPtr->bodies.size(),
+                                          this->dataPtr->maTau0_);
+        target = ShipGeometricAddedMass(this->dataPtr->bodies, tau0Vec,
+                                        this->dataPtr->fluidDensity_);
+      }
+      else
       {
         auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
         if (orig)
           target = *orig;
       }
+    }
+
+    /// ★ S3′（2026-10-07）：下发门控。
+    ///   S3′ 模式：**只在首次入水下发一次**，以及"完全出水↔重新入水"的状态翻转；
+    ///     之后不再因目标值随帧变化而下发 ⇒ 不破坏动量守恒。
+    ///   S3 关（默认，KESHIP_MA_DRAFT≠1）：沿用「相对上次下发值变化超阈值」门控，
+    ///     行为与改动前逐位一致。
+    bool needSend = false;
+    /// ★ S3′（2026-10-07 最终形态）：状态翻转（出水↔入水）**且静止**时下发；
+    ///   保持 S2 的"完全出水 ⇒ 归零"语义。
+    if (this->dataPtr->maDraftEnabled_)
+      needSend = (outStable && !this->dataPtr->maZeroed_)
+              || (inStable && (!this->dataPtr->maSentValid_ || this->dataPtr->maZeroed_));
+    else
+    {
+      needSend = !this->dataPtr->maSentValid_;
+      if (!needSend)
+      {
+        double dmax = 0.0, scale = 0.0;
+        for (int i = 0; i < 6; ++i)
+          for (int j = 0; j < 6; ++j)
+          {
+            scale = std::max(scale, std::abs(target(i, j)));
+            dmax = std::max(dmax, std::abs(target(i, j)
+                         - this->dataPtr->lastMaSent_(i, j)));
+          }
+        needSend = (dmax > std::max(1e-6, MaRelEps() * scale));
+      }
+    }
+    if (needSend)
+    {
       this->linkObj_.SetFluidAddedMass(_ecm, target);
+      this->dataPtr->lastMaSent_ = target;
+      this->dataPtr->maSentValid_ = true;
       this->dataPtr->maCancelled_ = outOfWater;
+      /// ★ S3′：记录"已归零"状态（完全出水 ⇒ true；重新入水 ⇒ false）。
+      if (this->dataPtr->maDraftEnabled_)
+        this->dataPtr->maZeroed_ = outStable;
       gzmsg << "KSPlugin_HydroBuoyancy: 流体附加质量 "
-            << (outOfWater ? "已取消（完全出水）" : "已恢复（重新入水）")
+            << (outStable ? "已取消（完全出水）" : "已更新")
+            << (this->dataPtr->maDraftEnabled_ ? " [S3 几何·逐浮体]" : " [S2 二值]")
             << std::endl;
+      /// ★ S3（2026-10-07）：前 3 次下发打印细节（诊断，便于核对几何值）。
+      if (this->dataPtr->maDraftEnabled_)
+      {
+        static int s3LogN = 0;
+        if (s3LogN < 3)
+        {
+          ++s3LogN;
+          gzmsg << "KSPlugin_HydroBuoyancy: [S3′] tau0="
+                << this->dataPtr->maTau0_
+                << " v=" << this->dataPtr->maLastVn_ << " ";
+          gzmsg << "| MA diag=";
+          for (int di = 0; di < 6; ++di) gzmsg << target(di, di) << " ";
+          gzmsg << std::endl;
+        }
+      }
     }
   }
 #endif  // KESHIP_HAS_SET_FLUID_ADDED_MASS
@@ -1015,6 +1255,10 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
       auto [r, rOk] = cylElem->Get<double>("radius", 0.5);
       auto [l, lOk] = cylElem->Get<double>("length", 1.0);
       CylinderParams cp{r, l, 32};
+      /// ★ S3（2026-10-07）：记录该浮力体的圆柱几何（供按几何算 M_A 用）。
+      body.hasCylinder = true;
+      body.cylRadius = r;
+      body.cylLength = l;
       meshData = GeneratePrimitiveMesh(PrimitiveType::Cylinder, nullptr, &cp);
       this->dataPtr->cylinderRadius_ = r;
       this->dataPtr->cylinderLength_ = l;
