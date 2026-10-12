@@ -219,13 +219,30 @@ echo ""
 #   ⚠ 两个变量都要设：LD_LIBRARY_PATH 管库；GZ_SIM_SYSTEM_PLUGIN_PATH 管 gz 系统插件。
 #   ⚠ 前缀不存在时保持原行为（走系统/vendor，S2 降级），不报错、不中断启动。
 # ═══════════════════════════════════════════════════════════
-KESHIP_GZ_PREFIX="${KESHIP_GZ_PREFIX:-/opt/keship-gz}"
+# 自动探测：优先 /opt/keship-gz（系统级部署），其次 $HOME/keship-gz（用户级部署，免 sudo）
+# 也可用环境变量 KESHIP_GZ_PREFIX 显式指定
+KESHIP_GZ_PREFIX=""
+if [ -n "${KESHIP_GZ_PREFIX:-}" ]; then
+    :   # 环境变量显式指定优先
+elif [ -d "/opt/keship-gz/lib" ]; then
+    KESHIP_GZ_PREFIX="/opt/keship-gz"
+elif [ -d "$HOME/keship-gz/lib" ]; then
+    KESHIP_GZ_PREFIX="$HOME/keship-gz"
+else
+    KESHIP_GZ_PREFIX="/opt/keship-gz"   # 都不存在时的提示路径
+fi
 if [ -d "$KESHIP_GZ_PREFIX/lib" ]; then
     export LD_LIBRARY_PATH="$KESHIP_GZ_PREFIX/lib:$LD_LIBRARY_PATH"
+    # 自建 gz-sim（8.11.0）与系统 8.10 栈版本错配，需补 ROS vendor 的 Jetty 版
+    # gz-common/gz-math/gz-transport/sdformat/... ；自建前缀在最前优先命中打过补丁的库
+    for _d in /opt/ros/jazzy/opt/gz_*_vendor/lib; do
+        [ -d "$_d" ] && export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$_d"
+    done
     if [ -d "$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins" ]; then
         export GZ_SIM_SYSTEM_PLUGIN_PATH="$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins:$GZ_SIM_SYSTEM_PLUGIN_PATH"
     fi
     echo "[环境] 已启用自建 gz-sim: $KESHIP_GZ_PREFIX （S2 出水取消 M_A 生效）"
+    echo "[环境] LD_LIBRARY_PATH 已追加 ROS gz vendor 栈（版本匹配）"
 else
     echo "[环境] 未发现自建 gz-sim（$KESHIP_GZ_PREFIX）—— S2 将自动降级"
 fi
