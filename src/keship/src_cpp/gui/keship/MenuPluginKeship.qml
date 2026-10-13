@@ -274,6 +274,7 @@ Rectangle {
         ListElement { expId: "SP-10";  name: "浮体布局设计";           course: "船舶原理";     tier: "设计类"; enabled: false }
         ListElement { expId: "SP-11";  name: "完整稳性综合校核";       course: "船舶原理";     tier: "设计类"; enabled: false }
         ListElement { expId: "SP-12";  name: "船型阻力优化";           course: "船舶原理";     tier: "设计类"; enabled: false }
+        ListElement { expId: "HS-01";  name: "型线图与静水力曲线";     course: "船舶原理";       tier: "观察类"; enabled: true }
         ListElement { expId: "SC-01";  name: "开环vs闭环响应";         course: "船舶智能控制"; tier: "观察类"; enabled: false }
         ListElement { expId: "SC-02";  name: "PID参数效应";            course: "船舶智能控制"; tier: "观察类"; enabled: false }
         ListElement { expId: "SC-03";  name: "环境扰动影响";           course: "船舶智能控制"; tier: "观察类"; enabled: false }
@@ -291,6 +292,7 @@ Rectangle {
         ListElement { expId: "SS-05";  name: "破舱稳性仿真";           course: "船舶结构与制图"; tier: "操作类"; enabled: false }
         ListElement { expId: "SS-06";  name: "参数化型线设计";         course: "船舶结构与制图"; tier: "设计类"; enabled: false }
         ListElement { expId: "SS-07";  name: "综合结构设计";           course: "船舶结构与制图"; tier: "设计类"; enabled: false }
+        ListElement { expId: "SD-05";  name: "惯量与剖面特性计算";     course: "船舶结构与制图"; tier: "操作类"; enabled: true }
     }
 
     Column {
@@ -1004,6 +1006,10 @@ Rectangle {
                                     MenuPluginKeship.OnBtn_SP04_HullStability();
                                 } else if (expId === "PR-01") {
                                     MenuPluginKeship.OnBtn_PR01_CodeRunner();
+                                } else if (expId === "HS-01") {
+                                    MenuPluginKeship.OnBtn_NewMathHull();
+                                } else if (expId === "SD-05") {
+                                    MenuPluginKeship.OnBtn_InertiaCalculator();
                                 }
                                 // 后续实验在此添加分支
                             }
