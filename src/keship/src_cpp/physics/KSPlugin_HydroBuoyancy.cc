@@ -663,6 +663,40 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         "ERKNS_4math2v77Matrix6IdEE") != nullptr;
   }();
 
+  /// ── [DIAG-MA] S2 决策诊断（2026-10-13）──────────────────────────────
+  ///   背景：S2 只在"出水↔入水"翻转时下发并打印 ⇒ 单看日志分不清"未生效"与"无翻转"。
+  ///   做法：把每次判定的关键量限频落盘（每 25 帧）到 <logPrefix>_diag_ma.log，
+  ///         供验收/排障直接判读（文件在 data/log 下，不入库）。
+  ///   开销：≈2 Hz、约 6 KB·min⁻¹·会话⁻¹。
+  ///   开关：`KESHIP_MA_DIAG=0` 关闭（默认开）。
+  static const bool maDiagEnabled = []() {
+    const char *e = std::getenv("KESHIP_MA_DIAG");
+    return !(e && std::string(e) == "0");
+  }();
+  /// 6×6 矩阵取对角 6 元的紧凑输出（诊断用）
+  static const auto maDiag6 = [](const gz::math::Matrix6d &_m) {
+    std::string s;
+    for (int i = 0; i < 6; ++i)
+    { s += std::to_string(_m(i, i)); if (i < 5) s += "|"; }
+    return s;
+  };
+  {
+    static long maGateCount = 0;
+    if (maDiagEnabled && (++maGateCount % 25) == 0)
+    {
+      DiagnosticLog::write(this->logPrefix_ + "_diag_ma.log",
+          "[KSMa-gate] simT,inWater,subVol,outOfWater,hasMA,symAvail,cancelEn",
+          std::string("[gate],")
+          + std::to_string(std::chrono::duration<double>(this->dataPtr->simTime_).count())
+          + "," + std::to_string(inWater ? 1 : 0)
+          + "," + std::to_string(totalSubVol)
+          + "," + std::to_string(((!inWater) || (totalSubVol < 1e-9)) ? 1 : 0)
+          + "," + std::to_string(this->dataPtr->hasAddedMass_ ? 1 : 0)
+          + "," + std::to_string(maSymAvailable ? 1 : 0)
+          + "," + std::to_string(maCancelEnabled ? 1 : 0));
+    }
+  }
+
   if (maSymAvailable && maCancelEnabled && this->dataPtr->hasAddedMass_)
   {
     const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
@@ -701,6 +735,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     /// ★ S3′（2026-10-07）：目标 M_A —— 出水 ⇒ 0；
     ///   入水 ⇒ 按**解析平衡浸没比 tau0** 的几何值（S3 开）或 ECM 原值（S3 关，= 现状）。
     gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
+    double maOrigMax = -1.0;    // [DIAG-MA] ECM 回读的最大元（-1 = 无值）
+    int    maOrigHas = 0;       // [DIAG-MA] ECM 是否回读到值
     if (!outStable)
     {
       if (this->dataPtr->maDraftEnabled_ && !this->dataPtr->bodies.empty()
@@ -717,7 +753,13 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       {
         auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
         if (orig)
+        {
           target = *orig;
+          maOrigHas = 1;
+          for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+              maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
+        }
       }
     }
 
@@ -746,6 +788,28 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
                          - this->dataPtr->lastMaSent_(i, j)));
           }
         needSend = (dmax > std::max(1e-6, MaRelEps() * scale));
+      }
+    }
+    /// ── [DIAG-MA] 下发判定落盘（每次下发 + 每 25 帧）──────────────────
+    {
+      static long maDecCount = 0;
+      if (maDiagEnabled && (needSend || (++maDecCount % 25) == 0))
+      {
+        DiagnosticLog::write(this->logPrefix_ + "_diag_ma.log",
+            "[KSMa-dec] simT,outOfWater,outStable,needSend,sentValid,s3Mode,v,"
+            "origHas,origMax,targetDiag,lastSentDiag",
+            std::string("[dec],")
+            + std::to_string(std::chrono::duration<double>(this->dataPtr->simTime_).count())
+            + "," + std::to_string(outOfWater ? 1 : 0)
+            + "," + std::to_string(outStable ? 1 : 0)
+            + "," + std::to_string(needSend ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maSentValid_ ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maDraftEnabled_ ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maLastVn_)
+            + "," + std::to_string(maOrigHas)
+            + "," + std::to_string(maOrigMax)
+            + "," + maDiag6(target)
+            + "," + maDiag6(this->dataPtr->lastMaSent_));
       }
     }
     if (needSend)
