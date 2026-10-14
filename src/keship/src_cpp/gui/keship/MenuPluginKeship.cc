@@ -49,6 +49,7 @@
 #include "experiments/DisplacementVerifyDialog.hh"
 #include "experiments/CodeRunnerDialog.hh"
 #include "experiments/TurningCircleDialog.hh"
+#include "experiments/ZigzagDialog.hh"
 #include "tasks/TaskSetDialog.hh"
 #include "tasks/TaskMonitorDialog.hh"
 #include "editors/BuoyancyEditorDialog.hh"
@@ -3143,6 +3144,18 @@ void MenuPluginKeship::OnBtn_MS01_TurningCircle()
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms01Dialog_ = nullptr; });
   ms01Dialog_ = dialog; dialog->show();
   std::cout << "MS-01: 回转性观测对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS04_Zigzag()
+{
+  if (ms04Dialog_) { ms04Dialog_->raise(); ms04Dialog_->activateWindow(); return; }
+  auto *dialog = new ZigzagDialog(modelManager->GetNode(), "keship_world",
+                                  GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms04Dialog_ = nullptr; });
+  ms04Dialog_ = dialog; dialog->show();
+  std::cout << "MS-04: Z 形试验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////

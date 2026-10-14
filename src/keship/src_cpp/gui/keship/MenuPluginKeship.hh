@@ -141,6 +141,8 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_HS09_CodeRunner();
   /// \brief MS-01 回转性观测（差动推力回转试验）
   protected slots: void OnBtn_MS01_TurningCircle();
+  /// \brief MS-04 方向稳定性与 Z 形试验
+  protected slots: void OnBtn_MS04_Zigzag();
   /// \brief 任务设定 (Phase 13)
   protected slots: void OnBtn_TaskSet();
   /// \brief 任务监控 (Phase 13)
@@ -208,6 +210,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: QDialog *hs04Dialog_ = nullptr;
   private: QDialog *hs05Dialog_ = nullptr;
   private: QDialog *ms01Dialog_ = nullptr;
+  private: QDialog *ms04Dialog_ = nullptr;
 
   private: QDialog *taskSetDialog_ = nullptr;
   private: QDialog *taskMonitorDialog_ = nullptr;

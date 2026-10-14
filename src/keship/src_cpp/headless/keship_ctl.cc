@@ -64,6 +64,7 @@
 
 #include "ModelManager.hh"
 #include "TurningExperimentCore.hh"
+#include "ZigzagExperimentCore.hh"
 #include "ShipHullGenerator.hh"
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
@@ -1412,6 +1413,10 @@ R"(keship_ctl — KeShip 无头指令入口
   model set-pose <name> x y z roll pitch yaw
 
 教学实验（无头运行器 —— 与 GUI 对话框**共用核心层**，2026-10-14）:
+  exp ms04-run --model <名> [--base N] [--delta N] [--target-yaw 度]
+                                   [--duration S] [--period S] [--csv 路径]
+                                           MS-04 方向稳定性与 Z 形试验：交替差动推力 →
+                                           输出 超调角 / 周期 / 换向次数
   exp ms01-run --model <名> [--left N] [--right N] [--duration S] [--period S]
                                    [--thruster-left 名] [--thruster-right 名] [--csv 路径]
                                            MS-01 回转性观测：下发差动推力 → 采样轨迹 →
@@ -1557,6 +1562,48 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
+
+int CmdExpMs04Run(keship::ModelManager &_mm, const Args &_a) {
+  const std::string model = _a.Get("model");
+  if (model.empty())
+    Fail("用法：exp ms04-run --model <名> [--base N] [--delta N] [--target-yaw 度] "
+         "[--duration S] [--period S] [--csv 路径]");
+  const double base     = _a.GetD("base", 100.0);
+  const double delta    = _a.GetD("delta", 50.0);
+  const double target   = _a.GetD("target-yaw", 20.0);
+  const double duration = _a.GetD("duration", 60.0);
+  const double period   = _a.GetD("period", 0.1);
+  const std::string thrL = _a.Get("thruster-left", "thrust_left");
+  const std::string thrR = _a.Get("thruster-right", "thrust_right");
+
+  keship::ZigzagExperimentCore core(_mm.GetNode(), g_opt.world);
+  core.setTarget(model, thrL, thrR);
+  core.setParams(base, delta, target, period);
+  if (!core.start())
+    Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
+
+  Info("MS-04 Z 形试验开始：基础 " + std::to_string(base) + " N / 差动 " +
+       std::to_string(delta) + " N / 阈值 " + std::to_string(target) + " 度");
+  const int n = static_cast<int>(duration / period);
+  for (int i = 0; i < n; ++i) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    core.sample();
+  }
+  core.stop();
+
+  const auto m = core.metrics();
+  std::cout << "轨迹点数 : " << m.points << "\n";
+  std::cout << "换向次数 : " << m.switches << "\n";
+  std::cout << "超调角 1 : " << m.overshoot1 << " 度\n";
+  std::cout << "超调角 2 : " << m.overshoot2 << " 度\n";
+  std::cout << "周期     : " << m.period << " s\n";
+  if (_a.Has("csv")) {
+    const std::string csv = _a.Get("csv");
+    if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);
+  }
+  return 0;
+}
+
 int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
   if (_argv.empty()) { PrintHelp(); return 0; }
 
@@ -1648,6 +1695,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     std::vector<std::string> tail(a.pos.begin() + 1, a.pos.end());
     Args sa = a; sa.pos = tail;
     if (sub == "ms01-run") return CmdExpMs01Run(_mm, sa);
+    if (sub == "ms04-run") return CmdExpMs04Run(_mm, sa);
     Fail("未知 exp 子命令：" + sub);
   }
 
