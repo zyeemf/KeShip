@@ -142,7 +142,7 @@ namespace keship
     std::mutex mutex;
 
     /// 浸水体积对外发布（opt-in：SDF 写 <publish_subvolume>true</publish_subvolume>）
-    /// 默认关闭 —— 仅供排水量实验（SP-01）作为"实测 ∇"数据源；
+    /// 默认关闭 —— 仅供排水量实验（HS-02）作为"实测 ∇"数据源；
     /// 未开启时零开销、行为与原先完全一致
     bool publishSubVol_ = false;
     std::string subVolTopic_;

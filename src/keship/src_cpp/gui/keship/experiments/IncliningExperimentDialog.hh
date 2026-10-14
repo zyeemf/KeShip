@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-03 初稳性倾斜实验对话框 — 矩形驳船 + 移动压载 */
+/* HS-04 初稳性倾斜实验对话框 — 矩形驳船 + 移动压载 */
 /// 2026.5.28 创建
 
 #ifndef INCLINING_EXPERIMENT_DIALOG_HH_

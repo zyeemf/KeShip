@@ -1002,7 +1002,7 @@ int CmdModelSetPose(keship::ModelManager &_mm, const Args &_a) {
 
 // ── hull（纯计算，不需要仿真在跑）─────────────────────────
 /// 直接暴露 ShipHullGenerator 的静水力，供"用指令核对实验数字"。
-/// 典型用途：SP-01 的"理论 ∇"就是 volumeAtDraft(d)，此前只能靠 GUI 里看，
+/// 典型用途：HS-02 的"理论 ∇"就是 volumeAtDraft(d)，此前只能靠 GUI 里看，
 /// 现在可以在无头侧独立算出来与实测对比。
 int CmdHullInfo(const Args &_a) {
   keship::ShipHullSpec spec = SpecFromArgs(_a);
@@ -1279,7 +1279,7 @@ int CmdWatchPose(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
-/// 读浮力插件发布的浸水体积（SP-01 的"实测 ∇"来源，opt-in）
+/// 读浮力插件发布的浸水体积（HS-02 的"实测 ∇"来源，opt-in）
 int CmdSubvol(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.empty()) Fail("用法：subvol <model> [--duration <s>]");
   const std::string name = _a.pos[0];
@@ -1429,7 +1429,7 @@ R"(keship_ctl — KeShip 无头指令入口
 船型（纯计算，无需仿真在跑）:
   hull info [--type ...] [--L --B --D --rho] [--draft d]
                                            生成器静水力：全船体积 / Aw / Ix / KB / BM / GM /
-                                           volumeAtDraft(d)（SP-01 的"理论 ∇"就是它）
+                                           volumeAtDraft(d)（HS-02 的"理论 ∇"就是它）
 
 观测:
   watch pose <name> --duration <s> [--out <csv>]   记录位姿

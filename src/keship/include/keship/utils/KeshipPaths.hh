@@ -69,7 +69,7 @@ namespace keship
     return KeshipAllModelsDir() + "/ks_world";
   }
 
-  /// SP-03 静水稳性实验临时目录（原 ~/.keship/sp03/）
+  /// HS-04 静水稳性实验临时目录（原 ~/.keship/sp03/）
   inline std::string KeshipSp03Dir()
   {
     return KeshipDataDir() + "/experiments/sp03/";

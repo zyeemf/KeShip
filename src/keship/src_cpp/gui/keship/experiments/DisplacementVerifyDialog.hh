@@ -63,7 +63,7 @@ struct DispPoseState {
 };
 
 /// 实测浸水体积共享状态（插件话题回调线程 → UI 线程）
-/// 来源：KSPlugin_HydroBuoyancy 的 <publish_subvolume> 话题（SP-01 专用）
+/// 来源：KSPlugin_HydroBuoyancy 的 <publish_subvolume> 话题（HS-02 专用）
 struct DispVolState {
   std::mutex mutex;
   bool alive = true;
@@ -113,7 +113,7 @@ class DisplacementVerifyDialog : public QDialog {
   std::string payloadTopic_;
   gz::transport::Node::Publisher payloadPub_;
 
-  /// 实测浸水体积订阅（SP-01：实测 ∇ 的真实来源）
+  /// 实测浸水体积订阅（HS-02：实测 ∇ 的真实来源）
   std::shared_ptr<DispVolState> volState_;
   std::string subVolTopic_;
 

@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-04 数学船型稳性对比 — 对话框 */
+/* HS-05 数学船型稳性对比 — 对话框 */
 
 #ifndef HULL_STABILITY_DIALOG_HH_
 #define HULL_STABILITY_DIALOG_HH_
@@ -70,7 +70,7 @@ public:
 private slots:
   void onSpawn();
   void onSliderChanged(int _value);
-  /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 SP-03 同一次改造）
+  /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 HS-04 同一次改造）
   void onApplyWeight();
   /// ★ 2026-09-21 新增：滑条防抖到期后真正下发
   void onMoveDebounced();
@@ -94,7 +94,7 @@ private:
   bool doSpawnAll();
   bool resolveEntityID(const std::string &_name, uint32_t &_id);
   bool moveWeight(double _y);
-  /// ★ 2026-09-21 新增：移动压载的**统一入口**（与 SP-03 同一套写法）
+  /// ★ 2026-09-21 新增：移动压载的**统一入口**（与 HS-04 同一套写法）
   void commitMove(double _y);
   void computeLinearFit(const std::vector<HullDataPoint> &_pts,
                          double &_slope, double &_intercept) const;
@@ -115,7 +115,7 @@ private:
   QLabel *volLabel_, *kbLabel_, *bmLabel_, *gmLabel_;
 
   QSlider *weightSlider_;
-  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 SP-03）。
+  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 HS-04）。
   /// QDoubleSpinBox 会把值格式化成固定小数位（decimals=3 → "0.000"），
   /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被判非法 → **按键被吞**。
   /// QLineEdit 保留用户原文 + QDoubleValidator（小数位 6）即可自由编辑。

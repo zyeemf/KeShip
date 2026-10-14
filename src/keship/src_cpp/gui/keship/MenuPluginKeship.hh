@@ -131,14 +131,14 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_MoveSubWorld(const QString &_chain);
   /// \brief 圆柱体浮力测试
   protected slots: void OnBtn_CylinderBuoyancyTest();
-  /// \brief SP-02 漂浮圆柱体初稳性
-  protected slots: void OnBtn_SP02_Stability();
-  /// \brief SP-03 初稳性倾斜实验
-  protected slots: void OnBtn_SP03_Inclining();
-  /// \brief SP-04 数学船型稳性对比
-  protected slots: void OnBtn_SP04_HullStability();
+  /// \brief HS-03 漂浮圆柱体初稳性
+  protected slots: void OnBtn_HS03_Stability();
+  /// \brief HS-04 初稳性倾斜实验
+  protected slots: void OnBtn_HS04_Inclining();
+  /// \brief HS-05 数学船型稳性对比
+  protected slots: void OnBtn_HS05_HullStability();
   /// \brief 编程计算排水量 (Phase D)
-  protected slots: void OnBtn_PR01_CodeRunner();
+  protected slots: void OnBtn_HS09_CodeRunner();
   /// \brief 任务设定 (Phase 13)
   protected slots: void OnBtn_TaskSet();
   /// \brief 任务监控 (Phase 13)
@@ -202,9 +202,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   /// \brief 编辑器对话框单例表（key = 类型/模型名）
   private: std::map<QString, QDialog *> editorDialogs_;
 
-  private: QDialog *sp02Dialog_ = nullptr;
-  private: QDialog *sp03Dialog_ = nullptr;
-  private: QDialog *sp04Dialog_ = nullptr;
+  private: QDialog *hs03Dialog_ = nullptr;
+  private: QDialog *hs04Dialog_ = nullptr;
+  private: QDialog *hs05Dialog_ = nullptr;
 
   private: QDialog *taskSetDialog_ = nullptr;
   private: QDialog *taskMonitorDialog_ = nullptr;

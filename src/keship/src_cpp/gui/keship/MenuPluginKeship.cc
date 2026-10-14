@@ -1638,12 +1638,12 @@ void MenuPluginKeship::OnBtn_CylinderBuoyancyTest()
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP02_Stability()
+void MenuPluginKeship::OnBtn_HS03_Stability()
 {
-  if (sp02Dialog_)
+  if (hs03Dialog_)
   {
-    sp02Dialog_->raise();
-    sp02Dialog_->activateWindow();
+    hs03Dialog_->raise();
+    hs03Dialog_->activateWindow();
     return;
   }
 
@@ -1652,21 +1652,21 @@ void MenuPluginKeship::OnBtn_SP02_Stability()
   dialog->setAttribute(Qt::WA_DeleteOnClose);
 
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
-    sp02Dialog_ = nullptr;
+    hs03Dialog_ = nullptr;
   });
 
-  sp02Dialog_ = dialog;
+  hs03Dialog_ = dialog;
   dialog->show();
-  std::cout << "SP-02: 初稳性实验对话框已打开" << std::endl;
+  std::cout << "HS-03: 初稳性实验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP03_Inclining()
+void MenuPluginKeship::OnBtn_HS04_Inclining()
 {
-  if (sp03Dialog_)
+  if (hs04Dialog_)
   {
-    sp03Dialog_->raise();
-    sp03Dialog_->activateWindow();
+    hs04Dialog_->raise();
+    hs04Dialog_->activateWindow();
     return;
   }
 
@@ -1675,27 +1675,27 @@ void MenuPluginKeship::OnBtn_SP03_Inclining()
   dialog->setAttribute(Qt::WA_DeleteOnClose);
 
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
-    sp03Dialog_ = nullptr;
+    hs04Dialog_ = nullptr;
   });
 
-  sp03Dialog_ = dialog;
+  hs04Dialog_ = dialog;
   dialog->show();
-  std::cout << "SP-03: 倾斜实验对话框已打开" << std::endl;
+  std::cout << "HS-04: 倾斜实验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP04_HullStability()
+void MenuPluginKeship::OnBtn_HS05_HullStability()
 {
-  if (sp04Dialog_) { sp04Dialog_->raise(); sp04Dialog_->activateWindow(); return; }
+  if (hs05Dialog_) { hs05Dialog_->raise(); hs05Dialog_->activateWindow(); return; }
   auto *dialog = new HullStabilityDialog(modelManager->GetNode(), "keship_world");
   dialog->setAttribute(Qt::WA_DeleteOnClose);
-  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sp04Dialog_ = nullptr; });
-  sp04Dialog_ = dialog; dialog->show();
-  std::cout << "SP-04: 数学船型对话框已打开" << std::endl;
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { hs05Dialog_ = nullptr; });
+  hs05Dialog_ = dialog; dialog->show();
+  std::cout << "HS-05: 数学船型对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_PR01_CodeRunner()
+void MenuPluginKeship::OnBtn_HS09_CodeRunner()
 {
   auto *dlg = new CodeRunnerDialog();
   dlg->setAttribute(Qt::WA_DeleteOnClose);

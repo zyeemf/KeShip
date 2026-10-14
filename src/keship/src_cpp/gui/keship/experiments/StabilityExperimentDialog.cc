@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-02 漂浮圆柱体初稳性实验对话框实现 */
+/* HS-03 漂浮圆柱体初稳性实验对话框实现 */
 /// 2026.5.27 重构
 
 #include "StabilityExperimentDialog.hh"
@@ -263,7 +263,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
       worldName_(_worldName),
       cylinderName_("SP01_cylinder")
 {
-  setWindowTitle("SP-02 漂浮圆柱体初稳性实验");
+  setWindowTitle("HS-03 漂浮圆柱体初稳性");
   setModal(false);
   resize(920, 720);
 
@@ -292,7 +292,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
     pub.Publish(msg);
   }
 
-  std::cout << "SP-02: 初稳性实验对话框已创建" << std::endl;
+  std::cout << "HS-03: 初稳性实验对话框已创建" << std::endl;
 }
 
 StabilityExperimentDialog::~StabilityExperimentDialog()
@@ -668,7 +668,7 @@ bool StabilityExperimentDialog::doDeleteCylinder()
 
   if (!ok || !result)
   {
-    std::cout << "SP-02: 删除旧圆柱体失败" << std::endl;
+    std::cout << "HS-03: 删除旧圆柱体失败" << std::endl;
     return false;
   }
 
@@ -705,11 +705,11 @@ bool StabilityExperimentDialog::doSpawnCylinder(
 
   if (!ok || !result)
   {
-    std::cout << "SP-02: 生成圆柱体失败" << std::endl;
+    std::cout << "HS-03: 生成圆柱体失败" << std::endl;
     return false;
   }
 
-  std::cout << "SP-02: 圆柱体已生成 — D=" << _diameter
+  std::cout << "HS-03: 圆柱体已生成 — D=" << _diameter
             << ", L=" << _length << ", ρ=" << _density
             << ", roll=" << _rollDeg << "°" << std::endl;
   return true;
@@ -793,7 +793,7 @@ void StabilityExperimentDialog::onRecord()
     unstablePts_.push_back({s, DL});
   chartWidget_->setData(stablePts_, unstablePts_);
 
-  std::cout << "SP-02: 记录数据 — D=" << D << ", L=" << L
+  std::cout << "HS-03: 记录数据 — D=" << D << ", L=" << L
             << ", ρ=" << rho << ", s=" << s << ", D/L=" << DL
             << ", GM=" << gm << ", " << stableStr.toStdString() << std::endl;
 }
@@ -827,7 +827,7 @@ void StabilityExperimentDialog::onDeleteSelected()
       unstablePts_.push_back({s, dl});
   }
   chartWidget_->setData(stablePts_, unstablePts_);
-  std::cout << "SP-02: 已删除 " << selected.size() << " 行" << std::endl;
+  std::cout << "HS-03: 已删除 " << selected.size() << " 行" << std::endl;
 }
 
 void StabilityExperimentDialog::onClearAll()
@@ -840,7 +840,7 @@ void StabilityExperimentDialog::onClearAll()
   observing_ = false;
   observeCounter_ = 0;
 
-  std::cout << "SP-02: 已清除全部数据" << std::endl;
+  std::cout << "HS-03: 已清除全部数据" << std::endl;
 }
 
 void StabilityExperimentDialog::onUpdatePose()
