@@ -60,18 +60,80 @@ void ZigzagChartWidget::paintEvent(QPaintEvent *) {
   const double pad = (yMax - yMin) * 0.1;
   yMin -= pad; yMax += pad;
 
-  const double W = width() - 50.0, H = height() - 30.0;
+  // ── 坐标区（四周留出刻度标签空间） ──────────────────────────
+  const double mL = 54, mR = 14, mT = 26, mB = 46;
+  const double W = width() - mL - mR, H = height() - mT - mB;
+  if (W < 60 || H < 40) {
+    p.setPen(QColor(150, 155, 165));
+    p.drawText(rect(), Qt::AlignCenter, "窗口过小 — 无法绘制坐标轴");
+    return;
+  }
+  const double tMaxD = std::max(1e-6, tMax);   // 时间轴从 0 起算
   auto toPix = [&](double t, double y) {
-    return QPointF(40 + (t / std::max(1e-6, tMax)) * W,
-                   15 + H - ((y - yMin) / (yMax - yMin)) * H);
+    return QPointF(mL + (t / tMaxD) * W,
+                   mT + H - ((y - yMin) / (yMax - yMin)) * H);
   };
 
-  // 目标带（±targetYaw 参考线由换向点体现，这里画网格）
-  p.setPen(QColor(232, 235, 242));
-  for (int i = 1; i < 5; ++i) {
-    const double gy = 15 + H * i / 5.0;
-    p.drawLine(QPointF(40, gy), QPointF(40 + W, gy));
+  // ── "好看的"刻度步长 ──────────────────────────────────────
+  auto niceStep = [](double range, int target) {
+    if (!(range > 0.0) || !std::isfinite(range)) return 1.0;
+    const double raw = range / static_cast<double>(target);
+    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    const double n = raw / mag;
+    double m = 1.0;
+    if (n > 5.0) m = 10.0; else if (n > 2.0) m = 5.0; else if (n > 1.0) m = 2.0;
+    return m * mag;
+  };
+  const double stepY = niceStep(yMax - yMin, 6);
+  const double stepT = niceStep(tMax, 8);
+  auto fmtTick = [](double v, double step) {
+    int dec = 0;
+    if (step < 1.0)
+      dec = std::min(2, static_cast<int>(std::ceil(-std::log10(step))));
+    return QString::number(v, 'f', dec);
+  };
+
+  QFont tickFont = p.font();
+  tickFont.setPointSize(8);
+
+  // ── 网格 + 刻度 + 标签 ────────────────────────────────────
+  {
+    int guard = 0;
+    for (double v = std::ceil(yMin / stepY) * stepY;
+         v <= yMax + 1e-9 && guard < 200; v += stepY, ++guard) {
+      const double gy = toPix(0, v).y();
+      p.setPen(QColor(232, 235, 242));
+      p.drawLine(QPointF(mL, gy), QPointF(mL + W, gy));
+      p.setPen(QColor(126, 133, 148));
+      p.drawLine(QPointF(mL - 5, gy), QPointF(mL, gy));
+      p.setFont(tickFont);
+      p.setPen(QColor(90, 95, 105));
+      p.drawText(QRectF(mL - 52, gy - 8, 46, 16),
+                 Qt::AlignRight | Qt::AlignVCenter, fmtTick(v, stepY));
+    }
+    guard = 0;
+    for (double v = 0.0; v <= tMax + 1e-9 && guard < 200; v += stepT, ++guard) {
+      const double gx = toPix(v, 0).x();
+      p.setPen(QColor(232, 235, 242));
+      p.drawLine(QPointF(gx, mT), QPointF(gx, mT + H));
+      p.setPen(QColor(126, 133, 148));
+      p.drawLine(QPointF(gx, mT + H), QPointF(gx, mT + H + 5));
+      p.setFont(tickFont);
+      p.setPen(QColor(90, 95, 105));
+      p.drawText(QRectF(gx - 44, mT + H + 6, 88, 16),
+                 Qt::AlignHCenter | Qt::AlignTop, fmtTick(v, stepT));
+    }
   }
+
+  // ── 坐标轴外框 + 轴标题 ───────────────────────────────────
+  p.setPen(QPen(QColor(120, 128, 142), 1));
+  p.drawRect(QRectF(mL, mT, W, H).adjusted(0, 0, -1, -1));
+  p.setFont(tickFont);
+  p.setPen(QColor(70, 76, 88));
+  p.drawText(QRectF(mL + W - 74, mT - 15, 72, 14),
+             Qt::AlignRight | Qt::AlignBottom, "航向 (°)");
+  p.drawText(QRectF(mL, mT + H + 23, W, 14),
+             Qt::AlignHCenter | Qt::AlignTop, "t (s)");
 
   QPainterPath path;
   path.moveTo(toPix(pts_[0].t, pts_[0].yawDeg));
@@ -89,9 +151,12 @@ void ZigzagChartWidget::paintEvent(QPaintEvent *) {
   }
 
   p.setPen(QColor(90, 95, 105));
-  p.drawText(12, 16, QString("航向 (°) · %1 点 · 换向点标红").arg(pts_.size()));
-  p.drawText(6, 28, QString::number(yMax, 'f', 0));
-  p.drawText(6, static_cast<int>(15 + H), QString::number(yMin, 'f', 0));
+  p.drawText(10, 12, QString("航向时程 · %1 点 · 换向点标红").arg(pts_.size()));
+  p.setFont(tickFont);
+  p.drawText(QRectF(width() - 196, 12, 186, 14),
+             Qt::AlignRight | Qt::AlignTop,
+             QString("航向范围 %1 ~ %2 °")
+                 .arg(yMin, 0, 'f', 1).arg(yMax, 0, 'f', 1));
 }
 
 // ══════════════════════════════════════════════════════════════════

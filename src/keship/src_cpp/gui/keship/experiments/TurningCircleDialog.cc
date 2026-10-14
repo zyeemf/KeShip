@@ -70,19 +70,106 @@ void TurningChartWidget::paintEvent(QPaintEvent *) {
     return;
   }
 
-  const double W = width() - 20.0, H = height() - 20.0;
-  const double sx = W / std::max(1e-6, xMax_ - xMin_);
-  const double sy = H / std::max(1e-6, yMax_ - yMin_);
+  // ── 坐标区（四周留出刻度标签空间） ──────────────────────────
+  const double mL = 62, mR = 14, mT = 26, mB = 50;
+  const double W = width() - mL - mR, H = height() - mT - mB;
+  if (W < 80 || H < 60) {
+    p.setPen(QColor(150, 155, 165));
+    p.drawText(rect(), Qt::AlignCenter, "窗口过小 — 无法绘制坐标轴");
+    return;
+  }
+
+  // ★ 长宽比封顶 4:1 —— 极扁轨迹（如等推力直航 74 m × 2 m）若直接按 min 缩放，
+  //   坐标框会退化成细条、刻度全挤在一起。此时按需扩展"短边"范围（仍是**同比例**），
+  //   刻度值仍如实反映真实坐标，不会被拉宽误导。
+  double axMin = xMin_, axMax = xMax_, ayMin = yMin_, ayMax = yMax_;
+  constexpr double kMaxAspect = 4.0;
+  for (int it = 0; it < 8; ++it) {
+    const double rx = axMax - axMin, ry = ayMax - ayMin;
+    if (rx > ry * kMaxAspect) {
+      const double cy = 0.5 * (ayMin + ayMax);
+      const double half = 0.5 * rx / kMaxAspect;
+      ayMin = cy - half; ayMax = cy + half;
+    } else if (ry > rx * kMaxAspect) {
+      const double cx = 0.5 * (axMin + axMax);
+      const double half = 0.5 * ry / kMaxAspect;
+      axMin = cx - half; axMax = cx + half;
+    } else {
+      break;
+    }
+  }
+
+  const double rangeX = axMax - axMin, rangeY = ayMax - ayMin;
+  // ★ X / Y **同比例**（min 缩放，框在坐标区内居中）
+  const double sScale = std::min(W / rangeX, H / rangeY);
+  const double pw = rangeX * sScale, ph = rangeY * sScale;
+  const double boxL = mL + (W - pw) * 0.5;
+  const double boxB = mT + H - (H - ph) * 0.5;
+  const double boxT = boxB - ph;
+
   auto toPix = [&](double x, double y) {
-    return QPointF(10 + (x - xMin_) * sx, 10 + H - (y - yMin_) * sy);
+    return QPointF(boxL + (x - axMin) * sScale, boxB - (y - ayMin) * sScale);
   };
 
-  p.setPen(QColor(232, 235, 242));
-  for (int i = 1; i < 5; ++i) {
-    const double gx = 10 + W * i / 5.0, gy = 10 + H * i / 5.0;
-    p.drawLine(QPointF(gx, 10), QPointF(gx, 10 + H));
-    p.drawLine(QPointF(10, gy), QPointF(10 + W, gy));
+  // ── "好看的"刻度步长（1 / 2 / 5 × 10ⁿ） ────────────────────
+  auto niceStep = [](double range, int target) {
+    if (!(range > 0.0) || !std::isfinite(range)) return 1.0;
+    const double raw = range / static_cast<double>(target);
+    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    const double n = raw / mag;
+    double m = 1.0;
+    if (n > 5.0) m = 10.0; else if (n > 2.0) m = 5.0; else if (n > 1.0) m = 2.0;
+    return m * mag;
+  };
+  const double stepX = niceStep(rangeX, 6);
+  const double stepY = niceStep(rangeY, 5);
+  auto fmtTick = [](double v, double step) {
+    int dec = 0;
+    if (step < 1.0)
+      dec = std::min(3, static_cast<int>(std::ceil(-std::log10(step))));
+    return QString::number(v, 'f', dec);
+  };
+
+  QFont tickFont = p.font();
+  tickFont.setPointSize(8);
+
+  // ── 网格线 + 刻度 + 刻度值标签 ─────────────────────────────
+  {
+    int guard = 0;
+    for (double v = std::ceil(axMin / stepX) * stepX;
+         v <= axMax + 1e-9 && guard < 200; v += stepX, ++guard) {
+      const double gx = toPix(v, 0).x();
+      p.setPen(QColor(232, 235, 242));
+      p.drawLine(QPointF(gx, boxT), QPointF(gx, boxB));
+      p.setPen(QColor(126, 133, 148));
+      p.drawLine(QPointF(gx, boxB), QPointF(gx, boxB + 5));
+      p.setFont(tickFont);
+      p.setPen(QColor(90, 95, 105));
+      p.drawText(QRectF(gx - 44, boxB + 6, 88, 16),
+                 Qt::AlignHCenter | Qt::AlignTop, fmtTick(v, stepX));
+    }
+    guard = 0;
+    for (double v = std::ceil(ayMin / stepY) * stepY;
+         v <= ayMax + 1e-9 && guard < 200; v += stepY, ++guard) {
+      const double gy = toPix(0, v).y();
+      p.setPen(QColor(232, 235, 242));
+      p.drawLine(QPointF(boxL, gy), QPointF(boxL + pw, gy));
+      p.setPen(QColor(126, 133, 148));
+      p.drawLine(QPointF(boxL - 5, gy), QPointF(boxL, gy));
+      p.setFont(tickFont);
+      p.setPen(QColor(90, 95, 105));
+      p.drawText(QRectF(boxL - 52, gy - 8, 46, 16),
+                 Qt::AlignRight | Qt::AlignVCenter, fmtTick(v, stepY));
+    }
   }
+
+  // ── 坐标轴外框 + x 轴标题（单位由表头统一给出，避免竖排溢出） ──
+  p.setPen(QPen(QColor(120, 128, 142), 1));
+  p.drawRect(QRectF(boxL, boxT, pw, ph).adjusted(0, 0, -1, -1));
+  p.setFont(tickFont);
+  p.setPen(QColor(70, 76, 88));
+  p.drawText(QRectF(boxL, boxB + 24, pw, 14),
+             Qt::AlignHCenter | Qt::AlignTop, "x (m)");
 
   QPainterPath path;
   path.moveTo(toPix(pts_[0].x, pts_[0].y));
@@ -104,10 +191,12 @@ void TurningChartWidget::paintEvent(QPaintEvent *) {
   p.drawLine(c, c + QPointF(std::cos(yawRad) * 22, -std::sin(yawRad) * 22));
 
   p.setPen(QColor(90, 95, 105));
-  p.drawText(12, 20, QString("轨迹点数 %1  ·  x∈[%2, %3]  y∈[%4, %5]")
-      .arg(pts_.size())
-      .arg(xMin_, 0, 'f', 1).arg(xMax_, 0, 'f', 1)
-      .arg(yMin_, 0, 'f', 1).arg(yMax_, 0, 'f', 1));
+  p.setFont(tickFont);
+  p.drawText(10, 12, QString("回转轨迹 · %1 点 · 单位 m（X/Y 同比例）").arg(pts_.size()));
+  p.drawText(QRectF(width() - 206, 12, 196, 14),
+             Qt::AlignRight | Qt::AlignTop,
+             QString("每格 x %1 m / y %2 m")
+                 .arg(stepX, 0, 'g', 4).arg(stepY, 0, 'g', 4));
 }
 
 // ══════════════════════════════════════════════════════════════════
