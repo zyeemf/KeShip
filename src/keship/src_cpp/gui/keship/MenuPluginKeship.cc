@@ -48,6 +48,7 @@
 #include "shared/UiTheme.hh"
 #include "experiments/DisplacementVerifyDialog.hh"
 #include "experiments/CodeRunnerDialog.hh"
+#include "experiments/TurningCircleDialog.hh"
 #include "tasks/TaskSetDialog.hh"
 #include "tasks/TaskMonitorDialog.hh"
 #include "editors/BuoyancyEditorDialog.hh"
@@ -3133,6 +3134,18 @@ void MenuPluginKeship::OnBtn_InertiaCalculator()
 }
 
 //-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_MS01_TurningCircle()
+{
+  if (ms01Dialog_) { ms01Dialog_->raise(); ms01Dialog_->activateWindow(); return; }
+  auto *dialog = new TurningCircleDialog(modelManager->GetNode(), "keship_world",
+                                         GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms01Dialog_ = nullptr; });
+  ms01Dialog_ = dialog; dialog->show();
+  std::cout << "MS-01: 回转性观测对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_CleanMeshCache()
 {
   if (QMessageBox::question(nullptr, "清理网格缓存",

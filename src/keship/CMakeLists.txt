@@ -152,6 +152,7 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/tasks/MapWidget.cc
   src_cpp/gui/keship/tasks/TaskSetDialog.cc
   src_cpp/gui/keship/experiments/CodeRunnerDialog.cc
+  src_cpp/gui/keship/experiments/TurningCircleDialog.cc
   src_cpp/gui/keship/tasks/TaskMonitorDialog.cc
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
   src_cpp/gui/keship/editors/EnvironmentParamsDialog.cc
