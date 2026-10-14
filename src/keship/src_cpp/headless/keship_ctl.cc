@@ -66,6 +66,7 @@
 #include "TurningExperimentCore.hh"
 #include "ZigzagExperimentCore.hh"
 #include "WaveResponseCore.hh"
+#include "SensorEstimationCore.hh"
 #include "ShipHullGenerator.hh"
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
@@ -1652,6 +1653,43 @@ int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &
   return 0;
 }
 
+
+int CmdExpSc08Run(keship::ModelManager &_mm, const Args &_a) {
+  const std::string model = _a.Get("model");
+  if (model.empty())
+    Fail("用法：exp sc08-run --model <名> [--imu-topic 话题] [--duration S] [--period S] [--csv 路径]");
+  const double duration = _a.GetD("duration", 40.0);
+  const double period   = _a.GetD("period", 0.05);
+  const std::string imuTopic = _a.Get("imu-topic");
+
+  keship::SensorEstimationCore core(_mm.GetNode(), g_opt.world);
+  core.setTarget(model, imuTopic);
+  core.setSamplePeriod(period);
+  if (!core.start())
+    Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
+
+  Info("SC-08 开始：模型 " + model + "，时长 " + std::to_string(duration) + " s");
+  const int n = static_cast<int>(duration / period);
+  for (int i = 0; i < n; ++i) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    core.sample();
+  }
+  core.stop();
+
+  const auto m = core.metrics();
+  std::cout << "轨迹点数   : " << m.points << "\n";
+  std::cout << "IMU 消息数 : " << core.imuCount() << "\n";
+  std::cout << "RMSE(横摇) : " << m.rmseRoll  << " 度\n";
+  std::cout << "RMSE(纵摇) : " << m.rmsePitch << " 度\n";
+  std::cout << "RMSE(航向) : " << m.rmseYaw   << " 度\n";
+  std::cout << "最大漂移   : " << m.maxDriftYaw << " 度\n";
+  if (_a.Has("csv")) {
+    const std::string csv = _a.Get("csv");
+    if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);
+  }
+  return 0;
+}
+
 int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
   if (_argv.empty()) { PrintHelp(); return 0; }
 
@@ -1746,6 +1784,7 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     if (sub == "ms04-run") return CmdExpMs04Run(_mm, sa);
     if (sub == "ms02-run") return CmdExpWaveRun(_mm, sa, "MS-02");
     if (sub == "ms03-run") return CmdExpWaveRun(_mm, sa, "MS-03");
+    if (sub == "sc08-run") return CmdExpSc08Run(_mm, sa);
     Fail("未知 exp 子命令：" + sub);
   }
 

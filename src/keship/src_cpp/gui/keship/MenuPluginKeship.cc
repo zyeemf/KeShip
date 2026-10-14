@@ -51,6 +51,7 @@
 #include "experiments/TurningCircleDialog.hh"
 #include "experiments/ZigzagDialog.hh"
 #include "experiments/WaveResponseDialog.hh"
+#include "experiments/SensorEstimationDialog.hh"
 #include "tasks/TaskSetDialog.hh"
 #include "tasks/TaskMonitorDialog.hh"
 #include "editors/BuoyancyEditorDialog.hh"
@@ -3181,6 +3182,18 @@ void MenuPluginKeship::OnBtn_MS03_Rao()
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms03Dialog_ = nullptr; });
   ms03Dialog_ = dialog; dialog->show();
   std::cout << "MS-03: 横摇 RAO 对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_SC08_SensorEstimation()
+{
+  if (sc08Dialog_) { sc08Dialog_->raise(); sc08Dialog_->activateWindow(); return; }
+  auto *dialog = new SensorEstimationDialog(modelManager->GetNode(), "keship_world",
+                                            GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sc08Dialog_ = nullptr; });
+  sc08Dialog_ = dialog; dialog->show();
+  std::cout << "SC-08: 传感器位姿估计对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////

@@ -288,7 +288,7 @@ Rectangle {
         ListElement { expId: "SC-05";  name: "航速控制";                course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
         ListElement { expId: "SC-06";  name: "LOS循迹跟踪";             course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
         ListElement { expId: "SC-07";  name: "动力定位";                course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
-        ListElement { expId: "SC-08";  name: "传感器感知与位姿估计";    course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
+        ListElement { expId: "SC-08";  name: "传感器感知与位姿估计";    course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
         ListElement { expId: "SC-09";  name: "PID自整定";               course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
         ListElement { expId: "SC-10";  name: "航路点路径跟随";          course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
         ListElement { expId: "SC-11";  name: "COLREGs避碰";             course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
@@ -1015,6 +1015,8 @@ Rectangle {
                                     MenuPluginKeship.OnBtn_HS05_HullStability();
                                 } else if (expId === "HS-09") {
                                     MenuPluginKeship.OnBtn_HS09_CodeRunner();
+                                } else if (expId === "SC-08") {
+                                    MenuPluginKeship.OnBtn_SC08_SensorEstimation();
                                 } else if (expId === "MS-02") {
                                     MenuPluginKeship.OnBtn_MS02_WaveResponse();
                                 } else if (expId === "MS-03") {

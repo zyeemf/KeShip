@@ -155,6 +155,7 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/experiments/TurningCircleDialog.cc
   src_cpp/gui/keship/experiments/ZigzagDialog.cc
   src_cpp/gui/keship/experiments/WaveResponseDialog.cc
+  src_cpp/gui/keship/experiments/SensorEstimationDialog.cc
   src_cpp/gui/keship/tasks/TaskMonitorDialog.cc
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
   src_cpp/gui/keship/editors/EnvironmentParamsDialog.cc
@@ -213,6 +214,7 @@ add_library(keship_utils STATIC
   src_cpp/utils/TurningExperimentCore.cc
   src_cpp/utils/ZigzagExperimentCore.cc
   src_cpp/utils/WaveResponseCore.cc
+  src_cpp/utils/SensorEstimationCore.cc
 )
 # ★ 2026-09-28：碰撞体积"凸包"模式需要 3D 凸包 ⇒ 用系统自带的 qhull（重入版）
 find_package(PkgConfig REQUIRED)

@@ -147,6 +147,8 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_MS02_WaveResponse();
   /// \brief MS-03 横摇 RAO 测量
   protected slots: void OnBtn_MS03_Rao();
+  /// \brief SC-08 传感器感知与位姿估计
+  protected slots: void OnBtn_SC08_SensorEstimation();
   /// \brief 任务设定 (Phase 13)
   protected slots: void OnBtn_TaskSet();
   /// \brief 任务监控 (Phase 13)
@@ -217,6 +219,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: QDialog *ms04Dialog_ = nullptr;
   private: QDialog *ms02Dialog_ = nullptr;
   private: QDialog *ms03Dialog_ = nullptr;
+  private: QDialog *sc08Dialog_ = nullptr;
 
   private: QDialog *taskSetDialog_ = nullptr;
   private: QDialog *taskMonitorDialog_ = nullptr;
