@@ -65,6 +65,7 @@
 #include "ModelManager.hh"
 #include "TurningExperimentCore.hh"
 #include "ZigzagExperimentCore.hh"
+#include "WaveResponseCore.hh"
 #include "ShipHullGenerator.hh"
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
@@ -1604,6 +1605,53 @@ int CmdExpMs04Run(keship::ModelManager &_mm, const Args &_a) {
   return 0;
 }
 
+
+/// MS-02 / MS-03 共用：施加规则波 → 采样响应 → 输出幅值与 RAO
+int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &_tag) {
+  const std::string model = _a.Get("model");
+  if (model.empty())
+    Fail("用法：exp " + _tag + " --model <名> [--wave-amp M] [--wave-period S] "
+         "[--gain G] [--duration S] [--period S] [--csv 路径]");
+  const double amp      = _a.GetD("wave-amp", 0.5);
+  const double wperiod  = _a.GetD("wave-period", 5.0);
+  const double gain     = _a.GetD("gain", 1.0);
+  const double duration = _a.GetD("duration", 60.0);
+  const double period   = _a.GetD("period", 0.05);
+
+  keship::WaveResponseCore core(_mm.GetNode(), g_opt.world);
+  core.setTarget(model);
+  core.setSamplePeriod(period);
+  if (!core.start())
+    Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
+
+  core.sendWave(amp, wperiod, gain);
+  Info(_tag + " 开始：波幅 " + std::to_string(amp) + " m / 周期 " +
+       std::to_string(wperiod) + " s / 时长 " + std::to_string(duration) + " s");
+
+  const int n = static_cast<int>(duration / period);
+  for (int i = 0; i < n; ++i) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    core.sample();
+  }
+  core.stop();
+
+  const auto m = core.metrics();
+  std::cout << "轨迹点数   : " << m.points << "\n";
+  std::cout << "波幅/周期  : " << m.waveAmp << " m / " << m.wavePeriod << " s\n";
+  std::cout << "横摇幅值   : " << m.rollAmp  << " 度\n";
+  std::cout << "纵摇幅值   : " << m.pitchAmp << " 度\n";
+  std::cout << "升沉幅值   : " << m.heaveAmp << " m\n";
+  std::cout << "横摇 RAO   : " << m.rollRAO  << " 度/m\n";
+  std::cout << "纵摇 RAO   : " << m.pitchRAO << " 度/m\n";
+  std::cout << "升沉 RAO   : " << m.heaveRAO << " m/m\n";
+  std::cout << "横摇周期   : " << m.rollPeriod << " s\n";
+  if (_a.Has("csv")) {
+    const std::string csv = _a.Get("csv");
+    if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);
+  }
+  return 0;
+}
+
 int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
   if (_argv.empty()) { PrintHelp(); return 0; }
 
@@ -1696,6 +1744,8 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     Args sa = a; sa.pos = tail;
     if (sub == "ms01-run") return CmdExpMs01Run(_mm, sa);
     if (sub == "ms04-run") return CmdExpMs04Run(_mm, sa);
+    if (sub == "ms02-run") return CmdExpWaveRun(_mm, sa, "MS-02");
+    if (sub == "ms03-run") return CmdExpWaveRun(_mm, sa, "MS-03");
     Fail("未知 exp 子命令：" + sub);
   }
 

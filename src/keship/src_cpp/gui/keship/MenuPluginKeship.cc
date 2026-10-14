@@ -50,6 +50,7 @@
 #include "experiments/CodeRunnerDialog.hh"
 #include "experiments/TurningCircleDialog.hh"
 #include "experiments/ZigzagDialog.hh"
+#include "experiments/WaveResponseDialog.hh"
 #include "tasks/TaskSetDialog.hh"
 #include "tasks/TaskMonitorDialog.hh"
 #include "editors/BuoyancyEditorDialog.hh"
@@ -3156,6 +3157,30 @@ void MenuPluginKeship::OnBtn_MS04_Zigzag()
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms04Dialog_ = nullptr; });
   ms04Dialog_ = dialog; dialog->show();
   std::cout << "MS-04: Z 形试验对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS02_WaveResponse()
+{
+  if (ms02Dialog_) { ms02Dialog_->raise(); ms02Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms02");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms02Dialog_ = nullptr; });
+  ms02Dialog_ = dialog; dialog->show();
+  std::cout << "MS-02: 升沉与纵摇响应对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS03_Rao()
+{
+  if (ms03Dialog_) { ms03Dialog_->raise(); ms03Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms03");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms03Dialog_ = nullptr; });
+  ms03Dialog_ = dialog; dialog->show();
+  std::cout << "MS-03: 横摇 RAO 对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
