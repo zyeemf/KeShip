@@ -63,6 +63,7 @@
 #include <gz/transport/Node.hh>
 
 #include "ModelManager.hh"
+#include "TurningExperimentCore.hh"
 #include "ShipHullGenerator.hh"
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
@@ -1410,6 +1411,14 @@ R"(keship_ctl — KeShip 无头指令入口
   model pose <name>
   model set-pose <name> x y z roll pitch yaw
 
+教学实验（无头运行器 —— 与 GUI 对话框**共用核心层**，2026-10-14）:
+  exp ms01-run --model <名> [--left N] [--right N] [--duration S] [--period S]
+                                   [--thruster-left 名] [--thruster-right 名] [--csv 路径]
+                                           MS-01 回转性观测：下发差动推力 → 采样轨迹 →
+                                           输出 进距 / 战术直径 / 回转直径（可导出 CSV）
+                                           ⚠ 与 GUI「MS-01 回转性观测」对话框调用**同一份代码**
+                                             （TurningExperimentCore）⇒ 无头结果即 GUI 结果
+
 环境:
   wave set [--gain 1.0] [--model PMS]      下发波浪/静水参数（实验前常设 --gain 0）
   water show                               打印水域 JSON 原文
@@ -1481,6 +1490,64 @@ int CmdScript(keship::ModelManager &_mm, const Args &_a) {
   }
   Info("脚本执行完毕：" + _a.pos[0]);
   return rc;
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// exp：教学实验的无头运行器
+//   设计原则（2026-10-14 张老师确认）：无头测试调用的**函数与代码**，
+//   必须与「GUI 对话框设定参数后点击确定」**完全一致** ⇒ 二者共用核心层。
+// ══════════════════════════════════════════════════════════════════
+int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
+  const std::string model = _a.Get("model");
+  if (model.empty())
+    Fail("用法：exp ms01-run --model <名> [--left N] [--right N] "
+         "[--duration S] [--period S] [--thruster-left 名] [--thruster-right 名] [--csv 路径]");
+  const double left     = _a.GetD("left", 120.0);
+  const double right    = _a.GetD("right", 60.0);
+  const double duration = _a.GetD("duration", 20.0);
+  const double period   = _a.GetD("period", 0.1);
+  const std::string thrL = _a.Get("thruster-left", "thrust_left");
+  const std::string thrR = _a.Get("thruster-right", "thrust_right");
+
+  keship::TurningExperimentCore core(_mm.GetNode(), g_opt.world);
+  core.setTarget(model, thrL, thrR);
+  core.setSamplePeriod(period);
+  if (!core.start())
+    Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
+
+  core.sendThrust(left, right);
+  Info("MS-01 开始：左 " + std::to_string(left) + " N / 右 " + std::to_string(right) +
+       " N，时长 " + std::to_string(duration) + " s，采样 " + std::to_string(period) + " s");
+
+  const int n = static_cast<int>(duration / period);
+  for (int i = 0; i < n; ++i) {
+    std::this_thread::sleep_for(std::chrono::duration<double>(period));
+    core.sample();
+  }
+  core.stop();
+
+  const auto m = core.metrics();
+  if (g_opt.json) {
+    std::cout << "{\"points\":" << m.points
+              << ",\"advance\":" << m.advance
+              << ",\"tactical\":" << m.tactical
+              << ",\"turning\":" << m.turning
+              << ",\"max_x\":" << m.maxX
+              << ",\"max_y\":" << m.maxY
+              << ",\"valid\":" << (m.valid ? "true" : "false") << "}\n";
+  } else {
+    std::cout << "轨迹点数 : " << m.points << "\n";
+    std::cout << "进距     : " << m.advance  << " m\n";
+    std::cout << "战术直径 : " << m.tactical << " m\n";
+    std::cout << "回转直径 : " << m.turning  << " m\n";
+  }
+  if (_a.Has("csv")) {
+    const std::string csv = _a.Get("csv");
+    if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);
+    else Fail("无法写入 CSV：" + csv);
+  }
+  return 0;
 }
 
 int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
@@ -1566,6 +1633,16 @@ int Dispatch(keship::ModelManager &_mm, const std::vector<std::string> &_argv) {
     Fail("未知 watch 子命令：" + a.pos[0]);
   }
   if (cmd == "subvol") return CmdSubvol(_mm, a);
+
+  // ── exp（教学实验无头运行器）──
+  if (cmd == "exp") {
+    if (a.pos.empty()) Fail("用法：exp ms01-run --model <名> [选项]");
+    const std::string sub = a.pos[0];
+    std::vector<std::string> tail(a.pos.begin() + 1, a.pos.end());
+    Args sa = a; sa.pos = tail;
+    if (sub == "ms01-run") return CmdExpMs01Run(_mm, sa);
+    Fail("未知 exp 子命令：" + sub);
+  }
 
   // ── 批处理 ──
   if (cmd == "script") return CmdScript(_mm, a);

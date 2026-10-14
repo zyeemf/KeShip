@@ -208,6 +208,7 @@ add_library(keship_utils STATIC
   src_cpp/utils/MeshInertiaCalculator.cc
   src_cpp/utils/ModelManager.cc
   src_cpp/utils/ForceAccumulator.cc
+  src_cpp/utils/TurningExperimentCore.cc
 )
 # ★ 2026-09-28：碰撞体积"凸包"模式需要 3D 凸包 ⇒ 用系统自带的 qhull（重入版）
 find_package(PkgConfig REQUIRED)
