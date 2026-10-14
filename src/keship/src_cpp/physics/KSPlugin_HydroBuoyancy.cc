@@ -850,6 +850,15 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   {
     if (inWater && this->enableHydro_)
     {
+      /// ★ 阻尼力作用点 = 质心（2026-10-14 修复，见 doc/audit/hydro_damping_arm_2026-10-14.md）
+      /// 原填 linkWorldPos（link 原点＝船体角点，距质心 1.6 m/0.99 m），而引擎按 link 原点解释力
+      /// ⇒ 绕质心多出 (linkOrigin − CoM) × F_damping 的**寄生偏航力矩**
+      /// ⇒ 两桨等推力下船仍持续回转（无头实测 ω→−0.36 rad/s；改为质心后 ω→0，直航）。
+      /// 阻尼为分布水动力，物理上作用于质心（Fossen 广义力约定）⇒ 力项无力臂，力矩全部来自 pureTorque。
+      /// 与 §14.2 流速/风力“虚假偏航力矩”同源缺陷，本次一并修正。
+      auto dampComPose = this->linkObj_.WorldInertialPose(_ecm);
+      const gz::math::Vector3d dampApplyPoint =
+          dampComPose ? dampComPose->Pos() : linkWorldPos;
       if (this->dataPtr->dampingMode_ == "pose_based"
           && this->dataPtr->hasCylinderGeometry_
           && !this->dataPtr->bodies.empty())
@@ -859,9 +868,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         computePoseBasedDamping(
             _ecm, modelPose, totalSubVol, effectiveFluidLevel,
             dampForce, dampTorque, totalMass);
-        /// 阻尼的**力项无力臂**（既有口径：隐含作用于 link 原点）⇒ applyPoint 填 linkWorldPos，
-        /// 叉乘恒为 0，力矩全部来自 pureTorque。**本次重构不改这一口径、不改数值**。
-        acc.Add({"damping/pose_based", dampForce, linkWorldPos, dampTorque});
+        /// 阻尼的**力项无力臂**（作用于质心）⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+        acc.Add({"damping/pose_based", dampForce, dampApplyPoint, dampTorque});
       }
       else if (this->dataPtr->fossen && this->dataPtr->fossen->valid())
       {
@@ -886,9 +894,9 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           gz::math::Vector3d torqueWorld = modelPose.Rot() * gz::math::Vector3d(
               tauBody(3), tauBody(4), tauBody(5));
 
-          /// 同上：Fossen 阻尼的力项无力臂（隐含作用于 link 原点）
-          /// ⇒ applyPoint 填 linkWorldPos，叉乘恒为 0，力矩全部来自 pureTorque。
-          acc.Add({"damping/fossen", forceWorld, linkWorldPos, torqueWorld});
+          /// 同上：Fossen 阻尼的力项无力臂（作用于质心）
+          /// ⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+          acc.Add({"damping/fossen", forceWorld, dampApplyPoint, torqueWorld});
 
           auto &d = this->dataPtr->hydroDiag;
           for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i);
