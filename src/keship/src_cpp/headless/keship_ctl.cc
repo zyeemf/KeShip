@@ -1544,6 +1544,8 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
               << ",\"fit_r2\":" << m.fitR2
               << ",\"fit_points\":" << m.fitPoints
               << ",\"steady_turn\":" << (m.steadyTurn ? "true" : "false")
+              << ",\"no_turn\":" << (m.noTurn ? "true" : "false")
+              << ",\"turned_deg\":" << m.turnedDeg
               << ",\"max_x\":" << m.maxX
               << ",\"max_y\":" << m.maxY
               << ",\"valid\":" << (m.valid ? "true" : "false") << "}\n";
@@ -1551,10 +1553,15 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
     std::cout << "轨迹点数 : " << m.points << "\n";
     std::cout << "进距     : " << m.advance  << " m\n";
     std::cout << "战术直径 : " << m.tactical << " m\n";
-    std::cout << "回转直径 : " << m.turning  << " m   ["
-              << (m.steadyTurn ? "定常段圆拟合" : "未达定常 → 战术直径替代")
-              << ", R² = " << m.fitR2 << ", " << m.fitPoints << " 点]\n";
-    std::cout << "  对照: 包围盒估计 " << m.turningBox << " m\n";
+    if (m.noTurn) {
+      std::cout << "回转直径 : -1 m   [未回转：全程转向角仅 " << m.turnedDeg
+                << "° < 10° ——（两桨等推力 ⇒ 船直航）战术/回转直径无定义]\n";
+    } else {
+      std::cout << "回转直径 : " << m.turning  << " m   ["
+                << (m.steadyTurn ? "定常段圆拟合" : "未达定常 → 战术直径替代")
+                << ", R² = " << m.fitR2 << ", " << m.fitPoints << " 点]\n";
+      std::cout << "  对照: 包围盒估计 " << m.turningBox << " m\n";
+    }
   }
   if (_a.Has("csv")) {
     const std::string csv = _a.Get("csv");

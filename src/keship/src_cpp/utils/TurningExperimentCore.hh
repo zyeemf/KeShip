@@ -41,6 +41,8 @@ struct TurningMetrics {
   double fitR2 = -1.0;      ///< 圆拟合优度 R²（判定定常段是否可信，越接近 1 越好）
   int    fitPoints = 0;     ///< 参与拟合的点数
   bool   steadyTurn = false;///< 是否**达到定常回转**（R² ≥ 阈值）；false ⇒ turning 退化为战术直径
+  double turnedDeg = 0.0;   ///< 全程累积转向角（度，绝对值）
+  bool   noTurn = false;    ///< 全程转向角 < 10° ⇒ **未回转**（典型：两桨等推力直航）
   double maxX = 0.0, maxY = 0.0;  ///< 轨迹包围盒（估计用）
   int    points = 0;
   bool   valid = false;

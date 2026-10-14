@@ -247,6 +247,12 @@ void TurningCircleDialog::showResults() {
     resultLabel_->setText("进距 = —   战术直径 = —   回转直径 = —（轨迹点不足）");
     return;
   }
+  if (m.noTurn) {
+    resultLabel_->setText(QString("进距 = %1 m   未回转（全程转向角 %2° < 10°，船基本直航）"
+                                  "—— 战术直径 / 回转直径无定义")
+        .arg(fmt(m.advance)).arg(m.turnedDeg, 0, 'f', 1));
+    return;
+  }
   resultLabel_->setText(QString("进距 = %1 m   战术直径 = %2 m   回转直径 = %3 m（圆拟合 %4 点, R²=%5）")
       .arg(fmt(m.advance)).arg(fmt(m.tactical)).arg(fmt(m.turning))
       .arg(m.fitPoints).arg(m.fitR2, 0, 'f', 4));

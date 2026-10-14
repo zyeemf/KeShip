@@ -266,9 +266,19 @@ TurningMetrics TurningExperimentCore::computeMetrics(
   //     ⇒ 轨迹是**收缩螺旋**而非圆）—— 即**未达定常回转**。此时按 IMO 惯例
   //     用**战术直径**作为回转直径的替代口径，并置 steadyTurn=false 供调用方判断。
   constexpr double kR2Threshold = 0.90;
+  /// ★ 全程累积转向角（绝对值）—— 判「船是否真的在回转」。
+  ///   ⚠ 2026-10-14 水动力作用点修复后新增：两桨**等推力**时船**直航**，
+  ///   此时若仍按包围盒给「回转直径」会报出**直线轨迹的包围盒**（实测 24.15 m），属误导。
+  ///   转向角 < 10° 一律判「未回转」（战术/回转直径均无定义，报 -1）。
+  const double totalTurnDeg = std::abs(cumTurn.back());
+  m.turnedDeg = totalTurnDeg;
   if (m.fitR2 >= kR2Threshold) {
     m.turning = 2.0 * R;
     m.steadyTurn = true;
+  } else if (totalTurnDeg < 10.0) {
+    m.turning = -1.0;
+    m.noTurn = true;
+    m.steadyTurn = false;
   } else {
     m.turning = (m.tactical >= 0) ? m.tactical : m.turningBox;
     m.steadyTurn = false;
