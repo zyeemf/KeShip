@@ -20,12 +20,51 @@ namespace keship {
 namespace {
 constexpr double kRad2Deg = 180.0 / M_PI;
 
-/// 相对初始航向的转向角（绝对值，0~180）
-double relTurnDeg(double _yawDeg, double _startYawDeg) {
-  double d = _yawDeg - _startYawDeg;
-  while (d > 180.0) d -= 360.0;
-  while (d < -180.0) d += 360.0;
-  return std::abs(d);
+/// 3×3 行列式
+double det3(double a11, double a12, double a13,
+            double a21, double a22, double a23,
+            double a31, double a32, double a33) {
+  return a11 * (a22 * a33 - a23 * a32)
+       - a12 * (a21 * a33 - a23 * a31)
+       + a13 * (a21 * a32 - a22 * a31);
+}
+
+/// **最小二乘圆拟合**（Kåsa 法）—— 严格 IMO 口径的「定常回转直径」
+///   最小化 Σ(x²+y²+Dx+Ey+F)² ⇒ 解 3×3 线性方程组（克拉默法则）
+///   ⚠ 与「包围盒估计」不同：这里求的是**真实拟合圆**的直径。
+bool fitCircle(const std::vector<TurningSample> &_pts, size_t _from,
+               double &_cx, double &_cy, double &_R, double &_r2) {
+  if (_pts.size() <= _from + 4) return false;
+  const double n = static_cast<double>(_pts.size() - _from);
+  double sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0;
+  for (size_t i = _from; i < _pts.size(); ++i) {
+    const double x = _pts[i].x, y = _pts[i].y, z = x * x + y * y;
+    sx += x; sy += y; sz += z;
+    sxx += x * x; syy += y * y; sxy += x * y;
+    sxz += x * z; syz += y * z;
+  }
+  const double D0 = det3(sxx, sxy, sx, sxy, syy, sy, sx, sy, n);
+  if (std::abs(D0) < 1e-12) return false;
+  const double D = det3(-sxz, sxy, sx, -syz, syy, sy, -sz, sy, n) / D0;
+  const double E = det3(sxx, -sxz, sx, sxy, -syz, sy, sx, -sz, n) / D0;
+  const double F = det3(sxx, sxy, -sxz, sxy, syy, -syz, sx, sy, -sz) / D0;
+  _cx = -D / 2.0;
+  _cy = -E / 2.0;
+  _R = std::sqrt(std::max(0.0, _cx * _cx + _cy * _cy - F));
+  if (_R <= 1e-9) return false;
+  // 拟合优度 R²
+  double rMean = 0;
+  for (size_t i = _from; i < _pts.size(); ++i)
+    rMean += std::hypot(_pts[i].x - _cx, _pts[i].y - _cy);
+  rMean /= n;
+  double ssRes = 0, ssTot = 0;
+  for (size_t i = _from; i < _pts.size(); ++i) {
+    const double d = std::hypot(_pts[i].x - _cx, _pts[i].y - _cy);
+    ssRes += (d - _R) * (d - _R);
+    ssTot += (d - rMean) * (d - rMean);
+  }
+  _r2 = (ssTot > 1e-12) ? (1.0 - ssRes / ssTot) : 1.0;
+  return true;
 }
 }  // namespace
 
@@ -189,14 +228,51 @@ TurningMetrics TurningExperimentCore::computeMetrics(
     m.maxX = std::max(m.maxX, std::abs(p.x - _startX));
     m.maxY = std::max(m.maxY, std::abs(p.y - _startY));
   }
-  for (const auto &p : _trail) {
-    const double turn = relTurnDeg(p.yawDeg, _startYaw);
-    const double disp = std::hypot(p.x - _startX, p.y - _startY);
+
+  // ★ 累积转向角（**逐点增量累加**，正确处理 ±180° 环绕）
+  //   ⚠ 旧版用「yaw - startYaw 归一化到 ±180 后取绝对值」⇒ 船转了 358° 也只报 179.8°，
+  //     导致「战术直径」永远取不到值（2026-10-14 无头实测暴露）。
+  std::vector<double> cumTurn(_trail.size(), 0.0);
+  for (size_t i = 1; i < _trail.size(); ++i) {
+    double d = _trail[i].yawDeg - _trail[i - 1].yawDeg;
+    while (d > 180.0) d -= 360.0;
+    while (d < -180.0) d += 360.0;
+    cumTurn[i] = cumTurn[i - 1] + d;
+  }
+
+  for (size_t i = 0; i < _trail.size(); ++i) {
+    const double turn = std::abs(cumTurn[i]);
+    const double disp = std::hypot(_trail[i].x - _startX, _trail[i].y - _startY);
     if (m.advance < 0 && turn >= 90.0)  m.advance  = disp;
     if (m.tactical < 0 && turn >= 180.0) m.tactical = disp;
   }
-  // 回转直径 ≈ 战术直径；未转满 180° 时用包围盒估计（诚实标注）
-  m.turning = (m.tactical >= 0) ? m.tactical : std::min(m.maxX, m.maxY) * 2.0;
+
+  // 包围盒估计（仅作对照）
+  m.turningBox = std::min(m.maxX, m.maxY) * 2.0;
+
+  // ★ 严格 IMO 口径：**定常回转段最小二乘圆拟合**
+  //   定常段判定：累积转向 ≥ 180° 之后（排除转舵段与过渡段）
+  size_t from = 0;
+  for (size_t i = 0; i < _trail.size(); ++i) {
+    if (std::abs(cumTurn[i]) >= 180.0) { from = i; break; }
+  }
+  double cx = 0, cy = 0, R = 0, r2 = 0;
+  if (fitCircle(_trail, from, cx, cy, R, r2)) {
+    m.fitR2 = r2;
+    m.fitPoints = static_cast<int>(_trail.size() - from);
+  }
+  // ★ 定常回转判据：拟合优度 R² ≥ 0.90 才认「定常段圆」。
+  //   ⚠ 2026-10-14 实测：本平台**差动推力回转**下 R² ≈ 0（角速度由 14.6 持续降到 1.1 °/s
+  //     ⇒ 轨迹是**收缩螺旋**而非圆）—— 即**未达定常回转**。此时按 IMO 惯例
+  //     用**战术直径**作为回转直径的替代口径，并置 steadyTurn=false 供调用方判断。
+  constexpr double kR2Threshold = 0.90;
+  if (m.fitR2 >= kR2Threshold) {
+    m.turning = 2.0 * R;
+    m.steadyTurn = true;
+  } else {
+    m.turning = (m.tactical >= 0) ? m.tactical : m.turningBox;
+    m.steadyTurn = false;
+  }
   m.valid = true;
   return m;
 }

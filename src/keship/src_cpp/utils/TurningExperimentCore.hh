@@ -36,7 +36,11 @@ struct TurningSample {
 struct TurningMetrics {
   double advance = -1.0;    ///< 进距：转向 90° 时沿原航向的前进距离 (m)
   double tactical = -1.0;   ///< 战术直径：转向 180° 时的横向位移 (m)
-  double turning = -1.0;    ///< 回转直径 (m)
+  double turning = -1.0;    ///< 回转直径（**定常段最小二乘圆拟合**；不足时退回包围盒估计）
+  double turningBox = -1.0; ///< 回转直径（包围盒估计，仅作对照）
+  double fitR2 = -1.0;      ///< 圆拟合优度 R²（判定定常段是否可信，越接近 1 越好）
+  int    fitPoints = 0;     ///< 参与拟合的点数
+  bool   steadyTurn = false;///< 是否**达到定常回转**（R² ≥ 阈值）；false ⇒ turning 退化为战术直径
   double maxX = 0.0, maxY = 0.0;  ///< 轨迹包围盒（估计用）
   int    points = 0;
   bool   valid = false;
