@@ -97,6 +97,12 @@ if ! flock -n 9; then
     echo "         同时运行多个实例会互相干扰导致仿真错乱。"
     echo "         请先关闭现有实例，再重新启动。"
     echo ""
+    echo "  ── 当前占用的进程（便于排查）──"
+    pgrep -af "[g]z sim|[g]z_tools_vendor|[k]eship_world_bridge|[p]arameter_bridge" 2>/dev/null \
+        | cut -c1-140 | sed 's/^/    /' | head -8
+    echo ""
+    echo "  一键清理：bash data/test/cleanup_and_shutdown.sh"
+    echo ""
     exit 1
 fi
 
@@ -104,6 +110,11 @@ if pgrep -f "[g]z sim -v 4" > /dev/null 2>&1; then
     echo ""
     echo "  [错误] 检测到 gz sim 进程已在运行，拒绝启动。"
     echo "         请先关闭现有实例，再重新启动。"
+    echo ""
+    pgrep -af "[g]z sim -v 4" 2>/dev/null \
+        | cut -c1-140 | sed 's/^/    /' | head -8
+    echo ""
+    echo "  一键清理：bash data/test/cleanup_and_shutdown.sh"
     echo ""
     exit 1
 fi
