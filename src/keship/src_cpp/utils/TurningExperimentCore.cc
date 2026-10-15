@@ -422,8 +422,30 @@ TurningMetrics TurningExperimentCore::computeMetrics(
   }
 
   bool advanceFound = false, tacticalFound = false;
-  const double hx = std::cos(_startYaw / kRad2Deg);
-  const double hy = std::sin(_startYaw / kRad2Deg);
+  // ★ 参考轴 = **实际航迹向（course）**，而不是 yaw。
+  //   ⚠ 本平台推进器约定「正推力沿模型 local -X」（见 KSPlugin_Thrust.cc:195），
+  //     部分模型（如 ke0812_1）的 yaw 因此与其前进方向相差 180°；若按 yaw 投影，
+  //     「进距」会算成负值而被显示为「—」（2026-10-15 张老师实测暴露）。
+  //   做法：取「累积转向 ≈5° 处」的弦向作为初始航迹向（比两点差分稳，方向误差 ~2.5°）。
+  double hx = std::cos(_startYaw / kRad2Deg);
+  double hy = std::sin(_startYaw / kRad2Deg);
+  {
+    size_t refIdx = from;
+    for (size_t i = from + 1; i < _trail.size(); ++i) {
+      refIdx = i;
+      if (std::abs(cumTurn[i]) >= 5.0) break;
+    }
+    const double dx0 = _trail[refIdx].x - _startX;
+    const double dy0 = _trail[refIdx].y - _startY;
+    const double len = std::hypot(dx0, dy0);
+    if (len > 1e-6) {
+      // 弦向相对**初始切线**偏转了 cumTurn/2（回转几何），回正后再作为参考轴，
+      // 否则会把「进距」系统性放大几个百分点。
+      const double ang = std::atan2(dy0, dx0) - 0.5 * cumTurn[refIdx] / kRad2Deg;
+      hx = std::cos(ang);
+      hy = std::sin(ang);
+    }
+  }
   for (size_t i = from; i < _trail.size(); ++i) {
     const double turn = std::abs(cumTurn[i]);
     const double dx = _trail[i].x - _startX;
