@@ -426,7 +426,7 @@ TurningMetrics TurningExperimentCore::computeMetrics(
   //   ⚠ 本平台推进器约定「正推力沿模型 local -X」（见 KSPlugin_Thrust.cc:195），
   //     部分模型（如 ke0812_1）的 yaw 因此与其前进方向相差 180°；若按 yaw 投影，
   //     「进距」会算成负值而被显示为「—」（2026-10-15 张老师实测暴露）。
-  //   做法：取「累积转向 ≈5° 处」的弦向作为初始航迹向（比两点差分稳，方向误差 ~2.5°）。
+  //   做法：取「累积转向 ≈5° 处」的弦向估计初始航迹向（比两点差分稳），再按半角回正。
   double hx = std::cos(_startYaw / kRad2Deg);
   double hy = std::sin(_startYaw / kRad2Deg);
   {
