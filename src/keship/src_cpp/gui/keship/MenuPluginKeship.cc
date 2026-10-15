@@ -65,6 +65,7 @@
 #include "water/WaterAreaDrawDialog.hh"
 #include "editors/EnvironmentParamsDialog.hh"
 #include "editors/InertiaCalculatorDialog.hh"
+#include "editors/ProxyGeometryDialog.hh"
 #include "editors/LoadWorldDialog.hh"
 #include "editors/SaveWorldDialog.hh"
 #include "editors/SelectWorldDialog.hh"
@@ -3134,6 +3135,15 @@ void MenuPluginKeship::OnBtn_InertiaCalculator()
   auto *dlg = new InertiaCalculatorDialog(nullptr);
   dlg->setAttribute(Qt::WA_DeleteOnClose);
   dlg->show();
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD06_ProxyGeometry()
+{
+  auto *dlg = new ProxyGeometryDialog(nullptr);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "SD-06: 代理几何体建模与简化对话框已打开" << std::endl;
 }
 
 //-----------------------------------------------------------------------------

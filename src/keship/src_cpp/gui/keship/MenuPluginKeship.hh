@@ -184,6 +184,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   /// \brief 惯性计算工具
   protected slots: void OnBtn_InertiaCalculator();
 
+  /// \brief SD-06 代理几何体建模与简化（三档对比：Mesh/ConvexHull/None）
+  protected slots: void OnBtn_SD06_ProxyGeometry();
+
   /// \brief 清理未被 ksm 引用的网格规范化缓存（models_normalized）
   protected slots: void OnBtn_CleanMeshCache();
 

@@ -298,7 +298,7 @@ Rectangle {
         ListElement { expId: "SD-03";  name: "横剖面结构";              course: "船体结构与制图";        tier: "观察类"; enabled: false }
         ListElement { expId: "SD-04";  name: "舱室划分";                course: "船体结构与制图";        tier: "操作类"; enabled: false }
         ListElement { expId: "SD-05";  name: "惯量与剖面特性计算";      course: "船体结构与制图";        tier: "操作类"; enabled: true }
-        ListElement { expId: "SD-06";  name: "代理几何体建模与简化";    course: "船体结构与制图";        tier: "操作类"; enabled: false }
+        ListElement { expId: "SD-06";  name: "代理几何体建模与简化";    course: "船体结构与制图";        tier: "操作类"; enabled: true }
         ListElement { expId: "SD-07";  name: "破舱稳性仿真";            course: "船体结构与制图";        tier: "操作类"; enabled: false }
         ListElement { expId: "SD-08";  name: "参数化型线设计";          course: "船体结构与制图";        tier: "设计类"; enabled: false }
         ListElement { expId: "SD-09";  name: "综合结构设计";            course: "船体结构与制图";        tier: "设计类"; enabled: false }
@@ -1029,6 +1029,8 @@ Rectangle {
                                     MenuPluginKeship.OnBtn_NewMathHull();
                                 } else if (expId === "SD-05") {
                                     MenuPluginKeship.OnBtn_InertiaCalculator();
+                                } else if (expId === "SD-06") {
+                                    MenuPluginKeship.OnBtn_SD06_ProxyGeometry();
                                 }
                                 // 后续实验在此添加分支
                             }

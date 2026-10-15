@@ -160,6 +160,7 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
   src_cpp/gui/keship/editors/EnvironmentParamsDialog.cc
   src_cpp/gui/keship/editors/InertiaCalculatorDialog.cc
+  src_cpp/gui/keship/editors/ProxyGeometryDialog.cc
   src_cpp/gui/keship/editors/LoadWorldDialog.cc
   src_cpp/gui/keship/editors/SaveWorldDialog.cc
   src_cpp/gui/keship/editors/SelectWorldDialog.cc
