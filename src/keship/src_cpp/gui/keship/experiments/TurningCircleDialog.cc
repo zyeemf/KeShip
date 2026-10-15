@@ -10,6 +10,8 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
+#include <QTableWidgetItem>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -208,7 +210,7 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
                                          QWidget *_parent)
     : QDialog(_parent) {
   setWindowTitle("MS-01 回转性观测");
-  resize(880, 620);
+  resize(980, 760);
 
   core_ = std::make_unique<keship::TurningExperimentCore>(_transportNode, _worldName);
 
@@ -226,20 +228,33 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
   form->addRow("左推进器名：", leftNameEdit_);
   form->addRow("右推进器名：", rightNameEdit_);
 
-  leftThrustSpin_ = new QDoubleSpinBox(paramBox);
-  leftThrustSpin_->setRange(-2000, 2000); leftThrustSpin_->setValue(120.0);
-  leftThrustSpin_->setSuffix(" N");
-  rightThrustSpin_ = new QDoubleSpinBox(paramBox);
-  rightThrustSpin_->setRange(-2000, 2000); rightThrustSpin_->setValue(60.0);
-  rightThrustSpin_->setSuffix(" N");
-  form->addRow("左推力：", leftThrustSpin_);
-  form->addRow("右推力：", rightThrustSpin_);
-
   periodSpin_ = new QDoubleSpinBox(paramBox);
   periodSpin_->setRange(0.02, 2.0); periodSpin_->setValue(0.1);
   periodSpin_->setSingleStep(0.02); periodSpin_->setSuffix(" s");
   form->addRow("采样周期：", periodSpin_);
   root->addWidget(paramBox);
+
+  auto *stageBox = new QGroupBox(
+      "分阶段推力计划（最后阶段时长 0 = 持续到停止；勾选一段作为操纵指标起点）", this);
+  auto *stageLayout = new QVBoxLayout(stageBox);
+  stageTable_ = new QTableWidget(stageBox);
+  stageTable_->setColumnCount(5);
+  stageTable_->setHorizontalHeaderLabels({"阶段", "时长 (仿真 s)", "左推力 (N)", "右推力 (N)", "指标起点"});
+  stageTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  stageTable_->verticalHeader()->setVisible(false);
+  stageTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  stageTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+  stageTable_->setMinimumHeight(110);
+  stageLayout->addWidget(stageTable_);
+  auto *stageButtons = new QHBoxLayout();
+  addStageBtn_ = new QPushButton("增加阶段", stageBox);
+  removeStageBtn_ = new QPushButton("删除选中阶段", stageBox);
+  stageButtons->addWidget(addStageBtn_);
+  stageButtons->addWidget(removeStageBtn_);
+  stageButtons->addStretch();
+  stageLayout->addLayout(stageButtons);
+  root->addWidget(stageBox);
+  syncTableFromStages();
 
   auto *ctrlRow = new QHBoxLayout();
   startBtn_ = new QPushButton("开始", this);
@@ -267,11 +282,111 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
   connect(stopBtn_, &QPushButton::clicked, this, &TurningCircleDialog::onStop);
   connect(clearBtn_, &QPushButton::clicked, this, &TurningCircleDialog::onClear);
   connect(exportBtn_, &QPushButton::clicked, this, &TurningCircleDialog::onExport);
+  connect(addStageBtn_, &QPushButton::clicked, this, &TurningCircleDialog::onAddStage);
+  connect(removeStageBtn_, &QPushButton::clicked, this, &TurningCircleDialog::onRemoveStage);
 
   std::cout << "MS-01: 回转性观测对话框已创建（核心层 TurningExperimentCore）" << std::endl;
 }
 
 TurningCircleDialog::~TurningCircleDialog() = default;
+
+void TurningCircleDialog::syncTableFromStages() {
+  if (!stageTable_) return;
+  const auto &stages = core_->stages();
+  stageTable_->setRowCount(static_cast<int>(stages.size()));
+  for (int r = 0; r < static_cast<int>(stages.size()); ++r) {
+    const auto &st = stages[static_cast<size_t>(r)];
+    auto put = [&](int c, const QString &v) {
+      auto *it = new QTableWidgetItem(v);
+      if (c == 4) {
+        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+        it->setCheckState(st.measurementStart ? Qt::Checked : Qt::Unchecked);
+        it->setText(QString());
+      } else {
+        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
+      }
+      stageTable_->setItem(r, c, it);
+    };
+    put(0, st.name.empty() ? QString("阶段 %1").arg(r + 1) : QString::fromStdString(st.name));
+    put(1, QString::number(st.durationSec, 'f', st.durationSec == 0.0 ? 0 : 1));
+    put(2, QString::number(st.leftN, 'f', 1));
+    put(3, QString::number(st.rightN, 'f', 1));
+    put(4, QString());
+  }
+  if (stageTable_->rowCount() > 0) stageTable_->selectRow(stageTable_->rowCount() - 1);
+}
+
+bool TurningCircleDialog::syncStagesFromTable(QString *_error) {
+  std::vector<keship::TurningStage> stages;
+  int measurementCount = 0;
+  for (int r = 0; r < stageTable_->rowCount(); ++r) {
+    auto cell = [&](int c) { return stageTable_->item(r, c) ? stageTable_->item(r, c)->text().trimmed() : QString(); };
+    bool okD = false, okL = false, okR = false;
+    const double duration = cell(1).toDouble(&okD);
+    const double left = cell(2).toDouble(&okL);
+    const double right = cell(3).toDouble(&okR);
+    if (!okD || !okL || !okR || duration < 0.0) {
+      if (_error) *_error = QString("第 %1 阶段的时长或推力不是有效数字").arg(r + 1);
+      return false;
+    }
+    const bool measure = stageTable_->item(r, 4)
+        && stageTable_->item(r, 4)->checkState() == Qt::Checked;
+    measurementCount += measure ? 1 : 0;
+    keship::TurningStage st;
+    st.durationSec = duration;
+    st.leftN = left;
+    st.rightN = right;
+    st.measurementStart = measure;
+    st.name = cell(0).isEmpty() ? QString("阶段 %1").arg(r + 1).toStdString() : cell(0).toStdString();
+    stages.push_back(st);
+  }
+  if (measurementCount != 1) {
+    if (_error) *_error = "必须且只能勾选一个「指标起点」阶段";
+    return false;
+  }
+  std::string coreError;
+  if (!core_->setStages(stages, &coreError)) {
+    if (_error) *_error = QString::fromStdString(coreError);
+    return false;
+  }
+  if (_error) _error->clear();
+  return true;
+}
+
+void TurningCircleDialog::onAddStage() {
+  if (core_->running()) return;
+  const int row = stageTable_->rowCount();
+  if (row > 0) {
+    bool ok = false;
+    const double lastDuration = stageTable_->item(row - 1, 1)->text().toDouble(&ok);
+    if (ok && lastDuration == 0.0) stageTable_->item(row - 1, 1)->setText("20");
+  }
+  const double left = row > 0 ? stageTable_->item(row - 1, 2)->text().toDouble() : 120.0;
+  const double right = row > 0 ? stageTable_->item(row - 1, 3)->text().toDouble() : 60.0;
+  stageTable_->insertRow(row);
+  stageTable_->setItem(row, 0, new QTableWidgetItem(QString("阶段 %1").arg(row + 1)));
+  stageTable_->setItem(row, 1, new QTableWidgetItem("0"));
+  stageTable_->setItem(row, 2, new QTableWidgetItem(QString::number(left, 'f', 1)));
+  stageTable_->setItem(row, 3, new QTableWidgetItem(QString::number(right, 'f', 1)));
+  auto *check = new QTableWidgetItem();
+  check->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
+  check->setCheckState(Qt::Unchecked);
+  stageTable_->setItem(row, 4, check);
+  stageTable_->selectRow(row);
+}
+
+void TurningCircleDialog::onRemoveStage() {
+  if (core_->running() || stageTable_->rowCount() <= 1) return;
+  const int row = stageTable_->currentRow();
+  if (row < 0) return;
+  const bool removedMarker = stageTable_->item(row, 4)
+      && stageTable_->item(row, 4)->checkState() == Qt::Checked;
+  stageTable_->removeRow(row);
+  if (removedMarker) stageTable_->item(0, 4)->setCheckState(Qt::Checked);
+  for (int r = 0; r < stageTable_->rowCount(); ++r)
+    if (stageTable_->item(r, 0)) stageTable_->item(r, 0)->setText(QString("阶段 %1").arg(r + 1));
+  stageTable_->selectRow(std::min(row, stageTable_->rowCount() - 1));
+}
 
 void TurningCircleDialog::syncParamsToCore() {
   core_->setTarget(modelCombo_->currentText().toStdString(),
@@ -282,19 +397,26 @@ void TurningCircleDialog::syncParamsToCore() {
 
 void TurningCircleDialog::onStart() {
   if (core_->running()) return;
+  QString error;
+  if (!syncStagesFromTable(&error)) {
+    QMessageBox::warning(this, "MS-01 推力计划", error);
+    return;
+  }
   syncParamsToCore();
   if (!core_->start()) {
     QMessageBox::warning(this, "MS-01",
         "未能读到船模位姿 —— 请确认「船模」名与场景中一致，且仿真已启动。");
     return;
   }
-  core_->sendThrust(leftThrustSpin_->value(), rightThrustSpin_->value());
   chart_->clearTrail();
+  stageTable_->setEnabled(false);
+  addStageBtn_->setEnabled(false);
+  removeStageBtn_->setEnabled(false);
   startBtn_->setEnabled(false);
   stopBtn_->setEnabled(true);
   timer_->start(static_cast<int>(periodSpin_->value() * 1000));
-  std::cout << "MS-01: 开始回转（左 " << leftThrustSpin_->value()
-            << " N / 右 " << rightThrustSpin_->value() << " N）" << std::endl;
+  std::cout << "MS-01: 开始多阶段推力计划，共 " << stageTable_->rowCount()
+            << " 段；指标起点阶段 " << core_->measurementStartStage() + 1 << std::endl;
 }
 
 void TurningCircleDialog::onStop() {
@@ -303,6 +425,9 @@ void TurningCircleDialog::onStop() {
   timer_->stop();
   startBtn_->setEnabled(true);
   stopBtn_->setEnabled(false);
+  stageTable_->setEnabled(true);
+  addStageBtn_->setEnabled(true);
+  removeStageBtn_->setEnabled(true);
   showResults();
   std::cout << "MS-01: 已停止，推力归零" << std::endl;
 }
@@ -310,7 +435,7 @@ void TurningCircleDialog::onStop() {
 void TurningCircleDialog::onClear() {
   core_->clear();
   chart_->clearTrail();
-  readoutLabel_->setText("t = —   x = —   y = —   航向 = —   速度 = —");
+  readoutLabel_->setText("计划 t = —   阶段 —   x = —   y = —   航向 = —   速度 = —");
   resultLabel_->setText("进距 = —   战术直径 = —   回转直径 = —");
 }
 
@@ -324,9 +449,10 @@ void TurningCircleDialog::updateReadout() {
   const auto &t = core_->trail();
   if (t.empty()) return;
   const auto &p = t.back();
-  readoutLabel_->setText(QString("t = %1 s   x = %2   y = %3   航向 = %4°   速度 = %5 m/s")
-      .arg(p.t, 0, 'f', 1).arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2)
-      .arg(p.yawDeg, 0, 'f', 1).arg(core_->speed(), 0, 'f', 2));
+  readoutLabel_->setText(QString("计划 t = %1 s   阶段 %2   x = %3   y = %4   航向 = %5°   速度 = %6 m/s%7")
+      .arg(p.t, 0, 'f', 1).arg(p.stage + 1).arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2)
+      .arg(p.yawDeg, 0, 'f', 1).arg(core_->speed(), 0, 'f', 2)
+      .arg(p.measurementStart ? "   ← 指标起点" : ""));
 }
 
 void TurningCircleDialog::showResults() {

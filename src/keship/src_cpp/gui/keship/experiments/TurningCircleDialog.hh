@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QTimer>
+#include <QTableWidget>
 #include <QWidget>
 #include <QPaintEvent>
 
@@ -58,9 +59,13 @@ private slots:
   void onClear();
   void onTick();
   void onExport();
+  void onAddStage();
+  void onRemoveStage();
 
 private:
   void syncParamsToCore();
+  bool syncStagesFromTable(QString *_error);
+  void syncTableFromStages();
   void updateReadout();
   void showResults();
 
@@ -68,9 +73,10 @@ private:
   QComboBox      *modelCombo_    = nullptr;
   QLineEdit      *leftNameEdit_  = nullptr;
   QLineEdit      *rightNameEdit_ = nullptr;
-  QDoubleSpinBox *leftThrustSpin_  = nullptr;
-  QDoubleSpinBox *rightThrustSpin_ = nullptr;
   QDoubleSpinBox *periodSpin_    = nullptr;
+  QTableWidget   *stageTable_   = nullptr;
+  QPushButton    *addStageBtn_  = nullptr;
+  QPushButton    *removeStageBtn_ = nullptr;
 
   // --- 控制 ---
   QPushButton *startBtn_  = nullptr;

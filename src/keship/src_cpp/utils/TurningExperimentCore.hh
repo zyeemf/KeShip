@@ -21,15 +21,27 @@
 
 #include <gz/transport/Node.hh>
 #include <gz/msgs/pose_v.pb.h>
+#include <gz/msgs/world_stats.pb.h>
 
 namespace keship {
 
+/// 多阶段推力表中的一段。durationSec <= 0 表示最后一段持续到用户停止。
+struct TurningStage {
+  double durationSec = 20.0;  ///< 仿真秒；最后阶段可为 0（无限持续）
+  double leftN = 120.0;
+  double rightN = 60.0;
+  bool measurementStart = false;  ///< 此段开始时重置操纵指标原点
+  std::string name = "";
+};
+
 /// 轨迹采样点
 struct TurningSample {
-  double t = 0.0;        ///< 相对起始的时间 (s)
+  double t = 0.0;        ///< 相对整个计划开始的仿真时间 (s)
   double x = 0.0;        ///< 世界 x (m)
   double y = 0.0;        ///< 世界 y (m)
   double yawDeg = 0.0;   ///< 航向角 (°)
+  int stage = 0;         ///< 当前阶段索引（0-based）
+  bool measurementStart = false;  ///< 此点是指标计量起点
 };
 
 /// 回转性指标（IMO 回转试验口径）
@@ -46,6 +58,7 @@ struct TurningMetrics {
   double maxX = 0.0, maxY = 0.0;  ///< 轨迹包围盒（估计用）
   int    points = 0;
   bool   valid = false;
+  int    measurementStartIndex = 0;  ///< 该指标轨迹中的起点（全轨迹索引）
 };
 
 /// 位姿回调共享状态
@@ -54,6 +67,13 @@ struct TurningPoseShared {
   bool alive = true;
   gz::msgs::Pose_V latest;
   bool found = false;
+};
+
+struct TurningClockShared {
+  std::mutex mutex;
+  bool alive = true;
+  bool found = false;
+  double simTimeSec = 0.0;
 };
 
 class TurningExperimentCore {
@@ -78,8 +98,18 @@ public:
   /// 周期性重发当前推力（防 gz-transport 首帧丢失）
   void republishThrust();
 
-  /// 开始记录：订阅位姿 + 清轨迹 + 标记起点
+  /// 设置推力阶段；至少一段。只有最后阶段允许 durationSec<=0（持续到停止）。
+  bool setStages(const std::vector<TurningStage> &_stages, std::string *_error = nullptr);
+  const std::vector<TurningStage> &stages() const { return stages_; }
+  int currentStage() const { return currentStage_; }
+  int measurementStartStage() const { return measurementStartStage_; }
+
+  /// 开始记录：订阅位姿 + 清轨迹 + 标记整个计划起点并应用第 0 阶段。
   bool start();
+
+  /// 仿真计时器的时钟：由外层传入当前 simTime（秒）。
+  /// 返回阶段是否发生切换；切换时自动下发新推力、锁存测量起点。
+  bool advanceSimulationTime(double _simTimeSec);
 
   /// 停止：推力归零 + 结束记录（指标可读）
   void stop();
@@ -97,13 +127,19 @@ public:
   double speed() const { return speed_; }
   bool running() const { return running_; }
   double elapsed() const { return elapsed_; }
+  bool measurementStarted() const { return measurementStarted_; }
+  bool hasSimulationClock() const;
 
   /// 指标（基于当前轨迹）
   TurningMetrics metrics() const;
 
+  /// 以指定样本为操纵起点，计算轨迹子段指标（GUI / 无头共享）。
+  TurningMetrics metricsFrom(size_t _startIndex) const;
+
   /// ★ 纯函数：从任意轨迹序列计算指标（便于**独立复算/单元测试**，不依赖 gz）
   static TurningMetrics computeMetrics(const std::vector<TurningSample> &_trail,
-                                       double _startX, double _startY, double _startYaw);
+                                       double _startX, double _startY, double _startYaw,
+                                       size_t _from = 0);
 
   /// 导出 CSV（t,x,y,yaw_deg）
   bool exportCsv(const std::string &_path) const;
@@ -130,12 +166,24 @@ private:
 
   // 位姿订阅
   std::shared_ptr<TurningPoseShared> pose_;
+  std::shared_ptr<TurningClockShared> clock_;
   bool subscribed_ = false;
+  bool statsSubscribed_ = false;
 
   // 推力发布（缓存）
   gz::transport::Node::Publisher pubL_, pubR_;
   std::string pubKeyL_, pubKeyR_;
   double curLeft_ = 0.0, curRight_ = 0.0;   ///< 当前推力（sample 时重发，防首帧丢失）
+  std::vector<TurningStage> stages_{{0.0, 120.0, 60.0, true, "直接差动"}};
+  int currentStage_ = -1;
+  int measurementStartStage_ = 0;
+  size_t measurementStartIndex_ = 0;
+  double planStartSimTime_ = -1.0;
+  double lastSimTime_ = -1.0;
+  double elapsedWall_ = 0.0;  ///< 仿真时间不可用时的降级计时
+  double lastSampleSimTime_ = -1.0;
+  bool measurementStarted_ = false;
+  bool pendingMeasurementStart_ = false;
 };
 
 }  // namespace keship

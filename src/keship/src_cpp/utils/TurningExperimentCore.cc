@@ -82,12 +82,27 @@ TurningExperimentCore::TurningExperimentCore(gz::transport::Node &_node,
         st->found = true;
       });
   subscribed_ = true;
+
+  clock_ = std::make_shared<TurningClockShared>();
+  auto clockState = clock_;
+  node_.Subscribe<gz::msgs::WorldStatistics>("/world/" + worldName_ + "/stats",
+      [clockState](const gz::msgs::WorldStatistics &_msg) {
+        std::lock_guard<std::mutex> lk(clockState->mutex);
+        if (!clockState->alive) return;
+        clockState->simTimeSec = _msg.sim_time().sec() + _msg.sim_time().nsec() * 1e-9;
+        clockState->found = true;
+      });
+  statsSubscribed_ = true;
 }
 
 TurningExperimentCore::~TurningExperimentCore() {
   if (pose_) {
     std::lock_guard<std::mutex> lk(pose_->mutex);
     pose_->alive = false;
+  }
+  if (clock_) {
+    std::lock_guard<std::mutex> lk(clock_->mutex);
+    clock_->alive = false;
   }
   if (running_) sendThrust(0.0, 0.0);   // 安全：退出前归零
 }
@@ -158,9 +173,34 @@ bool TurningExperimentCore::start() {
   startY_ = prevY_ = y;
   startYaw_ = yaw;
   elapsed_ = 0.0;
+  elapsedWall_ = 0.0;
   speed_ = 0.0;
+  currentStage_ = 0;
+  measurementStartIndex_ = 0;
+  planStartSimTime_ = -1.0;
+  lastSimTime_ = -1.0;
+  lastSampleSimTime_ = -1.0;
+  measurementStarted_ = false;
+  pendingMeasurementStart_ = false;
+  if (clock_) {
+    std::lock_guard<std::mutex> lk(clock_->mutex);
+    if (clock_->found) {
+      planStartSimTime_ = lastSimTime_ = clock_->simTimeSec;
+    }
+  }
   running_ = true;
   started_ = true;
+  if (measurementStartStage_ == 0) {
+    measurementStarted_ = true;
+    pendingMeasurementStart_ = true;
+    startX_ = prevX_ = x;
+    startY_ = y;
+    startYaw_ = yaw;
+  }
+  trail_.push_back(TurningSample{0.0, x, y, yaw, 0, measurementStartStage_ == 0});
+  measurementStartIndex_ = 0;
+  pendingMeasurementStart_ = false;
+  sendThrust(stages_.front().leftN, stages_.front().rightN);
   return true;
 }
 
@@ -174,6 +214,41 @@ void TurningExperimentCore::clear() {
   elapsed_ = 0.0;
   speed_ = 0.0;
   started_ = false;
+}
+
+bool TurningExperimentCore::advanceSimulationTime(double _simTimeSec) {
+  if (!running_ || currentStage_ < 0 || currentStage_ >= static_cast<int>(stages_.size())
+      || !std::isfinite(_simTimeSec)) return false;
+  if (planStartSimTime_ < 0.0) {
+    planStartSimTime_ = _simTimeSec;
+    lastSimTime_ = _simTimeSec;
+    return false;
+  }
+  if (_simTimeSec < lastSimTime_) {
+    // 仿真被 reset / 回滚：重锚时间，避免阶段跳转连发。
+    planStartSimTime_ = _simTimeSec - elapsedWall_;
+    lastSimTime_ = _simTimeSec;
+    return false;
+  }
+  lastSimTime_ = _simTimeSec;
+  const double elapsedSim = _simTimeSec - planStartSimTime_;
+  double stageStart = 0.0;
+  for (int i = 0; i < currentStage_; ++i)
+    stageStart += stages_[i].durationSec;
+  bool changed = false;
+  while (currentStage_ + 1 < static_cast<int>(stages_.size())) {
+    const double d = stages_[currentStage_].durationSec;
+    if (d <= 0.0) break;  // 最后阶段持续至手动停止
+    const double stageEnd = stageStart + d;
+    if (elapsedSim + 1e-9 < stageEnd) break;
+    stageStart = stageEnd;
+    ++currentStage_;
+    sendThrust(stages_[currentStage_].leftN, stages_[currentStage_].rightN);
+    changed = true;
+    if (currentStage_ == measurementStartStage_) pendingMeasurementStart_ = true;
+  }
+  elapsed_ = std::max(0.0, elapsedSim);
+  return changed;
 }
 
 bool TurningExperimentCore::fetchPose(double &_x, double &_y, double &_yawDeg) const {
@@ -198,33 +273,126 @@ bool TurningExperimentCore::fetchPose(double &_x, double &_y, double &_yawDeg) c
   return false;
 }
 
+bool TurningExperimentCore::hasSimulationClock() const {
+  if (!clock_) return false;
+  std::lock_guard<std::mutex> lk(clock_->mutex);
+  return clock_->found;
+}
+
 bool TurningExperimentCore::sample() {
   if (!running_) return false;
-  republishThrust();          // ★ 周期性重发推力（防首帧丢失）
-  double x, y, yaw;
-  if (!fetchPose(x, y, yaw)) return false;
+  double simTime = -1.0;
+  if (clock_) {
+    std::lock_guard<std::mutex> lk(clock_->mutex);
+    if (clock_->found) simTime = clock_->simTimeSec;
+  }
 
-  elapsed_ += period_;
+  double dt = period_;
+  if (simTime >= 0.0) {
+    // 仿真暂停时 sim_time 不变，既不切阶段也不重复写同一轨迹点。
+    if (lastSampleSimTime_ >= 0.0) {
+      dt = simTime - lastSampleSimTime_;
+      if (dt <= 1e-9) {
+        republishThrust();
+        return false;
+      }
+    }
+    lastSampleSimTime_ = simTime;
+    advanceSimulationTime(simTime);
+    elapsed_ = std::max(0.0, simTime - planStartSimTime_);
+  } else {
+    // 没有 stats 发布者时退回采样周期作为时钟，GUI/CTL 两侧行为仍一致。
+    elapsedWall_ += period_;
+    elapsed_ = elapsedWall_;
+    advanceSimulationTime(elapsedWall_);
+  }
+  republishThrust();
+
+  double x = 0.0, y = 0.0, yaw = 0.0;
+  if (!fetchPose(x, y, yaw)) return false;
   const double d = std::hypot(x - prevX_, y - prevY_);
-  if (period_ > 0) speed_ = 0.9 * speed_ + 0.1 * (d / period_);
+  if (dt > 0) speed_ = 0.9 * speed_ + 0.1 * (d / dt);
   prevX_ = x; prevY_ = y;
 
-  trail_.push_back(TurningSample{elapsed_, x, y, yaw});
+  const bool marker = pendingMeasurementStart_;
+  if (marker) {
+    measurementStartIndex_ = trail_.size();
+    startX_ = x; startY_ = y; startYaw_ = yaw;
+    measurementStarted_ = true;
+    pendingMeasurementStart_ = false;
+  }
+  trail_.push_back(TurningSample{elapsed_, x, y, yaw,
+      std::max(0, currentStage_), marker});
+  if (currentStage_ == measurementStartStage_ && !measurementStarted_) {
+    measurementStartIndex_ = trail_.size() - 1;
+    startX_ = x; startY_ = y; startYaw_ = yaw;
+    measurementStarted_ = true;
+    trail_.back().measurementStart = true;
+  }
+  return true;
+}
+
+bool TurningExperimentCore::setStages(
+    const std::vector<TurningStage> &_stages, std::string *_error) {
+  if (_stages.empty()) {
+    if (_error) *_error = "至少需要一个推力阶段";
+    return false;
+  }
+  for (size_t i = 0; i < _stages.size(); ++i) {
+    const auto &st = _stages[i];
+    if (st.durationSec < 0.0 || !std::isfinite(st.durationSec)) {
+      if (_error) *_error = "阶段时长必须是非负有限数";
+      return false;
+    }
+    if (st.durationSec <= 0.0 && i + 1 != _stages.size()) {
+      if (_error) *_error = "只有最后一个阶段可使用 0 秒（持续到停止）";
+      return false;
+    }
+    if (!std::isfinite(st.leftN) || !std::isfinite(st.rightN)) {
+      if (_error) *_error = "左右推力必须是有限数";
+      return false;
+    }
+  }
+  int startStage = -1;
+  for (size_t i = 0; i < _stages.size(); ++i) {
+    if (_stages[i].measurementStart) {
+      if (startStage >= 0) {
+        if (_error) *_error = "只能指定一个测量起点阶段";
+        return false;
+      }
+      startStage = static_cast<int>(i);
+    }
+  }
+  stages_ = _stages;
+  measurementStartStage_ = startStage >= 0 ? startStage : 0;
+  if (_error) _error->clear();
   return true;
 }
 
 TurningMetrics TurningExperimentCore::metrics() const {
-  return computeMetrics(trail_, startX_, startY_, startYaw_);
+  if (!measurementStarted_) return TurningMetrics{};
+  return metricsFrom(measurementStartIndex_);
+}
+
+TurningMetrics TurningExperimentCore::metricsFrom(size_t _startIndex) const {
+  if (trail_.empty()) return TurningMetrics{};
+  const size_t from = std::min(_startIndex, trail_.size() - 1);
+  auto m = computeMetrics(trail_, startX_, startY_, startYaw_, from);
+  m.measurementStartIndex = static_cast<int>(from);
+  return m;
 }
 
 TurningMetrics TurningExperimentCore::computeMetrics(
     const std::vector<TurningSample> &_trail,
-    double _startX, double _startY, double _startYaw) {
+    double _startX, double _startY, double _startYaw, size_t _from) {
   TurningMetrics m;
-  m.points = static_cast<int>(_trail.size());
-  if (_trail.size() < 3) return m;
+  const size_t from = std::min(_from, _trail.size());
+  m.measurementStartIndex = static_cast<int>(from);
+  m.points = static_cast<int>(_trail.size() - from);
+  if (_trail.size() - from < 3) return m;
 
-  for (const auto &p : _trail) {
+  for (size_t i = from; i < _trail.size(); ++i) {
+    const auto &p = _trail[i];
     m.maxX = std::max(m.maxX, std::abs(p.x - _startX));
     m.maxY = std::max(m.maxY, std::abs(p.y - _startY));
   }
@@ -233,18 +401,24 @@ TurningMetrics TurningExperimentCore::computeMetrics(
   //   ⚠ 旧版用「yaw - startYaw 归一化到 ±180 后取绝对值」⇒ 船转了 358° 也只报 179.8°，
   //     导致「战术直径」永远取不到值（2026-10-14 无头实测暴露）。
   std::vector<double> cumTurn(_trail.size(), 0.0);
-  for (size_t i = 1; i < _trail.size(); ++i) {
+  for (size_t i = from + 1; i < _trail.size(); ++i) {
     double d = _trail[i].yawDeg - _trail[i - 1].yawDeg;
     while (d > 180.0) d -= 360.0;
     while (d < -180.0) d += 360.0;
     cumTurn[i] = cumTurn[i - 1] + d;
   }
 
-  for (size_t i = 0; i < _trail.size(); ++i) {
+  bool advanceFound = false, tacticalFound = false;
+  const double hx = std::cos(_startYaw / kRad2Deg);
+  const double hy = std::sin(_startYaw / kRad2Deg);
+  for (size_t i = from; i < _trail.size(); ++i) {
     const double turn = std::abs(cumTurn[i]);
-    const double disp = std::hypot(_trail[i].x - _startX, _trail[i].y - _startY);
-    if (m.advance < 0 && turn >= 90.0)  m.advance  = disp;
-    if (m.tactical < 0 && turn >= 180.0) m.tactical = disp;
+    const double dx = _trail[i].x - _startX;
+    const double dy = _trail[i].y - _startY;
+    const double longitudinal = dx * hx + dy * hy;
+    const double lateral = -dx * hy + dy * hx;
+    if (!advanceFound && turn >= 90.0) { m.advance = longitudinal; advanceFound = true; }
+    if (!tacticalFound && turn >= 180.0) { m.tactical = std::abs(lateral); tacticalFound = true; }
   }
 
   // 包围盒估计（仅作对照）
@@ -252,14 +426,14 @@ TurningMetrics TurningExperimentCore::computeMetrics(
 
   // ★ 严格 IMO 口径：**定常回转段最小二乘圆拟合**
   //   定常段判定：累积转向 ≥ 180° 之后（排除转舵段与过渡段）
-  size_t from = 0;
-  for (size_t i = 0; i < _trail.size(); ++i) {
-    if (std::abs(cumTurn[i]) >= 180.0) { from = i; break; }
+  size_t fitFrom = from;
+  for (size_t i = from; i < _trail.size(); ++i) {
+    if (std::abs(cumTurn[i]) >= 180.0) { fitFrom = i; break; }
   }
   double cx = 0, cy = 0, R = 0, r2 = 0;
-  if (fitCircle(_trail, from, cx, cy, R, r2)) {
+  if (fitCircle(_trail, fitFrom, cx, cy, R, r2)) {
     m.fitR2 = r2;
-    m.fitPoints = static_cast<int>(_trail.size() - from);
+    m.fitPoints = static_cast<int>(_trail.size() - fitFrom);
   }
   // ★ 定常回转判据：拟合优度 R² ≥ 0.90 才认「定常段圆」。
   //   ⚠ 2026-10-14 实测：本平台**差动推力回转**下 R² ≈ 0（角速度由 14.6 持续降到 1.1 °/s
@@ -272,13 +446,13 @@ TurningMetrics TurningExperimentCore::computeMetrics(
   ///   转向角 < 10° 一律判「未回转」（战术/回转直径均无定义，报 -1）。
   const double totalTurnDeg = std::abs(cumTurn.back());
   m.turnedDeg = totalTurnDeg;
-  if (m.fitR2 >= kR2Threshold) {
-    m.turning = 2.0 * R;
-    m.steadyTurn = true;
-  } else if (totalTurnDeg < 10.0) {
+  if (totalTurnDeg < 10.0) {
     m.turning = -1.0;
     m.noTurn = true;
     m.steadyTurn = false;
+  } else if (m.fitR2 >= kR2Threshold) {
+    m.turning = 2.0 * R;
+    m.steadyTurn = true;
   } else {
     m.turning = (m.tactical >= 0) ? m.tactical : m.turningBox;
     m.steadyTurn = false;
@@ -290,9 +464,10 @@ TurningMetrics TurningExperimentCore::computeMetrics(
 bool TurningExperimentCore::exportCsv(const std::string &_path) const {
   std::ofstream ofs(_path);
   if (!ofs) return false;
-  ofs << "t_s,x_m,y_m,yaw_deg\n";
+  ofs << "t_sim_s,x_m,y_m,yaw_deg,stage,measurement_start\n";
   for (const auto &p : trail_)
-    ofs << p.t << "," << p.x << "," << p.y << "," << p.yawDeg << "\n";
+    ofs << p.t << "," << p.x << "," << p.y << "," << p.yawDeg << ","
+        << p.stage << "," << (p.measurementStart ? 1 : 0) << "\n";
   return true;
 }
 

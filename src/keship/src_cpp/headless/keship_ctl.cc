@@ -1419,7 +1419,7 @@ R"(keship_ctl — KeShip 无头指令入口
                                    [--duration S] [--period S] [--csv 路径]
                                            MS-04 方向稳定性与 Z 形试验：交替差动推力 →
                                            输出 超调角 / 周期 / 换向次数
-  exp ms01-run --model <名> [--left N] [--right N] [--duration S] [--period S]
+  exp ms01-run --model <名> [--left N] [--right N] [--duration S] [--stages "20,120,120;80,150,90,start"]
                                    [--thruster-left 名] [--thruster-right 名] [--csv 路径]
                                            MS-01 回转性观测：下发差动推力 → 采样轨迹 →
                                            输出 进距 / 战术直径 / 回转直径（可导出 CSV）
@@ -1509,7 +1509,8 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
   const std::string model = _a.Get("model");
   if (model.empty())
     Fail("用法：exp ms01-run --model <名> [--left N] [--right N] "
-         "[--duration S] [--period S] [--thruster-left 名] [--thruster-right 名] [--csv 路径]");
+         "[--duration S] [--period S] [--stages \"时长,左推力,右推力[,start];...\"] "
+         "[--thruster-left 名] [--thruster-right 名] [--csv 路径]");
   const double left     = _a.GetD("left", 120.0);
   const double right    = _a.GetD("right", 60.0);
   const double duration = _a.GetD("duration", 20.0);
@@ -1517,20 +1518,83 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
   const std::string thrL = _a.Get("thruster-left", "thrust_left");
   const std::string thrR = _a.Get("thruster-right", "thrust_right");
 
+  std::vector<keship::TurningStage> stages;
+  const bool scheduleMode = _a.Has("stages");
+  if (scheduleMode) {
+    std::stringstream all(_a.Get("stages"));
+    std::string row;
+    int index = 0;
+    while (std::getline(all, row, ';')) {
+      if (row.empty()) continue;
+      std::stringstream fields(row);
+      std::vector<std::string> col;
+      std::string field;
+      while (std::getline(fields, field, ',')) col.push_back(field);
+      if (col.size() < 3 || col.size() > 4)
+        Fail("--stages 格式应为 时长,左推力,右推力[,start]，多段用分号分隔");
+      keship::TurningStage st;
+      try {
+        st.durationSec = std::stod(col[0]);
+        st.leftN = std::stod(col[1]);
+        st.rightN = std::stod(col[2]);
+      } catch (...) {
+        Fail("--stages 中的时长/推力必须为数字：" + row);
+      }
+      st.name = "阶段 " + std::to_string(++index);
+      if (col.size() == 4) {
+        if (col[3] != "start" && col[3] != "measure")
+          Fail("--stages 第四列只接受 start（指标起点）");
+        st.measurementStart = true;
+      }
+      stages.push_back(st);
+    }
+    if (stages.empty()) Fail("--stages 至少需要一段");
+    if (std::none_of(stages.begin(), stages.end(),
+                     [](const auto &_s) { return _s.measurementStart; }))
+      stages.front().measurementStart = true;
+  } else {
+    // 兼容旧入口：单阶段直接差动，运行时长仍由 --duration 控制。
+    stages.push_back(keship::TurningStage{0.0, left, right, true, "直接差动"});
+  }
+
   keship::TurningExperimentCore core(_mm.GetNode(), g_opt.world);
   core.setTarget(model, thrL, thrR);
   core.setSamplePeriod(period);
+  std::string stageError;
+  if (!core.setStages(stages, &stageError)) Fail("推力阶段表无效：" + stageError);
   if (!core.start())
     Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
 
-  core.sendThrust(left, right);
-  Info("MS-01 开始：左 " + std::to_string(left) + " N / 右 " + std::to_string(right) +
-       " N，时长 " + std::to_string(duration) + " s，采样 " + std::to_string(period) + " s");
+  double runSeconds = duration;
+  bool useSimDuration = false;
+  if (scheduleMode) {
+    const bool infiniteLast = stages.back().durationSec <= 0.0;
+    if (!infiniteLast) {
+      runSeconds = 0.0;
+      for (const auto &st : stages) runSeconds += st.durationSec;
+      useSimDuration = true;
+    }
+  }
+  Info("MS-01 阶段计划开始：" + std::to_string(stages.size()) + " 段，" +
+       (scheduleMode ? "阶段边界按仿真时间切换" : "兼容单阶段直接差动") +
+       "，采样 " + std::to_string(period) + " s");
 
-  const int n = static_cast<int>(duration / period);
-  for (int i = 0; i < n; ++i) {
-    std::this_thread::sleep_for(std::chrono::duration<double>(period));
-    core.sample();
+  if (useSimDuration) {
+    // 有限多阶段计划按仿真时间执行；墙钟上限用于检测暂停/失联，最多容忍 30×RTF。
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::duration<double>(std::max(60.0, runSeconds * 30.0));
+    while (core.elapsed() + 1e-6 < runSeconds) {
+      std::this_thread::sleep_for(std::chrono::duration<double>(period));
+      core.sample();
+      if (std::chrono::steady_clock::now() > deadline)
+        Fail("MS-01 阶段计划超时：仿真时间未推进到计划终点（检查暂停状态 / RTF）");
+    }
+  } else {
+    const int n = static_cast<int>(duration / period);
+    for (int i = 0; i < n; ++i) {
+      std::this_thread::sleep_for(std::chrono::duration<double>(period));
+      core.sample();
+    }
   }
   core.stop();
 
@@ -1546,11 +1610,14 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
               << ",\"steady_turn\":" << (m.steadyTurn ? "true" : "false")
               << ",\"no_turn\":" << (m.noTurn ? "true" : "false")
               << ",\"turned_deg\":" << m.turnedDeg
+              << ",\"measurement_start_index\":" << m.measurementStartIndex
+              << ",\"elapsed_sim_s\":" << core.elapsed()
               << ",\"max_x\":" << m.maxX
               << ",\"max_y\":" << m.maxY
               << ",\"valid\":" << (m.valid ? "true" : "false") << "}\n";
   } else {
-    std::cout << "轨迹点数 : " << m.points << "\n";
+    std::cout << "轨迹采样点（计量段） : " << m.points << "\n";
+    std::cout << "计量起点全轨迹索引 : " << m.measurementStartIndex << "\n";
     std::cout << "进距     : " << m.advance  << " m\n";
     std::cout << "战术直径 : " << m.tactical << " m\n";
     if (m.noTurn) {
@@ -1565,12 +1632,11 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
   }
   if (_a.Has("csv")) {
     const std::string csv = _a.Get("csv");
-    if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);
+    if (core.exportCsv(csv)) Info("全轨迹已导出（含阶段号 / 指标起点标记）→ " + csv);
     else Fail("无法写入 CSV：" + csv);
   }
   return 0;
 }
-
 
 int CmdExpMs04Run(keship::ModelManager &_mm, const Args &_a) {
   const std::string model = _a.Get("model");
