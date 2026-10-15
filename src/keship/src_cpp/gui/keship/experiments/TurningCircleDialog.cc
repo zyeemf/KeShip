@@ -123,8 +123,11 @@ void TurningChartWidget::paintEvent(QPaintEvent *) {
     if (n > 5.0) m = 10.0; else if (n > 2.0) m = 5.0; else if (n > 1.0) m = 2.0;
     return m * mag;
   };
-  const double stepX = niceStep(rangeX, 6);
-  const double stepY = niceStep(rangeY, 5);
+  // ★ X/Y **同比例**：网格使用**同一步长** ⇒ 屏幕上的格子是正方形，
+  //   回转轨迹（如定常圆）与真实几何一致，形状一眼可辨。
+  const double stepCommon = niceStep(std::max(rangeX, rangeY), 6);
+  const double stepX = stepCommon;
+  const double stepY = stepCommon;
   auto fmtTick = [](double v, double step) {
     int dec = 0;
     if (step < 1.0)
@@ -197,8 +200,7 @@ void TurningChartWidget::paintEvent(QPaintEvent *) {
   p.drawText(10, 12, QString("回转轨迹 · %1 点 · 单位 m（X/Y 同比例）").arg(pts_.size()));
   p.drawText(QRectF(width() - 206, 12, 196, 14),
              Qt::AlignRight | Qt::AlignTop,
-             QString("每格 x %1 m / y %2 m")
-                 .arg(stepX, 0, 'g', 4).arg(stepY, 0, 'g', 4));
+             QString("网格 每格 %1 m").arg(stepCommon, 0, 'g', 4));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -433,10 +435,21 @@ void TurningCircleDialog::onStop() {
 }
 
 void TurningCircleDialog::onClear() {
+  if (core_->running()) {
+    core_->stop();            // 若仍在运行先归零推力
+    timer_->stop();
+  }
   core_->clear();
   chart_->clearTrail();
   readoutLabel_->setText("计划 t = —   阶段 —   x = —   y = —   航向 = —   速度 = —");
   resultLabel_->setText("进距 = —   战术直径 = —   回转直径 = —");
+  // 重置按钮与阶段表编辑权限（与 onStop 保持一致，防止 stop 未执行时的状态错乱）
+  startBtn_->setEnabled(true);
+  stopBtn_->setEnabled(false);
+  stageTable_->setEnabled(true);
+  addStageBtn_->setEnabled(true);
+  removeStageBtn_->setEnabled(true);
+  std::cout << "MS-01: 已清零" << std::endl;
 }
 
 void TurningCircleDialog::onTick() {
@@ -449,9 +462,11 @@ void TurningCircleDialog::updateReadout() {
   const auto &t = core_->trail();
   if (t.empty()) return;
   const auto &p = t.back();
-  readoutLabel_->setText(QString("计划 t = %1 s   阶段 %2   x = %3   y = %4   航向 = %5°   速度 = %6 m/s%7")
+  readoutLabel_->setText(QString("计划 t = %1 s   阶段 %2   x = %3   y = %4   航向 = %5°   速度 = %6 m/s   推力 L/R = %7 / %8 N%9")
       .arg(p.t, 0, 'f', 1).arg(p.stage + 1).arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2)
       .arg(p.yawDeg, 0, 'f', 1).arg(core_->speed(), 0, 'f', 2)
+      .arg(core_->currentLeftThrust(), 0, 'f', 1)
+      .arg(core_->currentRightThrust(), 0, 'f', 1)
       .arg(p.measurementStart ? "   ← 指标起点" : ""));
 }
 

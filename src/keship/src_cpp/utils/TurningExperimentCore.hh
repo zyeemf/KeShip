@@ -126,6 +126,8 @@ public:
   const std::vector<TurningSample> &trail() const { return trail_; }
   double speed() const { return speed_; }
   bool running() const { return running_; }
+  double currentLeftThrust() const { return curLeft_; }
+  double currentRightThrust() const { return curRight_; }
   double elapsed() const { return elapsed_; }
   bool measurementStarted() const { return measurementStarted_; }
   bool hasSimulationClock() const;

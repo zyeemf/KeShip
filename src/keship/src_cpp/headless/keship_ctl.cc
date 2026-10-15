@@ -1562,8 +1562,6 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
   core.setSamplePeriod(period);
   std::string stageError;
   if (!core.setStages(stages, &stageError)) Fail("推力阶段表无效：" + stageError);
-  if (!core.start())
-    Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
 
   double runSeconds = duration;
   bool useSimDuration = false;
@@ -1575,28 +1573,54 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
       useSimDuration = true;
     }
   }
-  Info("MS-01 阶段计划开始：" + std::to_string(stages.size()) + " 段，" +
-       (scheduleMode ? "阶段边界按仿真时间切换" : "兼容单阶段直接差动") +
-       "，采样 " + std::to_string(period) + " s");
 
-  if (useSimDuration) {
-    // 有限多阶段计划按仿真时间执行；墙钟上限用于检测暂停/失联，最多容忍 30×RTF。
-    const auto deadline = std::chrono::steady_clock::now() +
-        std::chrono::duration<double>(std::max(60.0, runSeconds * 30.0));
-    while (core.elapsed() + 1e-6 < runSeconds) {
-      std::this_thread::sleep_for(std::chrono::duration<double>(period));
-      core.sample();
-      if (std::chrono::steady_clock::now() > deadline)
-        Fail("MS-01 阶段计划超时：仿真时间未推进到计划终点（检查暂停状态 / RTF）");
+  // --cycles N：在同一 core 上重复「开始→采样→停止→清零→再开始」，
+  // 复现 GUI「停止 / 清零 后再次开始」的时序（MS-01 二次启动回归）。
+  const int cycles = _a.Has("cycles") ? std::max(1, std::stoi(_a.Get("cycles"))) : 1;
+  for (int cyc = 0; cyc < cycles; ++cyc) {
+    if (cyc > 0) {
+      core.stop();            // 对应 GUI「停止」
+      core.clear();           // 对应 GUI「清零」
+      std::string e2;
+      if (!core.setStages(stages, &e2)) Fail("cycle 阶段表无效：" + e2);
     }
-  } else {
-    const int n = static_cast<int>(duration / period);
-    for (int i = 0; i < n; ++i) {
-      std::this_thread::sleep_for(std::chrono::duration<double>(period));
-      core.sample();
+    if (!core.start())
+      Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
+    Info("MS-01 阶段计划开始（第 " + std::to_string(cyc + 1) + "/" +
+         std::to_string(cycles) + " 次）：" + std::to_string(stages.size()) + " 段，" +
+         (scheduleMode ? "阶段边界按仿真时间切换" : "兼容单阶段直接差动") +
+         "，采样 " + std::to_string(period) + " s");
+
+    if (useSimDuration) {
+      // 有限多阶段计划按仿真时间执行；墙钟上限用于检测暂停/失联，最多容忍 30×RTF。
+      const auto deadline = std::chrono::steady_clock::now() +
+          std::chrono::duration<double>(std::max(60.0, runSeconds * 30.0));
+      while (core.elapsed() + 1e-6 < runSeconds) {
+        std::this_thread::sleep_for(std::chrono::duration<double>(period));
+        core.sample();
+        if (std::chrono::steady_clock::now() > deadline)
+          Fail("MS-01 阶段计划超时：仿真时间未推进到计划终点（检查暂停状态 / RTF）");
+      }
+    } else {
+      const int n = static_cast<int>(duration / period);
+      for (int i = 0; i < n; ++i) {
+        std::this_thread::sleep_for(std::chrono::duration<double>(period));
+        core.sample();
+      }
+    }
+    core.stop();
+    if (cycles > 1) {
+      const auto &tr = core.trail();
+      if (!tr.empty()) {
+        const auto &f = tr.front();
+        const auto &l = tr.back();
+        std::cout << "cycle " << (cyc + 1) << " : points=" << tr.size()
+                  << " disp=" << std::hypot(l.x - f.x, l.y - f.y) << " m"
+                  << "  from(" << f.x << "," << f.y << ") to(" << l.x << "," << l.y
+                  << ")  elapsed=" << core.elapsed() << "\n";
+      }
     }
   }
-  core.stop();
 
   const auto m = core.metrics();
   if (g_opt.json) {

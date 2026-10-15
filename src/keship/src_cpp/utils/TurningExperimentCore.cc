@@ -110,11 +110,13 @@ TurningExperimentCore::~TurningExperimentCore() {
 void TurningExperimentCore::setTarget(const std::string &_model,
                                       const std::string &_thrusterL,
                                       const std::string &_thrusterR) {
-  model_ = _model;
-  thrL_ = _thrusterL;
-  thrR_ = _thrusterR;
-  pubKeyL_.clear();   // 强制下次重建 Publisher
-  pubKeyR_.clear();
+  if (_model != model_ || _thrusterL != thrL_ || _thrusterR != thrR_) {
+    model_ = _model;
+    thrL_ = _thrusterL;
+    thrR_ = _thrusterR;
+    pubKeyL_.clear();   // 目标变化才强制重建 Publisher
+    pubKeyR_.clear();
+  }
 }
 
 bool TurningExperimentCore::ensurePublishers() {
@@ -214,6 +216,17 @@ void TurningExperimentCore::clear() {
   elapsed_ = 0.0;
   speed_ = 0.0;
   started_ = false;
+  running_ = false;            // 防御：清零后必须可再次开始
+  currentStage_ = -1;
+  measurementStartIndex_ = 0;
+  planStartSimTime_ = -1.0;
+  lastSimTime_ = -1.0;
+  elapsedWall_ = 0.0;
+  lastSampleSimTime_ = -1.0;
+  measurementStarted_ = false;
+  pendingMeasurementStart_ = false;
+  // 注意：stages_ / model_ / thrL_ / thrR_ / pubKey_ 由调用方保留，
+  //       下次 start() 通过 syncStagesFromTable + syncParamsToCore 重新注入
 }
 
 bool TurningExperimentCore::advanceSimulationTime(double _simTimeSec) {
