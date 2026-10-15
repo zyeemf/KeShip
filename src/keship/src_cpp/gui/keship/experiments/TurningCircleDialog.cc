@@ -19,6 +19,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -27,6 +28,19 @@
 
 namespace {
 constexpr double kDeg2Rad = M_PI / 180.0;
+
+/// 阶段表「指标起点」列的单选按钮。
+/// 所有按钮父级相同（setCellWidget 会把它们重挂到表格 viewport）⇒ Qt 自动互斥，
+/// 因此**始终有且只有一段被选中**，从根上杜绝"不勾/多勾"。
+QRadioButton *makeMarkerRadio(QTableWidget *_table, bool _checked) {
+  auto *rb = new QRadioButton(_table);
+  rb->setChecked(_checked);
+  rb->setToolTip("指标起点 = 计量起点：\n"
+                 "从选中的那一段开始，才计入「进距 / 战术直径 / 回转直径」；\n"
+                 "它前面的阶段只作预备（例如先直航把船加到稳定航速），不计入指标。\n"
+                 "单选：始终有且只有一段被选中。");
+  return rb;
+}
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -249,14 +263,14 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
   // 「指标起点」术语较抽象 —— 表头加悬浮说明，表下再给一行常驻解释（2026-10-15 张老师反馈）
   if (auto *h = stageTable_->horizontalHeaderItem(4))
     h->setToolTip("指标起点 = 计量起点。\n"
-                  "勾选的那一段开始，才计入「进距 / 战术直径 / 回转直径」；\n"
+                  "从选中的那一段开始，才计入「进距 / 战术直径 / 回转直径」；\n"
                   "它前面的阶段只作预备（例如先直航把船加到稳定航速），不计入指标。\n"
-                  "必须且只能勾选一段。");
+                  "单选：始终有且只有一段被选中。");
   stageLayout->addWidget(stageTable_);
   auto *stageHint = new QLabel(
       "「时长」填 0 = 持续到手动停止（只允许最后一段）。"
-      "「指标起点」= 计量起点：勾选的那一段开始，才计入 进距 / 战术直径 / 回转直径；"
-      "前面的阶段只作预备（例如先直航建立航速），不计入指标。必须且只能勾选一段。", stageBox);
+      "「指标起点」= 计量起点：从选中的那一段开始，才计入 进距 / 战术直径 / 回转直径；"
+      "前面的阶段只作预备（例如先直航建立航速），不计入指标。单选，始终有且只有一段被选中。", stageBox);
   stageHint->setWordWrap(true);
   stageHint->setStyleSheet("color: #5a6070;");
   stageLayout->addWidget(stageHint);
@@ -312,20 +326,14 @@ void TurningCircleDialog::syncTableFromStages() {
     const auto &st = stages[static_cast<size_t>(r)];
     auto put = [&](int c, const QString &v) {
       auto *it = new QTableWidgetItem(v);
-      if (c == 4) {
-        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
-        it->setCheckState(st.measurementStart ? Qt::Checked : Qt::Unchecked);
-        it->setText(QString());
-      } else {
-        it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
-      }
+      it->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable);
       stageTable_->setItem(r, c, it);
     };
     put(0, st.name.empty() ? QString("阶段 %1").arg(r + 1) : QString::fromStdString(st.name));
     put(1, QString::number(st.durationSec, 'f', st.durationSec == 0.0 ? 0 : 1));
     put(2, QString::number(st.leftN, 'f', 1));
     put(3, QString::number(st.rightN, 'f', 1));
-    put(4, QString());
+    stageTable_->setCellWidget(r, 4, makeMarkerRadio(stageTable_, st.measurementStart));
   }
   if (stageTable_->rowCount() > 0) stageTable_->selectRow(stageTable_->rowCount() - 1);
 }
@@ -343,8 +351,8 @@ bool TurningCircleDialog::syncStagesFromTable(QString *_error) {
       if (_error) *_error = QString("第 %1 阶段的时长或推力不是有效数字").arg(r + 1);
       return false;
     }
-    const bool measure = stageTable_->item(r, 4)
-        && stageTable_->item(r, 4)->checkState() == Qt::Checked;
+    auto *markerRadio = qobject_cast<QRadioButton *>(stageTable_->cellWidget(r, 4));
+    const bool measure = markerRadio && markerRadio->isChecked();
     measurementCount += measure ? 1 : 0;
     keship::TurningStage st;
     st.durationSec = duration;
@@ -355,7 +363,7 @@ bool TurningCircleDialog::syncStagesFromTable(QString *_error) {
     stages.push_back(st);
   }
   if (measurementCount != 1) {
-    if (_error) *_error = "必须且只能勾选一个「指标起点」阶段";
+    if (_error) *_error = "请选择一段作为「指标起点」";
     return false;
   }
   std::string coreError;
@@ -382,10 +390,7 @@ void TurningCircleDialog::onAddStage() {
   stageTable_->setItem(row, 1, new QTableWidgetItem("0"));
   stageTable_->setItem(row, 2, new QTableWidgetItem(QString::number(left, 'f', 1)));
   stageTable_->setItem(row, 3, new QTableWidgetItem(QString::number(right, 'f', 1)));
-  auto *check = new QTableWidgetItem();
-  check->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsUserCheckable);
-  check->setCheckState(Qt::Unchecked);
-  stageTable_->setItem(row, 4, check);
+  stageTable_->setCellWidget(row, 4, makeMarkerRadio(stageTable_, false));
   stageTable_->selectRow(row);
 }
 
@@ -393,10 +398,13 @@ void TurningCircleDialog::onRemoveStage() {
   if (core_->running() || stageTable_->rowCount() <= 1) return;
   const int row = stageTable_->currentRow();
   if (row < 0) return;
-  const bool removedMarker = stageTable_->item(row, 4)
-      && stageTable_->item(row, 4)->checkState() == Qt::Checked;
-  stageTable_->removeRow(row);
-  if (removedMarker) stageTable_->item(0, 4)->setCheckState(Qt::Checked);
+  auto *markerRemoved = qobject_cast<QRadioButton *>(stageTable_->cellWidget(row, 4));
+  const bool removedMarker = markerRemoved && markerRemoved->isChecked();
+  stageTable_->removeRow(row);          // 行删除会一并销毁该行的 cellWidget
+  if (removedMarker && stageTable_->rowCount() > 0) {
+    if (auto *r0 = qobject_cast<QRadioButton *>(stageTable_->cellWidget(0, 4)))
+      r0->setChecked(true);
+  }
   for (int r = 0; r < stageTable_->rowCount(); ++r)
     if (stageTable_->item(r, 0)) stageTable_->item(r, 0)->setText(QString("阶段 %1").arg(r + 1));
   stageTable_->selectRow(std::min(row, stageTable_->rowCount() - 1));
