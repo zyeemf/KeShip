@@ -176,7 +176,7 @@ private:
   gz::transport::Node::Publisher pubL_, pubR_;
   std::string pubKeyL_, pubKeyR_;
   double curLeft_ = 0.0, curRight_ = 0.0;   ///< 当前推力（sample 时重发，防首帧丢失）
-  std::vector<TurningStage> stages_{{0.0, 120.0, 60.0, true, "直接差动"}};
+  std::vector<TurningStage> stages_{{0.0, 120.0, 60.0, true, "阶段 1"}};
   int currentStage_ = -1;
   int measurementStartStage_ = 0;
   size_t measurementStartIndex_ = 0;

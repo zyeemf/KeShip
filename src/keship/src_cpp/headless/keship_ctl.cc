@@ -1554,7 +1554,7 @@ int CmdExpMs01Run(keship::ModelManager &_mm, const Args &_a) {
       stages.front().measurementStart = true;
   } else {
     // 兼容旧入口：单阶段直接差动，运行时长仍由 --duration 控制。
-    stages.push_back(keship::TurningStage{0.0, left, right, true, "直接差动"});
+    stages.push_back(keship::TurningStage{0.0, left, right, true, "阶段 1"});
   }
 
   keship::TurningExperimentCore core(_mm.GetNode(), g_opt.world);

@@ -236,8 +236,7 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
   form->addRow("采样周期：", periodSpin_);
   root->addWidget(paramBox);
 
-  auto *stageBox = new QGroupBox(
-      "分阶段推力计划（最后阶段时长 0 = 持续到停止；勾选一段作为操纵指标起点）", this);
+  auto *stageBox = new QGroupBox("分阶段推力计划", this);
   auto *stageLayout = new QVBoxLayout(stageBox);
   stageTable_ = new QTableWidget(stageBox);
   stageTable_->setColumnCount(5);
@@ -247,7 +246,20 @@ TurningCircleDialog::TurningCircleDialog(gz::transport::Node &_transportNode,
   stageTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
   stageTable_->setSelectionMode(QAbstractItemView::SingleSelection);
   stageTable_->setMinimumHeight(110);
+  // 「指标起点」术语较抽象 —— 表头加悬浮说明，表下再给一行常驻解释（2026-10-15 张老师反馈）
+  if (auto *h = stageTable_->horizontalHeaderItem(4))
+    h->setToolTip("指标起点 = 计量起点。\n"
+                  "勾选的那一段开始，才计入「进距 / 战术直径 / 回转直径」；\n"
+                  "它前面的阶段只作预备（例如先直航把船加到稳定航速），不计入指标。\n"
+                  "必须且只能勾选一段。");
   stageLayout->addWidget(stageTable_);
+  auto *stageHint = new QLabel(
+      "「时长」填 0 = 持续到手动停止（只允许最后一段）。"
+      "「指标起点」= 计量起点：勾选的那一段开始，才计入 进距 / 战术直径 / 回转直径；"
+      "前面的阶段只作预备（例如先直航建立航速），不计入指标。必须且只能勾选一段。", stageBox);
+  stageHint->setWordWrap(true);
+  stageHint->setStyleSheet("color: #5a6070;");
+  stageLayout->addWidget(stageHint);
   auto *stageButtons = new QHBoxLayout();
   addStageBtn_ = new QPushButton("增加阶段", stageBox);
   removeStageBtn_ = new QPushButton("删除选中阶段", stageBox);
