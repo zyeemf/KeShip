@@ -19,6 +19,18 @@
 
 namespace keship {
 
+/// 交付物携带的「船模信息」（张老师方案 2026-10-16）：导入方据此
+/// **重建同一对象**，保证 L3 链「同一对象」的物理自洽。
+struct GmObject {
+  std::string type = "math_hull";  ///< "math_hull" | "ksm_model"
+  std::string name;                 ///< 对象名（如 SP02_barge / ke0812_1）
+  double lengthM = -1.0;
+  double breadthM = -1.0;
+  double heightM = -1.0;
+  double densityKgM3 = -1.0;        ///< 材料密度（数学船型）
+  std::string ksmFile;              ///< type=ksm_model 时的文件名
+};
+
 /// HS-04 初稳性交付物（纯数据，不依赖 Qt/Gazebo）
 struct GmDeliverable {
   std::string model;           ///< 场景模型名（空 = 数学船型驳船）
@@ -38,6 +50,8 @@ struct GmDeliverable {
   double waterDensity = 1025.0;
   double ballastOffsetY = 0.0;  ///< 记录时压载偏移 (m)
   std::string notes;
+
+  GmObject object;   ///< 船模信息（可重建同一对象；旧文件可缺省）
 };
 
 /// 字段级校验：schema 版本 + 关键数值范围（GM/Δ/Ixx 必须为正）

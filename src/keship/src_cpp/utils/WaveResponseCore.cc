@@ -101,7 +101,8 @@ void WaveResponseCore::setTarget(const std::string &_model, const std::string &_
   area_ = _area;
 }
 
-void WaveResponseCore::sendWave(double _amplitude, double _period, double _gain) {
+void WaveResponseCore::sendWave(double _amplitude, double _period,
+                                double _gain, double _direction) {
   // MS-02/MS-03 测量的是给定振幅/周期的**单一规则波**，故固定使用 CWR。
   // PMS 分支的幅值由谱密度和频带宽度计算；若沿用下方 scale=1、number=1，
   // bandwidth = omega * (scale - 1/scale) = 0，所有分量振幅为 0，实验仅采到静水响应。
@@ -119,7 +120,7 @@ void WaveResponseCore::sendWave(double _amplitude, double _period, double _gain)
   v.set_double_value(1.0);        (*p)["gain"] = v;
   v.set_double_value(waveAmp_);   (*p)["amplitude"] = v;
   v.set_double_value(_period);    (*p)["period"] = v;
-  v.set_double_value(0.0);        (*p)["direction"] = v;
+  v.set_double_value(_direction); (*p)["direction"] = v;
   v.set_double_value(0.0);        (*p)["angle"] = v;
   v.set_double_value(1.0);        (*p)["scale"] = v;
   v.set_double_value(0.0);        (*p)["steepness"] = v;

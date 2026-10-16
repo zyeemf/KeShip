@@ -76,7 +76,10 @@ public:
 
   void setTarget(const std::string &_model, const std::string &_area = "");
   /// ★ 下发单一 CWR 规则波（振幅 = 输入波幅 × 增益；与 GUI 水域环境参数同一通道）
-  void sendWave(double _amplitude, double _period, double _gain = 1.0);
+  /// @param _direction 波浪传播方向 (rad)：0 = 沿 +X（顺浪，激励升沉/纵摇）；
+  ///        π/2 = 沿 +Y（横浪，激励横摇——横摇 RAO 实验的前提，2026-10-16）
+  void sendWave(double _amplitude, double _period, double _gain = 1.0,
+                double _direction = 0.0);
 
   bool start();
   void stop();

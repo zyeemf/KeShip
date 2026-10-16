@@ -7,6 +7,7 @@
 #include "IncliningExperimentDialog.hh"
 #include "WavefieldPublisher.hh"
 #include "WaveParamSnapshot.hh"
+#include "../shared/BargeFactory.hh"
 #include "../shared/UiTheme.hh"
 #include "keship/utils/LinearDamping.hh"
 #include "../shared/UiTheme.hh"
@@ -574,82 +575,10 @@ constexpr double kGravity = 9.81;
 std::string IncliningExperimentDialog::makeBargeSDF(
     double _L, double _B, double _H, double _density) const
 {
-  double mass = _density * _L * _B * _H;
-  double ixx = mass / 12.0 * (_B * _B + _H * _H);
-  double iyy = mass / 12.0 * (_L * _L + _H * _H);
-  double izz = mass / 12.0 * (_L * _L + _B * _B);
-
-  /// ── 线性阻尼（2026-09-19 新增，与 HS-02 的 7.5 ① 同一修法）──────────────
-  /// 本实验要求"等待横倾角稳定"才能记录（判据 |Δheel|<0.05°/帧 × 15 帧，见 cc:973-979），
-  /// 而**长方体走不了插件的 pose_based 分支**（该分支需 hasCylinderGeometry_）→
-  /// 原先 `<enable_hydro>false</enable_hydro>` 等于零阻尼 → 横摇 60 s 不衰减 →
-  /// 判据永不满足、"记录数据"永远点不了。
-  /// 详见 doc/plans/headless_ctl_plan.md §14。
-  /// 长方体水线面恒为矩形 → A_wp = L·B **精确**（且 A_wp·B²/12 = L·B³/12 正是其水线面惯性矩）
-  const double A_wp = _L * _B;
-  const keship::LinearDampingCoeffs damp = keship::MakeLinearDamping(
-      A_wp, _L, _B, mass, ixx, iyy, 0.15, 0.10, kFluidDensity, kGravity);
-
-  std::ostringstream sdf;
-  sdf << "<?xml version=\"1.0\"?>\n"
-      << "<sdf version=\"1.6\">\n"
-      << "  <model name=\"" << bargeName_ << "\">\n"
-      << "    <pose>0 0 0 0 0 0</pose>\n"
-      << "    <static>false</static>\n"
-      << "    <link name=\"base_link\">\n"
-      << "      <inertial>\n"
-      << "        <mass>" << mass << "</mass>\n"
-      << "        <inertia>\n"
-      << "          <ixx>" << ixx << "</ixx>\n"
-      << "          <ixy>0</ixy>\n"
-      << "          <ixz>0</ixz>\n"
-      << "          <iyy>" << iyy << "</iyy>\n"
-      << "          <iyz>0</iyz>\n"
-      << "          <izz>" << izz << "</izz>\n"
-      << "        </inertia>\n"
-      << "      </inertial>\n"
-      << "      <visual name=\"visual\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "        <material>\n"
-      << "          <ambient>0.7 0.5 0.3 1.0</ambient>\n"
-      << "          <diffuse>0.7 0.5 0.3 1.0</diffuse>\n"
-      << "        </material>\n"
-      << "      </visual>\n"
-      << "      <collision name=\"collision\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "      </collision>\n"
-      << "    </link>\n"
-      << "    <plugin filename=\"libKSPlugin_HydroBuoyancy.so\""
-      << " name=\"keship::KSPlugin_HydroBuoyancy\">\n"
-      << "      <link_name>base_link</link_name>\n"
-      << "      <enable_buoyancy>true</enable_buoyancy>\n"
-      << "      <enable_hydro>true</enable_hydro>\n"
-      << "      <linear_damping>\n"
-      << "        <Zw>" << damp.Zw << "</Zw>\n"
-      << "        <Kp>" << damp.Kp << "</Kp>\n"
-      << "        <Mq>" << damp.Mq << "</Mq>\n"
-      << "      </linear_damping>\n"
-      << "      <fluid_density>" << kFluidDensity << "</fluid_density>\n"
-      << "      <fluid_level>0.0</fluid_level>\n"
-      << "      <buoyancy name=\"barge_hull\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "      </buoyancy>\n"
-      << "    </plugin>\n"
-      << "  </model>\n"
-      << "</sdf>\n";
-  return sdf.str();
+  /// 2026-10-16：抽取到 shared/BargeFactory（MS-03/MS-06 交付物导入时
+  /// 需按同一参数重建同一对象），此处委托调用，行为不变。
+  return keship::MakeBargeSDF(bargeName_, _L, _B, _H, _density,
+                              kFluidDensity, kGravity);
 }
 
 std::string IncliningExperimentDialog::makeWeightSDF(double _y) const
@@ -1153,6 +1082,13 @@ void IncliningExperimentDialog::onExportGm()
   d.waterDensity = kFluidDensity;
   d.ballastOffsetY = weightY_;
   d.notes = "HS-04 移动压载法（数学船型驳船，Ixx 为长方体近似）";
+  /// 船模信息（2026-10-16 张老师方案）：导入方据此重建同一对象
+  d.object.type = "math_hull";
+  d.object.name = bargeName_;
+  d.object.lengthM = L;
+  d.object.breadthM = B;
+  d.object.heightM = H;
+  d.object.densityKgM3 = rho;
 
   QString path = QFileDialog::getSaveFileName(this, "导出 GM 交付物",
       "hs04_gm.json", "JSON (*.json)");

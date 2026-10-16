@@ -1725,7 +1725,10 @@ int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &
   if (!core.start())
     Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
 
-  core.sendWave(amp, wperiod, gain);
+  // 波浪方向：MS-03（横摇 RAO）默认横浪 90°，MS-02（升沉/纵摇）默认顺浪 0°
+  const double defDir = (_tag == "MS-03") ? M_PI / 2.0 : 0.0;
+  const double direction = _a.GetD("direction", defDir);
+  core.sendWave(amp, wperiod, gain, direction);
   Info(_tag + " 开始：波幅 " + std::to_string(amp) + " m / 周期 " +
        std::to_string(wperiod) + " s / 仿真时长 " + std::to_string(duration) + " s");
 

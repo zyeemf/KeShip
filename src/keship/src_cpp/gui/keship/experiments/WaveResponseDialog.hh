@@ -94,6 +94,8 @@ private slots:
   void onSubmitStudent();  ///< MS-06：提交学生结果 CSV 并与参考值比对
   void onImportGm();       ///< MS-03：导入 HS-04 GM 交付物
   void updateGmCompare();  ///< MS-03：刷新理论 T₀ vs 实测峰值周期对照行
+  /// 按交付物的「船模信息」重建同一对象并设为实验对象（张老师方案）
+  bool ensureObjectFromDeliverable(const keship::GmDeliverable &_d);
 
 private:
   void syncParamsToCore();
@@ -107,6 +109,7 @@ private:
   QDoubleSpinBox *wavePeriodSpin_ = nullptr;  ///< 波浪周期 (s)
   QDoubleSpinBox *gainSpin_ = nullptr;        ///< 增益
   QDoubleSpinBox *periodSpin_ = nullptr;      ///< 采样周期 (s)
+  QDoubleSpinBox *directionSpin_ = nullptr;   ///< 波浪方向 (°)：ms02 顺浪 0，ms03/06 横浪 90
 
   QPushButton *applyWaveBtn_ = nullptr;
   QPushButton *startBtn_ = nullptr;
@@ -126,6 +129,9 @@ private:
   QPushButton  *exportRaoBtn_ = nullptr;  ///< 导出 RAO 汇总表
   QPushButton  *importGmBtn_ = nullptr;   ///< 导入 HS-04 GM 交付物
   QLabel       *gmCompareLabel_ = nullptr;///< 理论 T₀ vs 实测峰值周期对照行
+  gz::transport::Node &node_;             ///< 传输节点（生成对象用）
+  std::string worldName_;                 ///< 世界名（生成对象用）
+  std::string objectName_;                ///< 当前实验对象名（交付物导入后）
   keship::GmDeliverable gmDeliverable_;   ///< 已导入的交付物
   bool hasGm_ = false;                    ///< 是否已导入交付物
 

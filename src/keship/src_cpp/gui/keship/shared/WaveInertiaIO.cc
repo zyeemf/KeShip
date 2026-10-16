@@ -40,6 +40,15 @@ QJsonObject toJson(const GmDeliverable &_d) {
   o["water_density"] = _d.waterDensity;
   o["ballast_offset_y"] = _d.ballastOffsetY;
   o["notes"] = QString::fromStdString(_d.notes);
+  QJsonObject obj;
+  obj["type"] = QString::fromStdString(_d.object.type);
+  obj["name"] = QString::fromStdString(_d.object.name);
+  obj["length_m"] = _d.object.lengthM;
+  obj["breadth_m"] = _d.object.breadthM;
+  obj["height_m"] = _d.object.heightM;
+  obj["density_kg_m3"] = _d.object.densityKgM3;
+  obj["ksm_file"] = QString::fromStdString(_d.object.ksmFile);
+  o["object"] = obj;
   return o;
 }
 
@@ -123,6 +132,23 @@ bool ReadGmDeliverable(const std::string &_path, GmDeliverable &_d,
   num(o, "density_kg_m3", d.densityKgM3);
   num(o, "water_density", d.waterDensity);
   num(o, "ballast_offset_y", d.ballastOffsetY);
+  // object 段（可选；缺省时用顶层船型参数兜底，兼容旧文件）
+  if (o.contains("object") && o.value("object").isObject()) {
+    const QJsonObject obj = o.value("object").toObject();
+    str(obj, "type", d.object.type);
+    str(obj, "name", d.object.name);
+    num(obj, "length_m", d.object.lengthM);
+    num(obj, "breadth_m", d.object.breadthM);
+    num(obj, "height_m", d.object.heightM);
+    num(obj, "density_kg_m3", d.object.densityKgM3);
+    str(obj, "ksm_file", d.object.ksmFile);
+  } else {
+    d.object.type = "math_hull";
+    d.object.lengthM = d.lengthM;
+    d.object.breadthM = d.breadthM;
+    d.object.heightM = d.heightM;
+    d.object.densityKgM3 = d.densityKgM3;
+  }
   _d = d;
   return true;
 }

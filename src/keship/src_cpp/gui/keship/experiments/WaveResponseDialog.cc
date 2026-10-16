@@ -4,6 +4,8 @@
 /* MS-02 / MS-03 对话框实现（薄壳：界面 + 委托核心层） */
 
 #include "WaveResponseDialog.hh"
+#include <gz/msgs/entity_factory.pb.h>
+#include "../shared/BargeFactory.hh"
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -105,7 +107,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
                                        const QStringList &_models,
                                        const std::string &_mode,
                                        QWidget *_parent)
-    : QDialog(_parent), mode_(_mode) {
+    : QDialog(_parent), mode_(_mode), node_(_transportNode),
+      worldName_(_worldName) {
   const bool ms03 = (mode_ == "ms03");
   const bool ms06 = (mode_ == "ms06");
   setWindowTitle(ms06 ? "MS-06 RAO 编程计算实践"
@@ -143,6 +146,16 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   periodSpin_->setRange(0.02, 1.0); periodSpin_->setValue(0.05);
   periodSpin_->setSingleStep(0.01); periodSpin_->setSuffix(" s");
   form->addRow("采样轮询周期：", periodSpin_);
+
+  /// 波浪方向：横摇 RAO（ms03/ms06）需横浪（90°）——顺浪下横摇被对称性
+  /// 严格抵消（2026-10-16 端到端验证：驳船顺浪横摇 4e-15°）；
+  /// 升沉/纵摇（ms02）用顺浪（0°）。
+  directionSpin_ = new QDoubleSpinBox(paramBox);
+  directionSpin_->setRange(0.0, 360.0);
+  directionSpin_->setValue((ms03 || ms06) ? 90.0 : 0.0);
+  directionSpin_->setSingleStep(15.0);
+  directionSpin_->setSuffix(" °");
+  form->addRow("波浪方向：", directionSpin_);
   form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
   root->addWidget(paramBox);
 
@@ -282,7 +295,9 @@ void WaveResponseDialog::syncParamsToCore() {
 
 void WaveResponseDialog::onApplyWave() {
   syncParamsToCore();
-  core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(), gainSpin_->value());
+  core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(),
+                  gainSpin_->value(),
+                  directionSpin_->value() * M_PI / 180.0);
   std::cout << (mode_ == "ms06" ? "MS-06" : (mode_ == "ms03" ? "MS-03" : "MS-02"))
             << ": 已施加规则波（波幅 " << waveAmpSpin_->value()
             << " m / 周期 " << wavePeriodSpin_->value() << " s）" << std::endl;
@@ -296,7 +311,9 @@ void WaveResponseDialog::onStart() {
         "未能读到船模位姿或仿真时钟 —— 请确认「船模」名与场景一致，且仿真正在运行。");
     return;
   }
-  core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(), gainSpin_->value());
+  core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(),
+                  gainSpin_->value(),
+                  directionSpin_->value() * M_PI / 180.0);
   chart_->clearTrail();
   startBtn_->setEnabled(false);
   stopBtn_->setEnabled(true);
@@ -473,10 +490,65 @@ void WaveResponseDialog::onImportGm()
   }
   gmDeliverable_ = d;
   hasGm_ = true;
+  ensureObjectFromDeliverable(d);
   std::cout << "MS-03: 已导入 GM 交付物（模型 \"" << d.model
             << "\"，GM实验 " << d.gmExperiment << " m，Ixx "
             << d.ixxKgM2 << " kg·m²）" << std::endl;
   updateGmCompare();
+}
+
+bool WaveResponseDialog::ensureObjectFromDeliverable(
+    const keship::GmDeliverable &_d) {
+  const auto &obj = _d.object;
+  if (obj.type == "ksm_model") {
+    const std::string f = obj.ksmFile.empty() ? obj.name : obj.ksmFile;
+    QMessageBox::information(this, "交付物船模",
+        QString("该交付物的实验对象是 ksm 船模「%1」。\n"
+                "请先用主界面「加载 ▾ → 载入模型」加载它，"
+                "再重新打开本对话框并选择该模型。")
+            .arg(QString::fromStdString(f)));
+    return false;
+  }
+  // 数学船型：按交付物参数重建同一对象（场景已有同名对象则直接使用）
+  double L = obj.lengthM, B = obj.breadthM, H = obj.heightM;
+  double rho = obj.densityKgM3;
+  if (!(L > 0) || !(B > 0) || !(H > 0)) {
+    L = _d.lengthM; B = _d.breadthM; H = _d.heightM;
+  }
+  if (!(rho > 0)) rho = _d.densityKgM3;
+  if (!(L > 0) || !(B > 0) || !(H > 0) || !(rho > 0)) {
+    std::cout << "MS-03: 交付物缺船型参数，无法重建对象（沿用当前选择）"
+              << std::endl;
+    return false;
+  }
+  const std::string name = obj.name.empty() ? "SP02_barge" : obj.name;
+  const std::string sdf =
+      keship::MakeBargeSDF(name, L, B, H, rho, 1000.0, 9.81);
+  gz::msgs::EntityFactory req;
+  req.set_name(name);
+  req.set_allow_renaming(false);
+  req.set_sdf(sdf);
+  gz::msgs::Boolean rep;
+  bool result = false;
+  const bool ok = node_.Request(
+      "/world/" + worldName_ + "/create/blocking", req, 20000, rep, result);
+  if (ok && result) {
+    std::cout << "MS-03: 已按交付物生成实验对象「" << name << "」（L="
+              << L << " B=" << B << " H=" << H << "）" << std::endl;
+  } else {
+    std::cout << "MS-03: 同名对象已存在或生成失败 —— 直接使用场景中的「"
+              << name << "」" << std::endl;
+  }
+  objectName_ = name;
+  if (modelCombo_) {
+    int idx = modelCombo_->findText(QString::fromStdString(name));
+    if (idx < 0) {
+      modelCombo_->addItem(QString::fromStdString(name));
+      idx = modelCombo_->findText(QString::fromStdString(name));
+    }
+    modelCombo_->setCurrentIndex(idx);
+  }
+  return true;
 }
 
 void WaveResponseDialog::updateGmCompare()
@@ -508,14 +580,20 @@ void WaveResponseDialog::updateGmCompare()
   const double gm = useExp ? gmDeliverable_.gmExperiment
                              : gmDeliverable_.gmTheory;
   const char *gmSrc = useExp ? "GM实验" : "GM理论";
-  QString txt = QString("理论横摇固有周期 T₀ = 2π√(Ixx/(Δ·GM)) = %1 s\n"
+  const QString objName = QString::fromStdString(
+      objectName_.empty() ? gmDeliverable_.object.name : objectName_);
+  QString txt = QString("理论横摇固有周期 T₀ = 2π√(Ixx/(Δ·GM)) = %1 s"
+                        "%6\n"
                         "　　（来源：HS-04 交付物 %2 = %3 m，Δ = %4 kg，"
                         "Ixx = %5 kg·m²）")
                     .arg(t0, 0, 'f', 2)
                     .arg(gmSrc)
                     .arg(gm, 0, 'f', 4)
                     .arg(gmDeliverable_.displacementKg, 0, 'f', 0)
-                    .arg(gmDeliverable_.ixxKgM2, 0, 'f', 1);
+                    .arg(gmDeliverable_.ixxKgM2, 0, 'f', 1)
+                    .arg(objName.isEmpty()
+                             ? QString()
+                             : QString("　实验对象：%1").arg(objName));
   if (peakPeriod > 0.0) {
     const double dev = (peakPeriod - t0) / t0 * 100.0;
     txt += QString("\n实测峰值周期 = %1 s（RAO 表最大值处）｜ 相对偏差 = %2%")
