@@ -141,6 +141,8 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/shared/Buoyancy3DView.cc
   src_cpp/gui/keship/shared/FlowLayout.cc
   src_cpp/gui/keship/shared/UiTheme.cc
+  src_cpp/gui/keship/shared/WaveInertiaIO.cc
+  src_cpp/gui/keship/shared/WaveInertiaIO.cc
   src_cpp/gui/keship/viewers/CameraViewerDialog.cc
   src_cpp/gui/keship/viewers/LidarViewerDialog.cc
   src_cpp/gui/keship/experiments/StabilityExperimentDialog.cc

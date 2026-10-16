@@ -25,6 +25,8 @@
 #include <gz/transport/Node.hh>
 #include <gz/msgs/pose_v.pb.h>
 
+#include "../shared/WaveInertiaIO.hh"
+
 /// 回调与对话框之间共享的位姿数据，独立于对话框生命周期
 struct IncliningPoseState
 {
@@ -91,6 +93,8 @@ private slots:
   void onDeleteSelected();
   void onResetWeight();
   void onClearAll();
+  /// ★ 2026-10-16 新增：导出 HS-04 GM 交付物（L3 链机器可读出口）
+  void onExportGm();
   void onUpdatePose();
 
 private:
@@ -154,6 +158,9 @@ private:
   QPushButton *recordBtn_;
   QPushButton *resetBtn_;
   QPushButton *clearBtn_;
+  QPushButton *exportGmBtn_ = nullptr;  ///< 「导出 GM 交付物」（L3 链）
+
+  double gmExp_ = 0.0;  ///< GM 实验值（updateChart 计算后留存，供导出）
 
   /// 数据
   QTableWidget *dataTable_;

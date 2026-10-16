@@ -3194,6 +3194,18 @@ void MenuPluginKeship::OnBtn_MS03_Rao()
 }
 
 /////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS06_RaoPractice()
+{
+  if (ms06Dialog_) { ms06Dialog_->raise(); ms06Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms06");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms06Dialog_ = nullptr; });
+  ms06Dialog_ = dialog; dialog->show();
+  std::cout << "MS-06: RAO 编程计算实践对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_SC08_SensorEstimation()
 {
   if (sc08Dialog_) { sc08Dialog_->raise(); sc08Dialog_->activateWindow(); return; }

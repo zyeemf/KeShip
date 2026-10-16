@@ -18,6 +18,8 @@
 #include <QHeaderView>
 #include <QPainter>
 #include <QPainterPath>
+#include <QDateTime>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QFrame>
 /// ★ 2026-09-21 新增：压载位置输入由 QDoubleSpinBox 改为 QLineEdit（自由编辑），
@@ -423,6 +425,7 @@ void IncliningExperimentDialog::setupUI()
   auto *deleteBtn = new QPushButton("删除选中", this);
   UiTheme::setButtonIcon(deleteBtn, UiTheme::Icon::kDelete);
   clearBtn_ = new QPushButton("清除全部", this);
+  exportGmBtn_ = new QPushButton("导出 GM 交付物", this);
   btnRow->addWidget(recordBtn_);
   btnRow->addWidget(resetBtn_);
   btnRow->addWidget(deleteBtn);
@@ -462,6 +465,8 @@ void IncliningExperimentDialog::setupUI()
           this, &IncliningExperimentDialog::onClearAll);
   connect(deleteBtn, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onDeleteSelected);
+  connect(exportGmBtn_, &QPushButton::clicked,
+          this, &IncliningExperimentDialog::onExportGm);
 
   /// ★ 2026-09-21：删掉原「spinbox ↔ 滑条双向同步、各自直接 moveWeight」的两条连接。
   /// 现在**只有一条**滑条连接（onSliderChanged，内部防抖 300 ms 后才真正下发）；
@@ -1108,10 +1113,60 @@ void IncliningExperimentDialog::updateChart()
   double d = computeTheoryDraft(densitySpin_->value(), heightSpin_->value());
   double displacement = kFluidDensity * kGravity * L * B * d;
   double gmExp = (std::abs(slope) > 1e-12) ? 1.0 / (displacement * slope) : 0.0;
+  gmExp_ = gmExp;   ///< 留存供「导出 GM 交付物」使用
   double gmTh = computeTheoryGM(L, B, heightSpin_->value(),
                                  densitySpin_->value());
 
   chartWidget_->setData(recordedData_, gmExp, gmTh);
+}
+
+void IncliningExperimentDialog::onExportGm()
+{
+  if (recordedData_.size() < 2) {
+    QMessageBox::information(this, "导出 GM 交付物",
+        "请先记录至少两组「压载—横倾」数据（点「记录数据」）——\n"
+        "GM 实验值由线性拟合得到，至少需要两组数据。");
+    return;
+  }
+  const double L = lengthSpin_->value();
+  const double B = breadthSpin_->value();
+  const double H = heightSpin_->value();
+  const double rho = densitySpin_->value();
+  const double draft = computeTheoryDraft(rho, H);
+
+  keship::GmDeliverable d;
+  d.model = "";   ///< 数学船型驳船（本实验场景无加载模型）
+  d.exportedAt =
+      QDateTime::currentDateTime().toString(Qt::ISODate).toStdString();
+  d.gmExperiment = gmExp_;
+  d.gmTheory = computeTheoryGM(L, B, H, rho);
+  d.displacementM3 = L * B * draft;
+  d.displacementKg = kFluidDensity * L * B * draft;
+  d.massKg = rho * L * B * H;
+  /// 长方体近似（与 makeBargeSDF 的 ixx 公式一致）
+  d.ixxKgM2 = d.massKg / 12.0 * (B * B + H * H);
+  d.cogZM = H / 2.0;
+  d.lengthM = L; d.breadthM = B; d.heightM = H;
+  d.densityKgM3 = rho;
+  d.waterDensity = kFluidDensity;
+  d.ballastOffsetY = weightY_;
+  d.notes = "HS-04 移动压载法（数学船型驳船，Ixx 为长方体近似）";
+
+  QString path = QFileDialog::getSaveFileName(this, "导出 GM 交付物",
+      "hs04_gm.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+  std::string err;
+  if (!keship::WriteGmDeliverable(path.toStdString(), d, &err)) {
+    QMessageBox::warning(this, "导出 GM 交付物",
+        QString::fromStdString("导出失败：" + err));
+    return;
+  }
+  std::cout << "HS-04: GM 交付物已导出 -> " << path.toStdString()
+            << "（GM实验 " << d.gmExperiment << " m，Ixx "
+            << d.ixxKgM2 << " kg·m²）" << std::endl;
+  QMessageBox::information(this, "导出 GM 交付物",
+      "已导出。可在 MS-03「横摇 RAO 测量」中点「导入 GM 交付物」，\n"
+      "用 T₀ = 2π√(Ixx/(Δ·GM)) 与实测峰值周期对照。");
 }
 
 double IncliningExperimentDialog::computeTheoryGM(

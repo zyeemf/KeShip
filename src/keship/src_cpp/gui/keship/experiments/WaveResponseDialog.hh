@@ -29,6 +29,7 @@
 #include <gz/transport/Node.hh>
 
 #include "WaveResponseCore.hh"
+#include "../shared/WaveInertiaIO.hh"
 
 /// 响应时程图（自绘：三条曲线 roll / pitch / heave）
 class WaveChartWidget : public QWidget {
@@ -58,6 +59,27 @@ public:
   static bool WriteRaoTableCsv(const QTableWidget *_table,
                                const std::string &_path);
 
+  /// MS-06 学生提交的一行比对结果
+  struct StudentCompareRow {
+    double period = 0.0;   ///< 波浪周期 (s)
+    double stuRao = -1.0;  ///< 学生 RAO (°/m；缺测为 -1)
+    double refRao = -1.0;  ///< 平台参考 RAO (°/m)
+    double errPct = -1.0;  ///< 误差 %（缺测为 -1）
+  };
+
+  /// MS-06：写练习数据包（poses CSV × N + wave_params.json + task.md）
+  /// 纯函数、无 GUI 交互；onExportPacket 与回归测试共用
+  static bool WritePracticePacket(
+      const std::string &_dir,
+      const std::vector<std::vector<keship::WaveSample>> &_rounds,
+      const std::vector<double> &_periods, const std::vector<double> &_amps);
+
+  /// MS-06：解析并比对 student_rao.csv（周期匹配容差 0.5 s）
+  /// 纯函数、无 GUI 交互；onSubmitStudent 与回归测试共用
+  static std::vector<StudentCompareRow> CompareStudentCsv(
+      const std::string &_path, const std::vector<double> &_periods,
+      const std::vector<double> &_refRao, std::string *_err);
+
 private slots:
   void onStart();
   void onStop();
@@ -68,6 +90,10 @@ private slots:
   void onRecordResult();   ///< MS-03：把本次结果追加到 RAO 记录表
   void onDeleteRow();      ///< MS-03：删除 RAO 表选中行
   void onExportRao();      ///< MS-03：导出 RAO–周期汇总表 CSV
+  void onExportPacket();   ///< MS-06：导出练习数据包（位姿 CSV×N + 参数 + 任务书）
+  void onSubmitStudent();  ///< MS-06：提交学生结果 CSV 并与参考值比对
+  void onImportGm();       ///< MS-03：导入 HS-04 GM 交付物
+  void updateGmCompare();  ///< MS-03：刷新理论 T₀ vs 实测峰值周期对照行
 
 private:
   void syncParamsToCore();
@@ -98,6 +124,20 @@ private:
   QPushButton  *recordBtn_    = nullptr;  ///< 记录本次结果（停止后可点）
   QPushButton  *deleteRowBtn_ = nullptr;  ///< 删除选中行
   QPushButton  *exportRaoBtn_ = nullptr;  ///< 导出 RAO 汇总表
+  QPushButton  *importGmBtn_ = nullptr;   ///< 导入 HS-04 GM 交付物
+  QLabel       *gmCompareLabel_ = nullptr;///< 理论 T₀ vs 实测峰值周期对照行
+  keship::GmDeliverable gmDeliverable_;   ///< 已导入的交付物
+  bool hasGm_ = false;                    ///< 是否已导入交付物
+
+  // ── MS-06 专用：编程练习数据收集与学生比对 ──
+  QPushButton *packetBtn_ = nullptr;      ///< 导出练习数据包
+  QPushButton *submitBtn_ = nullptr;      ///< 提交学生结果
+  QTableWidget *studentTable_ = nullptr;  ///< 学生结果比对表
+  QLabel *studentResultLabel_ = nullptr;  ///< 比对总判定
+  std::vector<std::vector<keship::WaveSample>> rounds_;  ///< 各轮位姿时程
+  std::vector<double> roundPeriods_;      ///< 各轮波浪周期 (s)
+  std::vector<double> roundAmps_;         ///< 各轮有效波幅 (m)
+  std::vector<double> refRao_;            ///< 各轮参考 RAO (°/m，平台计算)
 
   QTimer *timer_ = nullptr;
   std::unique_ptr<keship::WaveResponseCore> core_;

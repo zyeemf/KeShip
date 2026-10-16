@@ -20,8 +20,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 
 #include <QAbstractItemView>
 #include <QTableWidget>
@@ -103,7 +106,11 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
                                        QWidget *_parent)
     : QDialog(_parent), mode_(_mode) {
   const bool ms03 = (mode_ == "ms03");
-  setWindowTitle(ms03 ? "MS-03 横摇 RAO 测量" : "MS-02 升沉与纵摇响应");
+  const bool ms06 = (mode_ == "ms06");
+  setWindowTitle(ms06 ? "MS-06 RAO 编程计算实践"
+                      : (ms03 ? "MS-03 横摇 RAO 测量"
+                              : "MS-02 升沉与纵摇响应"));
+  const char *tag = ms06 ? "MS-06" : (ms03 ? "MS-03" : "MS-02");
   resize(920, 880);
 
   core_ = std::make_unique<keship::WaveResponseCore>(_transportNode, _worldName);
@@ -154,7 +161,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   root->addLayout(ctrlRow);
 
   readoutLabel_ = new QLabel("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —", this);
-  resultLabel_ = ms03
+  resultLabel_ = (ms03 || ms06)
       ? new QLabel("横摇幅值 = —   横摇 RAO = —   受迫周期 = —", this)
       : new QLabel("横摇幅值 = —   纵摇幅值 = —   升沉幅值 = —", this);
   readoutLabel_->setStyleSheet("font-family: monospace;");
@@ -162,15 +169,22 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   root->addWidget(readoutLabel_);
   root->addWidget(resultLabel_);
 
-  // ── MS-03 专用：RAO 累积记录表（操作类实验）──
-  if (ms03) {
-    guideLabel_ = new QLabel(
-        "<b>操作步骤（MS-03 为操作类实验）</b>："
-        "① 设定波浪周期与波幅 →「施加波浪」→「开始记录」，仿真时钟累计 ≥40 s 后「停止」；"
-        "② 点「记录本次结果」，将本次 (周期, RAO) 存入下表；"
-        "③ 改变波浪周期，重复 ①② 约 5~8 次；"
-        "④ 从表中找横摇 RAO 的峰值（共振峰），对应周期即横摇固有周期的估计，"
-        "可与 HS-04 的 GM 理论周期对照。", this);
+  // ── MS-03/MS-06 专用：RAO 累积记录表 ──
+  if (ms03 || ms06) {
+    guideLabel_ = new QLabel(ms06
+        ? "<b>操作步骤（MS-06 为编程实践类实验）</b>："
+          "① 逐周期：设定周期与波幅 →「施加波浪」→「开始记录」，仿真时钟 ≥40 s 后「停止」"
+          "→「记录本次结果」；② 改变波浪周期重复 ① 约 5~8 次；"
+          "③ 点「导出练习数据包」保存位姿 CSV + 参数 + 任务书；"
+          "④ 学生按任务书编程计算各周期 RAO（amp/波幅）；"
+          "⑤ 点「提交学生结果」提交 student_rao.csv，平台自动与参考值比对。"
+        : "<b>操作步骤（MS-03 为操作类实验）</b>："
+          "① 设定波浪周期与波幅 →「施加波浪」→「开始记录」，仿真时钟累计 ≥40 s 后「停止」；"
+          "② 点「记录本次结果」，将本次 (周期, RAO) 存入下表；"
+          "③ 改变波浪周期，重复 ①② 约 5~8 次；"
+          "④ 从表中找横摇 RAO 的峰值（共振峰），对应周期即横摇固有周期的估计，"
+          "可与 HS-04 的 GM 理论周期对照。",
+        this);
     guideLabel_->setWordWrap(true);
     root->addWidget(guideLabel_);
 
@@ -187,12 +201,41 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     recordBtn_ = new QPushButton("记录本次结果", this);
     deleteRowBtn_ = new QPushButton("删除选中行", this);
     exportRaoBtn_ = new QPushButton("导出 RAO 表", this);
+    importGmBtn_ = new QPushButton("导入 GM 交付物", this);
     recordBtn_->setEnabled(false);   ///< 停止后启用（一次停止只记一行）
     raoRow->addWidget(recordBtn_);
     raoRow->addWidget(deleteRowBtn_);
     raoRow->addStretch();
     raoRow->addWidget(exportRaoBtn_);
     root->addLayout(raoRow);
+
+    // T₀ 对照行：ms03（与实测峰值周期对照）与 ms06（任务书第 5 步理论对照）共用
+    gmCompareLabel_ = new QLabel(
+        "理论横摇周期 T₀ = —（未导入 GM 交付物）", this);
+    gmCompareLabel_->setStyleSheet("font-family: monospace;");
+    root->addWidget(gmCompareLabel_);
+
+    // ── MS-06 专用：编程练习（数据包导出 + 学生提交）──
+    if (ms06) {
+      packetBtn_ = new QPushButton("导出练习数据包", this);
+      raoRow->addWidget(packetBtn_);
+      studentTable_ = new QTableWidget(0, 4, this);
+      studentTable_->setHorizontalHeaderLabels(
+          {"波浪周期 (s)", "学生 RAO (°/m)", "参考 RAO (°/m)", "误差"});
+      studentTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+      studentTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+      studentTable_->setMaximumHeight(150);
+      root->addWidget(studentTable_);
+
+      auto *stuRow = new QHBoxLayout();
+      submitBtn_ = new QPushButton("提交学生结果", this);
+      stuRow->addWidget(submitBtn_);
+      stuRow->addStretch();
+      studentResultLabel_ = new QLabel("等待学生提交 student_rao.csv", this);
+      studentResultLabel_->setStyleSheet("font-family: monospace;");
+      stuRow->addWidget(studentResultLabel_);
+      root->addLayout(stuRow);
+    }
   }
 
   chart_ = new WaveChartWidget(this);
@@ -209,9 +252,12 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     connect(recordBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onRecordResult);
     connect(deleteRowBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onDeleteRow);
     connect(exportRaoBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportRao);
+    connect(importGmBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onImportGm);
+    connect(packetBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportPacket);
+    connect(submitBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onSubmitStudent);
   }
 
-  std::cout << (ms03 ? "MS-03" : "MS-02")
+  std::cout << tag
             << ": 波浪响应对话框已创建（核心层 WaveResponseCore）" << std::endl;
 }
 
@@ -224,7 +270,7 @@ void WaveResponseDialog::syncParamsToCore() {
 void WaveResponseDialog::onApplyWave() {
   syncParamsToCore();
   core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(), gainSpin_->value());
-  std::cout << (mode_ == "ms03" ? "MS-03" : "MS-02")
+  std::cout << (mode_ == "ms06" ? "MS-06" : (mode_ == "ms03" ? "MS-03" : "MS-02"))
             << ": 已施加规则波（波幅 " << waveAmpSpin_->value()
             << " m / 周期 " << wavePeriodSpin_->value() << " s）" << std::endl;
 }
@@ -259,13 +305,21 @@ void WaveResponseDialog::onClear() {
   core_->clear();
   chart_->clearTrail();
   readoutLabel_->setText("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —");
-  resultLabel_->setText(mode_ == "ms03"
+  resultLabel_->setText((mode_ == "ms03" || mode_ == "ms06")
       ? "横摇幅值 = —   横摇 RAO = —   受迫周期 = —"
       : "横摇幅值 = —   纵摇幅值 = —   升沉幅值 = —");
   if (raoTable_) {
     raoTable_->setRowCount(0);
     recordBtn_->setEnabled(false);
   }
+  if (studentTable_) studentTable_->setRowCount(0);
+  if (studentResultLabel_)
+    studentResultLabel_->setText("等待学生提交 student_rao.csv");
+  rounds_.clear();
+  roundPeriods_.clear();
+  roundAmps_.clear();
+  refRao_.clear();
+  updateGmCompare();
 }
 
 void WaveResponseDialog::onTick() {
@@ -301,7 +355,7 @@ void WaveResponseDialog::showResults() {
     resultLabel_->setText("数据不足");
     return;
   }
-  if (mode_ == "ms03") {
+  if (mode_ == "ms03" || mode_ == "ms06") {
     resultLabel_->setText(QString("横摇幅值 = %1°   横摇 RAO = %2 °/m   受迫周期 = %3 s")
         .arg(fmt(m.rollAmp)).arg(fmt(m.rollRAO)).arg(fmt(m.rollPeriod)));
   } else {
@@ -326,6 +380,16 @@ void WaveResponseDialog::onRecordResult() {
   recordBtn_->setEnabled(false);   ///< 一次停止只记一行，防重复
   std::cout << "MS-03: 已记录 RAO 点（周期 " << m.wavePeriod
             << " s，RAO " << m.rollRAO << " °/m）" << std::endl;
+  if (mode_ == "ms06") {
+    // 收集本轮数据（下一轮 start 会 clear trail，须先快照）
+    rounds_.push_back(core_->trail());
+    roundPeriods_.push_back(m.wavePeriod);
+    roundAmps_.push_back(m.waveAmp);
+    refRao_.push_back(m.rollRAO);
+    std::cout << "MS-06: 已收集第 " << rounds_.size()
+              << " 轮练习数据（周期 " << m.wavePeriod << " s）" << std::endl;
+  }
+  updateGmCompare();
 }
 
 void WaveResponseDialog::onDeleteRow() {
@@ -336,6 +400,7 @@ void WaveResponseDialog::onDeleteRow() {
   }
   raoTable_->removeRow(row);
   std::cout << "MS-03: 已删除 RAO 表第 " << row + 1 << " 行" << std::endl;
+  updateGmCompare();
 }
 
 bool WaveResponseDialog::WriteRaoTableCsv(const QTableWidget *_table,
@@ -378,4 +443,228 @@ void WaveResponseDialog::onExport() {
   if (path.isEmpty()) return;
   if (!core_->exportCsv(path.toStdString()))
     QMessageBox::warning(this, "导出", "无法写入文件。");
+}
+
+void WaveResponseDialog::onImportGm()
+{
+  QString path = QFileDialog::getOpenFileName(this, "导入 HS-04 GM 交付物",
+      "hs04_gm.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+  keship::GmDeliverable d;
+  std::string err;
+  if (!keship::ReadGmDeliverable(path.toStdString(), d, &err) ||
+      !keship::ValidGmDeliverable(d, &err)) {
+    QMessageBox::warning(this, "导入 GM 交付物",
+        QString::fromStdString("导入失败：" + err));
+    return;
+  }
+  gmDeliverable_ = d;
+  hasGm_ = true;
+  std::cout << "MS-03: 已导入 GM 交付物（模型 \"" << d.model
+            << "\"，GM实验 " << d.gmExperiment << " m，Ixx "
+            << d.ixxKgM2 << " kg·m²）" << std::endl;
+  updateGmCompare();
+}
+
+void WaveResponseDialog::updateGmCompare()
+{
+  if (!gmCompareLabel_) return;
+  if (!hasGm_) {
+    gmCompareLabel_->setText("理论横摇周期 T₀ = —（未导入 GM 交付物）");
+    return;
+  }
+  const double t0 = keship::TheoreticalRollPeriod(gmDeliverable_);
+  if (t0 < 0.0) {
+    gmCompareLabel_->setText(
+        "理论横摇周期 T₀ = 数据不足（交付物缺 Ixx 或排水量）");
+    return;
+  }
+  // 实测峰值周期：RAO 表中 RAO 最大行对应的波浪周期
+  double peakPeriod = -1.0, peakRao = -1.0;
+  for (int r = 0; r < raoTable_->rowCount(); ++r) {
+    const double rao = raoTable_->item(r, 2)->text().toDouble();
+    if (rao > peakRao) {
+      peakRao = rao;
+      peakPeriod = raoTable_->item(r, 0)->text().toDouble();
+    }
+  }
+  const bool useExp = gmDeliverable_.gmExperiment > 0.0;
+  const double gm = useExp ? gmDeliverable_.gmExperiment
+                             : gmDeliverable_.gmTheory;
+  const char *gmSrc = useExp ? "GM实验" : "GM理论";
+  QString txt = QString("理论 T₀ = 2π√(Ixx/(Δ·%1)) = %2 s（%3 = %4 m）")
+                    .arg(gmSrc)
+                    .arg(t0, 0, 'f', 2)
+                    .arg(gmSrc)
+                    .arg(gm, 0, 'f', 4);
+  if (peakPeriod > 0.0) {
+    const double dev = (peakPeriod - t0) / t0 * 100.0;
+    txt += QString(" ｜ 实测峰值周期 = %1 s ｜ 偏差 %2%")
+               .arg(peakPeriod, 0, 'f', 2)
+               .arg(dev, 0, 'f', 1);
+  } else {
+    txt += " ｜ 实测峰值周期 = —（RAO 表无记录）";
+  }
+  gmCompareLabel_->setText(txt);
+}
+
+void WaveResponseDialog::onExportPacket()
+{
+  if (rounds_.empty()) {
+    QMessageBox::information(this, "导出练习数据包",
+        "尚无记录。请逐周期「施加波浪 → 开始记录 → 停止 → 记录本次结果」，\n"
+        "收集多轮数据后再导出。");
+    return;
+  }
+  QString dir = QFileDialog::getExistingDirectory(this, "选择数据包保存目录");
+  if (dir.isEmpty()) return;
+  const std::string base = (dir + "/ms06_packet").toStdString();
+  if (!WritePracticePacket(base, rounds_, roundPeriods_, roundAmps_)) {
+    QMessageBox::warning(this, "导出练习数据包", "写入失败（目录不可写？）。");
+    return;
+  }
+  std::cout << "MS-06: 练习数据包已导出（" << rounds_.size()
+            << " 轮）-> " << base << std::endl;
+  QMessageBox::information(this, "导出练习数据包",
+      QString("已导出 %1 轮数据（位姿 CSV + wave_params.json + task.md）。\n"
+              "学生按 task.md 编程计算 RAO 后，用「提交学生结果」提交。")
+          .arg(static_cast<int>(rounds_.size())));
+}
+
+void WaveResponseDialog::onSubmitStudent()
+{
+  if (refRao_.empty()) {
+    QMessageBox::information(this, "提交学生结果",
+        "尚无参考数据。请先逐周期记录（每轮停止后点「记录本次结果」）。");
+    return;
+  }
+  QString path = QFileDialog::getOpenFileName(this, "选择学生结果 CSV",
+      "student_rao.csv", "CSV (*.csv)");
+  if (path.isEmpty()) return;
+  std::string err;
+  const auto rows =
+      CompareStudentCsv(path.toStdString(), roundPeriods_, refRao_, &err);
+  if (!err.empty()) {
+    QMessageBox::warning(this, "提交学生结果", QString::fromStdString(err));
+    return;
+  }
+  studentTable_->setRowCount(0);
+  bool allPass = true;
+  for (const auto &r : rows) {
+    const int row = studentTable_->rowCount();
+    studentTable_->insertRow(row);
+    auto num = [](double v) { return QString::number(v, 'f', 3); };
+    studentTable_->setItem(row, 0, new QTableWidgetItem(num(r.period)));
+    studentTable_->setItem(row, 1,
+        new QTableWidgetItem(r.stuRao > 0 ? num(r.stuRao) : "—"));
+    studentTable_->setItem(row, 2, new QTableWidgetItem(num(r.refRao)));
+    if (r.errPct >= 0.0) {
+      studentTable_->setItem(row, 3,
+          new QTableWidgetItem(QString::number(r.errPct, 'f', 1) + "%"));
+      if (r.errPct >= 10.0) allPass = false;
+    } else {
+      studentTable_->setItem(row, 3, new QTableWidgetItem("缺"));
+      allPass = false;
+    }
+  }
+  studentResultLabel_->setText(allPass
+      ? QString("通过：%1 轮全部与参考值误差 <10%").arg(rows.size())
+      : QString("未通过：存在误差 ≥10% 或缺测周期"));
+  std::cout << "MS-06: 学生结果已比对（" << rows.size() << " 轮参考）"
+            << std::endl;
+}
+
+bool WaveResponseDialog::WritePracticePacket(
+    const std::string &_dir,
+    const std::vector<std::vector<keship::WaveSample>> &_rounds,
+    const std::vector<double> &_periods, const std::vector<double> &_amps)
+{
+  if (_rounds.empty() || _rounds.size() != _periods.size() ||
+      _rounds.size() != _amps.size())
+    return false;
+  std::error_code ec;
+  std::filesystem::create_directories(_dir, ec);
+  if (ec) return false;
+  for (size_t i = 0; i < _rounds.size(); ++i) {
+    char name[128];
+    std::snprintf(name, sizeof(name), "/poses_T%05.2fs.csv", _periods[i]);
+    std::ofstream f(_dir + name);
+    if (!f) return false;
+    f << "t_s,roll_deg,pitch_deg,heave_m\n";
+    for (const auto &s : _rounds[i])
+      f << s.t << "," << s.rollDeg << "," << s.pitchDeg << "," << s.heave << "\n";
+  }
+  {
+    std::ofstream f(_dir + "/wave_params.json");
+    if (!f) return false;
+    f << "{\n  \"rounds\": [\n";
+    for (size_t i = 0; i < _rounds.size(); ++i) {
+      f << "    {\"period_s\": " << _periods[i]
+        << ", \"wave_amp_m\": " << _amps[i] << "}"
+        << (i + 1 < _rounds.size() ? "," : "") << "\n";
+    }
+    f << "  ]\n}\n";
+  }
+  {
+    std::ofstream f(_dir + "/task.md");
+    if (!f) return false;
+    f <<
+      "# MS-06 RAO 编程计算实践 · 任务书\n\n"
+      "## 给定数据\n"
+      "- `poses_T*.csv`：各波浪周期下的船体位姿时程（列：t_s, roll_deg, pitch_deg, heave_m）\n"
+      "- `wave_params.json`：各轮的波浪周期与有效波幅\n\n"
+      "## 任务\n"
+      "1. 对每个周期，取**稳态段**（建议仿真时间后半段，排除起振瞬态）\n"
+      "2. 计算横摇稳态幅值：`amp = (max(roll) - min(roll)) / 2`（单位 °）\n"
+      "3. 计算 RAO：`RAO = amp / wave_amp`（单位 °/m）\n"
+      "4. 找出 RAO 峰值对应的周期（实测共振周期）\n"
+      "5. （对照）理论横摇周期 T0 = 2π√(Ixx/(Δ·GM))（由 HS-04 初稳性实验的\n"
+      "   GM 交付物计算），与实测峰值周期比较并讨论差异\n\n"
+      "## 提交格式\n"
+      "`student_rao.csv`：两列 `周期(s),RAO(°/m)`，每行一个周期，可含表头。\n";
+  }
+  return true;
+}
+
+std::vector<WaveResponseDialog::StudentCompareRow>
+WaveResponseDialog::CompareStudentCsv(const std::string &_path,
+                                      const std::vector<double> &_periods,
+                                      const std::vector<double> &_refRao,
+                                      std::string *_err)
+{
+  std::vector<StudentCompareRow> out;
+  std::ifstream f(_path);
+  if (!f) {
+    if (_err) *_err = "无法打开学生结果文件: " + _path;
+    return out;
+  }
+  std::vector<std::pair<double, double>> stu;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty()) continue;
+    bool hasAlpha = false;
+    for (char c : line)
+      if (std::isalpha(static_cast<unsigned char>(c))) { hasAlpha = true; break; }
+    if (hasAlpha) continue;   ///< 跳过表头
+    std::stringstream ss(line);
+    std::string a, b;
+    if (!std::getline(ss, a, ',')) continue;
+    if (!std::getline(ss, b, ',')) continue;
+    try { stu.emplace_back(std::stod(a), std::stod(b)); } catch (...) { continue; }
+  }
+  if (stu.empty()) {
+    if (_err) *_err = "未解析到数据行（格式：周期(s),RAO(°/m)，每行一个周期）。";
+    return out;
+  }
+  for (size_t i = 0; i < _periods.size(); ++i) {
+    StudentCompareRow r;
+    r.period = _periods[i];
+    r.refRao = (i < _refRao.size()) ? _refRao[i] : -1.0;
+    for (const auto &p : stu)
+      if (std::fabs(p.first - r.period) < 0.5) { r.stuRao = p.second; break; }
+    if (r.stuRao > 0 && r.refRao > 0)
+      r.errPct = std::fabs(r.stuRao - r.refRao) / r.refRao * 100.0;
+    out.push_back(r);
+  }
+  return out;
 }

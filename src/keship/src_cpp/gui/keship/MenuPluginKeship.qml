@@ -281,6 +281,7 @@ Rectangle {
         ListElement { expId: "MS-03";  name: "横摇RAO测量";             course: "船舶操纵性与耐波性";    tier: "操作类"; enabled: true }
         ListElement { expId: "MS-04";  name: "方向稳定性与Z形试验";     course: "船舶操纵性与耐波性";    tier: "操作类"; enabled: true }
         ListElement { expId: "MS-05";  name: "海况等级下的操限评估";    course: "船舶操纵性与耐波性";    tier: "设计类"; enabled: false }
+        ListElement { expId: "MS-06";  name: "RAO编程计算实践";         course: "船舶操纵性与耐波性";    tier: "设计类"; enabled: true }
         ListElement { expId: "SC-01";  name: "开环与闭环响应对比";      course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
         ListElement { expId: "SC-02";  name: "PID参数效应";             course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
         ListElement { expId: "SC-03";  name: "环境扰动影响";            course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
