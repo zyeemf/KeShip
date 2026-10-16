@@ -27,6 +27,7 @@
 #include <sstream>
 
 #include <QAbstractItemView>
+#include <QHeaderView>
 #include <QTableWidget>
 
 // ══════════════════════════════════════════════════════════════════
@@ -195,6 +196,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     raoTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     raoTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     raoTable_->setMaximumHeight(170);
+    raoTable_->horizontalHeader()->setSectionResizeMode(
+        QHeaderView::Stretch);
     root->addWidget(raoTable_);
 
     auto *raoRow = new QHBoxLayout();
@@ -207,11 +210,15 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     raoRow->addWidget(deleteRowBtn_);
     raoRow->addStretch();
     raoRow->addWidget(exportRaoBtn_);
+    raoRow->addWidget(importGmBtn_);
     root->addLayout(raoRow);
 
     // T₀ 对照行：ms03（与实测峰值周期对照）与 ms06（任务书第 5 步理论对照）共用
     gmCompareLabel_ = new QLabel(
-        "理论横摇周期 T₀ = —（未导入 GM 交付物）", this);
+        "理论横摇固有周期 T₀：尚未导入 HS-04 的 GM 交付物\n"
+        "（点「导入 GM 交付物」选择 hs04_gm.json；"
+        "T₀ = 2π√(Ixx/(Δ·GM)) 由 HS-04 的初稳性高、排水量与纵向转动惯量算出）",
+        this);
     gmCompareLabel_->setStyleSheet("font-family: monospace;");
     root->addWidget(gmCompareLabel_);
 
@@ -225,6 +232,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
       studentTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
       studentTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
       studentTable_->setMaximumHeight(150);
+      studentTable_->horizontalHeader()->setSectionResizeMode(
+          QHeaderView::Stretch);
       root->addWidget(studentTable_);
 
       auto *stuRow = new QHBoxLayout();
@@ -253,8 +262,12 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     connect(deleteRowBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onDeleteRow);
     connect(exportRaoBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportRao);
     connect(importGmBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onImportGm);
-    connect(packetBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportPacket);
-    connect(submitBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onSubmitStudent);
+    if (packetBtn_)
+      connect(packetBtn_, &QPushButton::clicked, this,
+              &WaveResponseDialog::onExportPacket);
+    if (submitBtn_)
+      connect(submitBtn_, &QPushButton::clicked, this,
+              &WaveResponseDialog::onSubmitStudent);
   }
 
   std::cout << tag
@@ -470,13 +483,16 @@ void WaveResponseDialog::updateGmCompare()
 {
   if (!gmCompareLabel_) return;
   if (!hasGm_) {
-    gmCompareLabel_->setText("理论横摇周期 T₀ = —（未导入 GM 交付物）");
+    gmCompareLabel_->setText(
+        "理论横摇固有周期 T₀：尚未导入 HS-04 的 GM 交付物\n"
+        "（点「导入 GM 交付物」选择 hs04_gm.json；"
+        "T₀ = 2π√(Ixx/(Δ·GM)) 由 HS-04 的初稳性高、排水量与纵向转动惯量算出）");
     return;
   }
   const double t0 = keship::TheoreticalRollPeriod(gmDeliverable_);
   if (t0 < 0.0) {
     gmCompareLabel_->setText(
-        "理论横摇周期 T₀ = 数据不足（交付物缺 Ixx 或排水量）");
+        "理论横摇固有周期 T₀：交付物数据不足（缺 Ixx 或排水量），无法计算");
     return;
   }
   // 实测峰值周期：RAO 表中 RAO 最大行对应的波浪周期
@@ -492,18 +508,23 @@ void WaveResponseDialog::updateGmCompare()
   const double gm = useExp ? gmDeliverable_.gmExperiment
                              : gmDeliverable_.gmTheory;
   const char *gmSrc = useExp ? "GM实验" : "GM理论";
-  QString txt = QString("理论 T₀ = 2π√(Ixx/(Δ·%1)) = %2 s（%3 = %4 m）")
-                    .arg(gmSrc)
+  QString txt = QString("理论横摇固有周期 T₀ = 2π√(Ixx/(Δ·GM)) = %1 s\n"
+                        "　　（来源：HS-04 交付物 %2 = %3 m，Δ = %4 kg，"
+                        "Ixx = %5 kg·m²）")
                     .arg(t0, 0, 'f', 2)
                     .arg(gmSrc)
-                    .arg(gm, 0, 'f', 4);
+                    .arg(gm, 0, 'f', 4)
+                    .arg(gmDeliverable_.displacementKg, 0, 'f', 0)
+                    .arg(gmDeliverable_.ixxKgM2, 0, 'f', 1);
   if (peakPeriod > 0.0) {
     const double dev = (peakPeriod - t0) / t0 * 100.0;
-    txt += QString(" ｜ 实测峰值周期 = %1 s ｜ 偏差 %2%")
+    txt += QString("\n实测峰值周期 = %1 s（RAO 表最大值处）｜ 相对偏差 = %2%")
                .arg(peakPeriod, 0, 'f', 2)
                .arg(dev, 0, 'f', 1);
   } else {
-    txt += " ｜ 实测峰值周期 = —（RAO 表无记录）";
+    txt += "\n实测峰值周期：尚无 RAO 记录 —— 请先在下方逐周期记录"
+           "（改波浪周期 → 记录 ≥40 仿真秒 → 停止 →「记录本次结果」），"
+           "再回到本行看实测值与 T₀ 的对比";
   }
   gmCompareLabel_->setText(txt);
 }
