@@ -20,7 +20,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+
+#include <QAbstractItemView>
+#include <QTableWidget>
 
 // ══════════════════════════════════════════════════════════════════
 // 响应时程图（三曲线）
@@ -100,7 +104,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     : QDialog(_parent), mode_(_mode) {
   const bool ms03 = (mode_ == "ms03");
   setWindowTitle(ms03 ? "MS-03 横摇 RAO 测量" : "MS-02 升沉与纵摇响应");
-  resize(920, 660);
+  resize(920, 880);
 
   core_ = std::make_unique<keship::WaveResponseCore>(_transportNode, _worldName);
 
@@ -158,6 +162,39 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   root->addWidget(readoutLabel_);
   root->addWidget(resultLabel_);
 
+  // ── MS-03 专用：RAO 累积记录表（操作类实验）──
+  if (ms03) {
+    guideLabel_ = new QLabel(
+        "<b>操作步骤（MS-03 为操作类实验）</b>："
+        "① 设定波浪周期与波幅 →「施加波浪」→「开始记录」，仿真时钟累计 ≥40 s 后「停止」；"
+        "② 点「记录本次结果」，将本次 (周期, RAO) 存入下表；"
+        "③ 改变波浪周期，重复 ①② 约 5~8 次；"
+        "④ 从表中找横摇 RAO 的峰值（共振峰），对应周期即横摇固有周期的估计，"
+        "可与 HS-04 的 GM 理论周期对照。", this);
+    guideLabel_->setWordWrap(true);
+    root->addWidget(guideLabel_);
+
+    raoTable_ = new QTableWidget(0, 4, this);
+    raoTable_->setHorizontalHeaderLabels(
+        {"波浪周期 (s)", "横摇幅值 (°)", "横摇 RAO (°/m)", "受迫周期 (s)"});
+    raoTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    raoTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+    raoTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    raoTable_->setMaximumHeight(170);
+    root->addWidget(raoTable_);
+
+    auto *raoRow = new QHBoxLayout();
+    recordBtn_ = new QPushButton("记录本次结果", this);
+    deleteRowBtn_ = new QPushButton("删除选中行", this);
+    exportRaoBtn_ = new QPushButton("导出 RAO 表", this);
+    recordBtn_->setEnabled(false);   ///< 停止后启用（一次停止只记一行）
+    raoRow->addWidget(recordBtn_);
+    raoRow->addWidget(deleteRowBtn_);
+    raoRow->addStretch();
+    raoRow->addWidget(exportRaoBtn_);
+    root->addLayout(raoRow);
+  }
+
   chart_ = new WaveChartWidget(this);
   root->addWidget(chart_, 1);
 
@@ -168,6 +205,11 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   connect(stopBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onStop);
   connect(clearBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onClear);
   connect(exportBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExport);
+  if (recordBtn_) {
+    connect(recordBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onRecordResult);
+    connect(deleteRowBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onDeleteRow);
+    connect(exportRaoBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportRao);
+  }
 
   std::cout << (ms03 ? "MS-03" : "MS-02")
             << ": 波浪响应对话框已创建（核心层 WaveResponseCore）" << std::endl;
@@ -199,6 +241,7 @@ void WaveResponseDialog::onStart() {
   chart_->clearTrail();
   startBtn_->setEnabled(false);
   stopBtn_->setEnabled(true);
+  if (recordBtn_) recordBtn_->setEnabled(false);
   timer_->start(static_cast<int>(periodSpin_->value() * 1000));
 }
 
@@ -209,12 +252,20 @@ void WaveResponseDialog::onStop() {
   startBtn_->setEnabled(true);
   stopBtn_->setEnabled(false);
   showResults();
+  if (recordBtn_) recordBtn_->setEnabled(core_->metrics().valid);
 }
 
 void WaveResponseDialog::onClear() {
   core_->clear();
   chart_->clearTrail();
   readoutLabel_->setText("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —");
+  resultLabel_->setText(mode_ == "ms03"
+      ? "横摇幅值 = —   横摇 RAO = —   受迫周期 = —"
+      : "横摇幅值 = —   纵摇幅值 = —   升沉幅值 = —");
+  if (raoTable_) {
+    raoTable_->setRowCount(0);
+    recordBtn_->setEnabled(false);
+  }
 }
 
 void WaveResponseDialog::onTick() {
@@ -224,6 +275,7 @@ void WaveResponseDialog::onTick() {
       timer_->stop();
       startBtn_->setEnabled(true);
       stopBtn_->setEnabled(false);
+      if (recordBtn_) recordBtn_->setEnabled(false);
       QMessageBox::warning(this, "仿真时间已重置",
           "仿真时钟发生回退，本次响应记录已停止。请清零后重新开始。");
     }
@@ -256,6 +308,58 @@ void WaveResponseDialog::showResults() {
     resultLabel_->setText(QString("横摇幅值 = %1°   纵摇幅值 = %2°   升沉幅值 = %3 m")
         .arg(fmt(m.rollAmp)).arg(fmt(m.pitchAmp)).arg(fmt(m.heaveAmp)));
   }
+}
+
+void WaveResponseDialog::onRecordResult() {
+  const auto m = core_->metrics();
+  if (!m.valid) {
+    QMessageBox::information(this, "记录", "当前无有效结果。");
+    return;
+  }
+  const int row = raoTable_->rowCount();
+  raoTable_->insertRow(row);
+  auto num = [](double v) { return QString::number(v, 'f', 3); };
+  raoTable_->setItem(row, 0, new QTableWidgetItem(num(m.wavePeriod)));
+  raoTable_->setItem(row, 1, new QTableWidgetItem(num(m.rollAmp)));
+  raoTable_->setItem(row, 2, new QTableWidgetItem(num(m.rollRAO)));
+  raoTable_->setItem(row, 3, new QTableWidgetItem(num(m.rollPeriod)));
+  recordBtn_->setEnabled(false);   ///< 一次停止只记一行，防重复
+  std::cout << "MS-03: 已记录 RAO 点（周期 " << m.wavePeriod
+            << " s，RAO " << m.rollRAO << " °/m）" << std::endl;
+}
+
+void WaveResponseDialog::onDeleteRow() {
+  const int row = raoTable_->currentRow();
+  if (row < 0) {
+    QMessageBox::information(this, "删除", "请先在表中选中一行。");
+    return;
+  }
+  raoTable_->removeRow(row);
+  std::cout << "MS-03: 已删除 RAO 表第 " << row + 1 << " 行" << std::endl;
+}
+
+void WaveResponseDialog::onExportRao() {
+  if (!raoTable_ || raoTable_->rowCount() == 0) {
+    QMessageBox::information(this, "导出 RAO 表", "尚无记录。");
+    return;
+  }
+  QString path = QFileDialog::getSaveFileName(this, "导出 RAO–周期表 CSV",
+      "ms03_rao.csv", "CSV (*.csv)");
+  if (path.isEmpty()) return;
+  std::ofstream f(path.toStdString());
+  if (!f) {
+    QMessageBox::warning(this, "导出 RAO 表", "无法写入文件。");
+    return;
+  }
+  f << "wave_period_s,roll_amp_deg,roll_rao_deg_per_m,forced_period_s\n";
+  for (int r = 0; r < raoTable_->rowCount(); ++r) {
+    f << raoTable_->item(r, 0)->text().toStdString() << ","
+      << raoTable_->item(r, 1)->text().toStdString() << ","
+      << raoTable_->item(r, 2)->text().toStdString() << ","
+      << raoTable_->item(r, 3)->text().toStdString() << "\n";
+  }
+  std::cout << "MS-03: RAO 表已导出（" << raoTable_->rowCount()
+            << " 行）-> " << path.toStdString() << std::endl;
 }
 
 void WaveResponseDialog::onExport() {

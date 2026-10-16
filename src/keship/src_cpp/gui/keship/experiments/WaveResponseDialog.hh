@@ -17,6 +17,7 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QTimer>
 #include <QWidget>
 #include <QPaintEvent>
@@ -60,6 +61,9 @@ private slots:
   void onTick();
   void onExport();
   void onApplyWave();
+  void onRecordResult();   ///< MS-03：把本次结果追加到 RAO 记录表
+  void onDeleteRow();      ///< MS-03：删除 RAO 表选中行
+  void onExportRao();      ///< MS-03：导出 RAO–周期汇总表 CSV
 
 private:
   void syncParamsToCore();
@@ -83,6 +87,13 @@ private:
   WaveChartWidget *chart_ = nullptr;
   QLabel *readoutLabel_ = nullptr;
   QLabel *resultLabel_  = nullptr;
+
+  // ── MS-03 专用：RAO 累积记录表（操作类实验的数据汇总）──
+  QLabel       *guideLabel_   = nullptr;  ///< 操作步骤说明条
+  QTableWidget *raoTable_     = nullptr;  ///< (周期, 幅值, RAO, 受迫周期) 累积表
+  QPushButton  *recordBtn_    = nullptr;  ///< 记录本次结果（停止后可点）
+  QPushButton  *deleteRowBtn_ = nullptr;  ///< 删除选中行
+  QPushButton  *exportRaoBtn_ = nullptr;  ///< 导出 RAO 汇总表
 
   QTimer *timer_ = nullptr;
   std::unique_ptr<keship::WaveResponseCore> core_;
