@@ -109,6 +109,7 @@ void WaveResponseCore::sendWave(double _amplitude, double _period,
   // CWR 的 number=1、scale=1 时恰为单频波，振幅字段直接生效。
   waveAmp_ = std::abs(_amplitude * _gain);
   wavePeriod_ = _period;
+  waveDirection_ = _direction;   // ★ 重发时须原样带回（见 hh 成员注释）
   waveConfigured_ = true;
   gz::msgs::Param msg;
   auto *p = msg.mutable_params();
@@ -198,7 +199,9 @@ void WaveResponseCore::clear() {
 bool WaveResponseCore::sample() {
   if (!running_) return false;
   // 周期性重发波浪参数（gz-transport 首帧易丢）。
-  if (waveConfigured_) sendWave(waveAmp_, wavePeriod_);
+  // ★ 2026-10-16 修复：重发必须携带 direction（原实现漏传 ⇒ 方向被重置为 0，
+  //   横浪设置静默失效、横摇力矩恒 0）。gain 传 1.0 正确：waveAmp_ 已含增益。
+  if (waveConfigured_) sendWave(waveAmp_, wavePeriod_, 1.0, waveDirection_);
   double r = 0, pi = 0, z = 0, simTime = 0.0;
   if (!fetchSimTime(simTime) || !fetchPose(r, pi, z)) return false;
   if (simTime + 1e-9 < lastSampleSimTime_) {

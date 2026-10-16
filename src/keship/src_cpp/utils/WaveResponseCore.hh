@@ -114,6 +114,11 @@ private:
   bool clockReset_ = false;
   double z0_ = 0.0;
   double waveAmp_ = 0.0, wavePeriod_ = 5.0;
+  /// ★ 2026-10-16 修复：周期性重发波浪必须携带方向 ——
+  ///   sample() 每步重发（gz-transport 首帧易丢），原实现只传 (amp, period)，
+  ///   direction 落到默认值 0 ⇒ **每次采样把方向重置为顺浪**，横浪设置静默
+  ///   失效（横摇力矩恒 0）。见 doc/audit/roll_moment_mechanism_2026-10-16.md。
+  double waveDirection_ = 0.0;
   std::vector<WaveSample> trail_;
 
   std::shared_ptr<WavePoseShared> pose_;
