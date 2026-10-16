@@ -32,21 +32,26 @@ void quatToRpy(const gz::msgs::Quaternion &_q, double &_rollDeg, double &_pitchD
   _pitchDeg = pitch * kRad2Deg;
 }
 
-/// 过零检测求周期（取后半段）
-double estimatePeriod(const std::vector<double> &_v, double _dt) {
-  if (_v.size() < 4) return -1.0;
-  const size_t from = _v.size() / 2;
+/// 按仿真时间戳对后半段上升过零点插值，估计横摇周期。
+double estimatePeriod(const std::vector<WaveSample> &_trail, size_t _from) {
+  if (_trail.size() < _from + 4) return -1.0;
   double mean = 0.0;
-  for (size_t i = from; i < _v.size(); ++i) mean += _v[i];
-  mean /= static_cast<double>(_v.size() - from);
+  for (size_t i = _from; i < _trail.size(); ++i) mean += _trail[i].rollDeg;
+  mean /= static_cast<double>(_trail.size() - _from);
   std::vector<double> zc;
-  for (size_t i = from + 1; i < _v.size(); ++i) {
-    const double a = _v[i - 1] - mean, b = _v[i] - mean;
-    if (a <= 0.0 && b > 0.0) zc.push_back(static_cast<double>(i) * _dt);
+  for (size_t i = _from + 1; i < _trail.size(); ++i) {
+    const double a = _trail[i - 1].rollDeg - mean;
+    const double b = _trail[i].rollDeg - mean;
+    const double dt = _trail[i].t - _trail[i - 1].t;
+    if (dt <= 0.0) continue;
+    if (a <= 0.0 && b > 0.0) {
+      const double fraction = -a / (b - a);
+      zc.push_back(_trail[i - 1].t + fraction * dt);
+    }
   }
   if (zc.size() < 2) return -1.0;
   double sum = 0.0;
-  for (size_t i = 1; i < zc.size(); ++i) sum += (zc[i] - zc[i - 1]);
+  for (size_t i = 1; i < zc.size(); ++i) sum += zc[i] - zc[i - 1];
   return sum / static_cast<double>(zc.size() - 1);
 }
 }  // namespace
@@ -55,7 +60,6 @@ WaveResponseCore::WaveResponseCore(gz::transport::Node &_node,
                                    const std::string &_worldName)
     : node_(_node), worldName_(_worldName) {
   poseTopic_ = "/world/" + worldName_ + "/pose/info";
-  waveTopic_ = "/keship/wavefield/parameters_set";
   pose_ = std::make_shared<WavePoseShared>();
   auto st = pose_;
   node_.Subscribe<gz::msgs::Pose_V>(poseTopic_,
@@ -65,12 +69,26 @@ WaveResponseCore::WaveResponseCore(gz::transport::Node &_node,
         st->latest = _msg;
         st->found = true;
       });
+  clock_ = std::make_shared<WaveClockShared>();
+  auto clockState = clock_;
+  node_.Subscribe<gz::msgs::WorldStatistics>("/world/" + worldName_ + "/stats",
+      [clockState](const gz::msgs::WorldStatistics &_msg) {
+        std::lock_guard<std::mutex> lk(clockState->mutex);
+        if (!clockState->alive) return;
+        clockState->simTimeSec = _msg.sim_time().sec()
+                               + _msg.sim_time().nsec() * 1e-9;
+        clockState->found = true;
+      });
 }
 
 WaveResponseCore::~WaveResponseCore() {
   if (pose_) {
     std::lock_guard<std::mutex> lk(pose_->mutex);
     pose_->alive = false;
+  }
+  if (clock_) {
+    std::lock_guard<std::mutex> lk(clock_->mutex);
+    clock_->alive = false;
   }
 }
 
@@ -79,19 +97,23 @@ void WaveResponseCore::setTarget(const std::string &_model, const std::string &_
   area_ = _area;
 }
 
-void WaveResponseCore::sendWave(double _amplitude, double _period, double _gain,
-                                const std::string &_model) {
-  waveAmp_ = _amplitude;
+void WaveResponseCore::sendWave(double _amplitude, double _period, double _gain) {
+  // MS-02/MS-03 测量的是给定振幅/周期的**单一规则波**，故固定使用 CWR。
+  // PMS 分支的幅值由谱密度和频带宽度计算；若沿用下方 scale=1、number=1，
+  // bandwidth = omega * (scale - 1/scale) = 0，所有分量振幅为 0，实验仅采到静水响应。
+  // CWR 的 number=1、scale=1 时恰为单频波，振幅字段直接生效。
+  waveAmp_ = std::abs(_amplitude * _gain);
   wavePeriod_ = _period;
+  waveConfigured_ = true;
   gz::msgs::Param msg;
   auto *p = msg.mutable_params();
   gz::msgs::Any v;
   v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-  v.set_string_value(_model); (*p)["model"] = v;
+  v.set_string_value("CWR"); (*p)["model"] = v;
   if (!area_.empty()) { v.set_string_value(area_); (*p)["area"] = v; }
   v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-  v.set_double_value(_gain);      (*p)["gain"] = v;
-  v.set_double_value(_amplitude); (*p)["amplitude"] = v;
+  v.set_double_value(1.0);        (*p)["gain"] = v;
+  v.set_double_value(waveAmp_);   (*p)["amplitude"] = v;
   v.set_double_value(_period);    (*p)["period"] = v;
   v.set_double_value(0.0);        (*p)["direction"] = v;
   v.set_double_value(0.0);        (*p)["angle"] = v;
@@ -101,11 +123,9 @@ void WaveResponseCore::sendWave(double _amplitude, double _period, double _gain,
   v.set_type(gz::msgs::Any_ValueType::Any_ValueType_INT32);
   v.set_int_value(1);             (*p)["number"] = v;
 
-  if (!wavePubReady_) {
-    wavePub_ = node_.Advertise<gz::msgs::Param>(waveTopic_);
-    wavePubReady_ = true;
-  }
-  wavePub_.Publish(msg);
+  // 经进程内唯一发布器下发：同一进程重复 Advertise 同一话题会拿到无效
+  // 发布器而静默失效（2026-10-16 修复，详见 WavefieldPublisher.hh 文件头）
+  keship::WavefieldPublisher(node_).Publish(msg);
 }
 
 bool WaveResponseCore::fetchPose(double &_rollDeg, double &_pitchDeg, double &_z) const {
@@ -128,17 +148,29 @@ bool WaveResponseCore::fetchPose(double &_rollDeg, double &_pitchDeg, double &_z
   return false;
 }
 
+bool WaveResponseCore::fetchSimTime(double &_simTimeSec) const {
+  if (!clock_) return false;
+  std::lock_guard<std::mutex> lk(clock_->mutex);
+  if (!clock_->found) return false;
+  _simTimeSec = clock_->simTimeSec;
+  return true;
+}
+
 bool WaveResponseCore::start() {
+  running_ = false;
   clear();
-  double r = 0, pi = 0, z = 0;
+  double r = 0, pi = 0, z = 0, simTime = 0.0;
   bool ok = false;
   for (int i = 0; i < 50; ++i) {
-    if (fetchPose(r, pi, z)) { ok = true; break; }
+    if (fetchPose(r, pi, z) && fetchSimTime(simTime)) { ok = true; break; }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   if (!ok) return false;
   z0_ = z;
+  startSimTime_ = simTime;
+  lastSampleSimTime_ = simTime;
   elapsed_ = 0.0;
+  clockReset_ = false;
   running_ = true;
   return true;
 }
@@ -148,15 +180,30 @@ void WaveResponseCore::stop() { running_ = false; }
 void WaveResponseCore::clear() {
   trail_.clear();
   elapsed_ = 0.0;
+  if (running_) {
+    double simTime = 0.0, r = 0.0, pi = 0.0, z = 0.0;
+    if (fetchSimTime(simTime)) {
+      startSimTime_ = simTime;
+      lastSampleSimTime_ = simTime;
+    }
+    if (fetchPose(r, pi, z)) z0_ = z;
+  }
 }
 
 bool WaveResponseCore::sample() {
   if (!running_) return false;
-  // ⚠ 周期性重发波浪参数（gz-transport 首帧易丢，见 MS-01 实测）
-  if (waveAmp_ > 0.0) sendWave(waveAmp_, wavePeriod_);
-  double r = 0, pi = 0, z = 0;
-  if (!fetchPose(r, pi, z)) return false;
-  elapsed_ += period_;
+  // 周期性重发波浪参数（gz-transport 首帧易丢）。
+  if (waveConfigured_) sendWave(waveAmp_, wavePeriod_);
+  double r = 0, pi = 0, z = 0, simTime = 0.0;
+  if (!fetchSimTime(simTime) || !fetchPose(r, pi, z)) return false;
+  if (simTime + 1e-9 < lastSampleSimTime_) {
+    clockReset_ = true;  // 仿真被重置，跨重置拼接的时程/周期无效
+    running_ = false;
+    return false;
+  }
+  if (simTime <= lastSampleSimTime_ + 1e-9) return false;  // 暂停或同一仿真步
+  lastSampleSimTime_ = simTime;
+  elapsed_ = simTime - startSimTime_;
   trail_.push_back(WaveSample{elapsed_, r, pi, z - z0_});
   return true;
 }
@@ -173,17 +220,21 @@ WaveResponseMetrics WaveResponseCore::computeMetrics(
   m.wavePeriod = _wavePeriod;
   if (_trail.size() < 10) return m;
 
-  // 稳态段 = 后半段（排除起振瞬态）
-  const size_t from = _trail.size() / 2;
+  // 稳态段 = 按**仿真时间**取后半段（排除起振瞬态）；不可用点数中点，
+  // 因为墙钟轮询与仿真 RTF 可能变化，采样点时间间隔并不保证均匀。
+  const double tMid = _trail.front().t
+      + 0.5 * (_trail.back().t - _trail.front().t);
+  const auto midIt = std::lower_bound(_trail.begin(), _trail.end(), tMid,
+      [](const WaveSample &_s, double _t) { return _s.t < _t; });
+  const size_t from = static_cast<size_t>(std::distance(_trail.begin(), midIt));
+  if (from >= _trail.size()) return m;
   double rMin = _trail[from].rollDeg,  rMax = rMin;
   double pMin = _trail[from].pitchDeg, pMax = pMin;
   double hMin = _trail[from].heave,    hMax = hMin;
-  std::vector<double> rolls;
   for (size_t i = from; i < _trail.size(); ++i) {
     rMin = std::min(rMin, _trail[i].rollDeg);  rMax = std::max(rMax, _trail[i].rollDeg);
     pMin = std::min(pMin, _trail[i].pitchDeg); pMax = std::max(pMax, _trail[i].pitchDeg);
     hMin = std::min(hMin, _trail[i].heave);    hMax = std::max(hMax, _trail[i].heave);
-    rolls.push_back(_trail[i].rollDeg);
   }
   m.rollAmp  = (rMax - rMin) / 2.0;
   m.pitchAmp = (pMax - pMin) / 2.0;
@@ -195,8 +246,7 @@ WaveResponseMetrics WaveResponseCore::computeMetrics(
     m.pitchRAO = m.pitchAmp / _waveAmp;
     m.heaveRAO = m.heaveAmp / _waveAmp;
   }
-  m.rollPeriod = estimatePeriod(rolls, _trail.size() > 1
-      ? (_trail[1].t - _trail[0].t) : 0.05);
+  m.rollPeriod = estimatePeriod(_trail, from);
   m.valid = true;
   return m;
 }
@@ -204,7 +254,7 @@ WaveResponseMetrics WaveResponseCore::computeMetrics(
 bool WaveResponseCore::exportCsv(const std::string &_path) const {
   std::ofstream ofs(_path);
   if (!ofs) return false;
-  ofs << "t_s,roll_deg,pitch_deg,heave_m\n";
+  ofs << "t_sim_s,roll_deg,pitch_deg,heave_m\n";
   for (const auto &p : trail_)
     ofs << p.t << "," << p.rollDeg << "," << p.pitchDeg << "," << p.heave << "\n";
   return true;

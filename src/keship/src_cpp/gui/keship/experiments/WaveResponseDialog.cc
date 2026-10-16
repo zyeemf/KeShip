@@ -125,12 +125,13 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   gainSpin_ = new QDoubleSpinBox(paramBox);
   gainSpin_->setRange(0.0, 2.0); gainSpin_->setValue(1.0);
   gainSpin_->setSingleStep(0.1);
-  form->addRow("增益：", gainSpin_);
+  form->addRow("增益（波幅倍率）：", gainSpin_);
 
   periodSpin_ = new QDoubleSpinBox(paramBox);
   periodSpin_->setRange(0.02, 1.0); periodSpin_->setValue(0.05);
   periodSpin_->setSingleStep(0.01); periodSpin_->setSuffix(" s");
-  form->addRow("采样周期：", periodSpin_);
+  form->addRow("采样轮询周期：", periodSpin_);
+  form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
   root->addWidget(paramBox);
 
   auto *ctrlRow = new QHBoxLayout();
@@ -148,9 +149,9 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   ctrlRow->addWidget(exportBtn_);
   root->addLayout(ctrlRow);
 
-  readoutLabel_ = new QLabel("t = —   横摇 = —   纵摇 = —   升沉 = —", this);
+  readoutLabel_ = new QLabel("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —", this);
   resultLabel_ = ms03
-      ? new QLabel("横摇幅值 = —   横摇 RAO = —   响应周期 = —", this)
+      ? new QLabel("横摇幅值 = —   横摇 RAO = —   受迫周期 = —", this)
       : new QLabel("横摇幅值 = —   纵摇幅值 = —   升沉幅值 = —", this);
   readoutLabel_->setStyleSheet("font-family: monospace;");
   resultLabel_->setStyleSheet("font-family: monospace; font-weight: bold;");
@@ -176,7 +177,6 @@ WaveResponseDialog::~WaveResponseDialog() = default;
 
 void WaveResponseDialog::syncParamsToCore() {
   core_->setTarget(modelCombo_->currentText().toStdString());
-  core_->setSamplePeriod(periodSpin_->value());
 }
 
 void WaveResponseDialog::onApplyWave() {
@@ -192,7 +192,7 @@ void WaveResponseDialog::onStart() {
   syncParamsToCore();
   if (!core_->start()) {
     QMessageBox::warning(this, "实验",
-        "未能读到船模位姿 —— 请确认「船模」名与场景一致，且仿真已启动。");
+        "未能读到船模位姿或仿真时钟 —— 请确认「船模」名与场景一致，且仿真正在运行。");
     return;
   }
   core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(), gainSpin_->value());
@@ -214,11 +214,21 @@ void WaveResponseDialog::onStop() {
 void WaveResponseDialog::onClear() {
   core_->clear();
   chart_->clearTrail();
-  readoutLabel_->setText("t = —   横摇 = —   纵摇 = —   升沉 = —");
+  readoutLabel_->setText("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —");
 }
 
 void WaveResponseDialog::onTick() {
-  if (!core_->sample()) return;
+  if (!core_->sample()) {
+    if (core_->clockReset()) {
+      core_->stop();
+      timer_->stop();
+      startBtn_->setEnabled(true);
+      stopBtn_->setEnabled(false);
+      QMessageBox::warning(this, "仿真时间已重置",
+          "仿真时钟发生回退，本次响应记录已停止。请清零后重新开始。");
+    }
+    return;
+  }
   chart_->setTrail(core_->trail());
   updateReadout();
 }
@@ -227,7 +237,7 @@ void WaveResponseDialog::updateReadout() {
   const auto &t = core_->trail();
   if (t.empty()) return;
   const auto &s = t.back();
-  readoutLabel_->setText(QString("t = %1 s   横摇 = %2°   纵摇 = %3°   升沉 = %4 m")
+  readoutLabel_->setText(QString("仿真 t = %1 s   横摇 = %2°   纵摇 = %3°   升沉 = %4 m")
       .arg(s.t, 0, 'f', 1).arg(s.rollDeg, 0, 'f', 2)
       .arg(s.pitchDeg, 0, 'f', 2).arg(s.heave, 0, 'f', 3));
 }
@@ -240,7 +250,7 @@ void WaveResponseDialog::showResults() {
     return;
   }
   if (mode_ == "ms03") {
-    resultLabel_->setText(QString("横摇幅值 = %1°   横摇 RAO = %2 °/m   响应周期 = %3 s")
+    resultLabel_->setText(QString("横摇幅值 = %1°   横摇 RAO = %2 °/m   受迫周期 = %3 s")
         .arg(fmt(m.rollAmp)).arg(fmt(m.rollRAO)).arg(fmt(m.rollPeriod)));
   } else {
     resultLabel_->setText(QString("横摇幅值 = %1°   纵摇幅值 = %2°   升沉幅值 = %3 m")

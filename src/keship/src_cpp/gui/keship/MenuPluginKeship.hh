@@ -279,8 +279,6 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: void PublishWaveParams(const keship::WaveParams &_wp,
                                   const std::string &_areaName = "");
   /// \brief 持久发送器：避免每次新建 Advertise 的握手竞态导致消息丢失
-  private: gz::transport::Node::Publisher waveParamsPub_;
-  private: std::string waveCtlTopic_ = "/keship/wavefield/parameters_set";
 
   private: struct CachedPose { double x = 0, y = 0, yaw = 0; };
   private: std::map<std::string, CachedPose> modelPoseCache_;

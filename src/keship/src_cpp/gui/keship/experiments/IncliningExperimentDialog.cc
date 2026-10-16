@@ -5,6 +5,7 @@
 /// 2026.5.28
 
 #include "IncliningExperimentDialog.hh"
+#include "WavefieldPublisher.hh"
 #include "../shared/UiTheme.hh"
 #include "keship/utils/LinearDamping.hh"
 #include "../shared/UiTheme.hh"
@@ -254,7 +255,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
 
   updateTheoryDisplay();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -262,8 +263,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(_transportNode).Publish(msg);
   }
 
   std::cout << "HS-04: 初稳性倾斜实验对话框已创建" << std::endl;
@@ -280,7 +280,7 @@ IncliningExperimentDialog::~IncliningExperimentDialog()
   poseTimer_->stop();
   doDeleteBoth();
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
+  // 恢复波浪：PMS + gain=1.0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -288,8 +288,7 @@ IncliningExperimentDialog::~IncliningExperimentDialog()
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(transportNode_).Publish(msg);
   }
 }
 

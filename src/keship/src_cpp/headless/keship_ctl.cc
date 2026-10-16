@@ -66,6 +66,7 @@
 #include "TurningExperimentCore.hh"
 #include "ZigzagExperimentCore.hh"
 #include "WaveResponseCore.hh"
+#include "WavefieldPublisher.hh"
 #include "SensorEstimationCore.hh"
 #include "ShipHullGenerator.hh"
 #include "WaterAreaSerializer.hh"
@@ -1081,9 +1082,10 @@ void PublishWaveParams(keship::ModelManager &_mm, const std::string &_model, dou
   v.set_double_value(_gain);
   (*p)["gain"] = v;
 
-  auto pub = _mm.GetNode().Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
+  // 经进程内唯一发布器下发：同一进程重复 Advertise 会拿到无效发布器
+  keship::WavefieldPublisher pub(_mm.GetNode());
   /// 补发若干次：订阅端（KSPlugin_WavesModel）发现发布者需要时间，
-  /// 只发一次会踩握手竞态（主插件 MenuPluginKeship.cc:2975 有同款 300ms 补发）
+  /// 只发一次会踩握手竞态（主插件 MenuPluginKeship 有同款 300ms 补发）
   for (int i = 0; i < 5; ++i) {
     pub.Publish(msg);
     std::this_thread::sleep_for(std::chrono::milliseconds(120));
@@ -1709,31 +1711,50 @@ int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &
   const std::string model = _a.Get("model");
   if (model.empty())
     Fail("用法：exp " + _tag + " --model <名> [--wave-amp M] [--wave-period S] "
-         "[--gain G] [--duration S] [--period S] [--csv 路径]");
+         "[--gain 波幅倍率] [--duration 仿真秒] [--period 墙钟轮询秒] [--csv 路径]");
   const double amp      = _a.GetD("wave-amp", 0.5);
   const double wperiod  = _a.GetD("wave-period", 5.0);
   const double gain     = _a.GetD("gain", 1.0);
   const double duration = _a.GetD("duration", 60.0);
   const double period   = _a.GetD("period", 0.05);
+  if (amp < 0.0 || wperiod <= 0.0 || gain < 0.0 || duration <= 0.0 || period <= 0.0)
+    Fail("波幅/增益不可为负，波浪周期/仿真时长/轮询周期必须大于 0");
 
   keship::WaveResponseCore core(_mm.GetNode(), g_opt.world);
   core.setTarget(model);
-  core.setSamplePeriod(period);
   if (!core.start())
     Fail("未能读到模型 " + model + " 的位姿 —— 确认模型已加载到场景");
 
   core.sendWave(amp, wperiod, gain);
   Info(_tag + " 开始：波幅 " + std::to_string(amp) + " m / 周期 " +
-       std::to_string(wperiod) + " s / 时长 " + std::to_string(duration) + " s");
+       std::to_string(wperiod) + " s / 仿真时长 " + std::to_string(duration) + " s");
 
-  const int n = static_cast<int>(duration / period);
-  for (int i = 0; i < n; ++i) {
+  // duration 按仿真秒计；period 是墙钟轮询周期，统计指标必须使用仿真时钟。
+  // 看门狗只约束「仿真时间完全不前进」；低 RTF 下仍允许较长墙钟运行。
+  double lastProgressSimTime = core.elapsed();
+  auto lastProgressWallTime = std::chrono::steady_clock::now();
+  bool clockStalled = false;
+  while (core.running() && core.elapsed() < duration) {
     std::this_thread::sleep_for(std::chrono::duration<double>(period));
     core.sample();
+    const double simTime = core.elapsed();
+    if (simTime > lastProgressSimTime + 1e-9) {
+      lastProgressSimTime = simTime;
+      lastProgressWallTime = std::chrono::steady_clock::now();
+    } else if (std::chrono::duration<double>(
+                   std::chrono::steady_clock::now() - lastProgressWallTime).count() > 15.0) {
+      clockStalled = true;
+      break;
+    }
   }
   core.stop();
+  if (core.clockReset())
+    Fail("仿真时钟发生回退，本次 MS-02/03 时程无效；请重新开始实验");
+  if (clockStalled)
+    Fail("MS-02/03 仿真时钟连续 15 s 未推进：确认仿真未暂停");
 
   const auto m = core.metrics();
+  std::cout << "仿真时长   : " << core.elapsed() << " s\n";
   std::cout << "轨迹点数   : " << m.points << "\n";
   std::cout << "波幅/周期  : " << m.waveAmp << " m / " << m.wavePeriod << " s\n";
   std::cout << "横摇幅值   : " << m.rollAmp  << " 度\n";

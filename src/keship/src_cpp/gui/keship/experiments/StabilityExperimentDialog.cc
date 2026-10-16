@@ -5,6 +5,7 @@
 /// 2026.5.27 重构
 
 #include "StabilityExperimentDialog.hh"
+#include "WavefieldPublisher.hh"
 #include "../shared/UiTheme.hh"
 #include "../shared/UiTheme.hh"
 
@@ -280,7 +281,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
   /// 初始理论显示
   updateTheoryDisplay();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -288,8 +289,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(_transportNode).Publish(msg);
   }
 
   std::cout << "HS-03: 初稳性实验对话框已创建" << std::endl;
@@ -306,7 +306,7 @@ StabilityExperimentDialog::~StabilityExperimentDialog()
   poseTimer_->stop();
   doDeleteCylinder();
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
+  // 恢复波浪：PMS + gain=1.0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -314,8 +314,7 @@ StabilityExperimentDialog::~StabilityExperimentDialog()
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(transportNode_).Publish(msg);
   }
 }
 

@@ -5,6 +5,7 @@
 /// Zhangyu 创建 2026.1.16
 
 #include "MenuPluginKeship.hh"
+#include "WavefieldPublisher.hh"
 
 #include <iostream>
 #include <fstream>
@@ -3110,21 +3111,15 @@ void MenuPluginKeship::PublishWaveParams(const keship::WaveParams &_wp,
   v.set_type(gz::msgs::Any_ValueType::Any_ValueType_INT32);
   v.set_int_value(_wp.number);       (*p)["number"] = v;
 
-  // 持久发送器：首次 Advertise 后复用，避免每次新建的握手竞态丢消息
-  if (!this->waveParamsPub_)
-  {
-    this->waveParamsPub_ = this->modelManager->GetNode().Advertise<gz::msgs::Param>(
-        this->waveCtlTopic_);
-  }
-  this->waveParamsPub_.Publish(msg);
+  // 经进程内唯一发布器下发：避免同一进程重复 Advertise 拿到无效发布器
+  // 而静默失效（2026-10-16 修复，详见 WavefieldPublisher.hh 文件头）
+  keship::WavefieldPublisher(this->modelManager->GetNode()).Publish(msg);
   std::cout << "keship: 波浪参数已下发 (gain=" << _wp.gain << ")"
             << std::endl;
 
   // 300ms 后补发一次，覆盖握手窗口期的潜在丢失
   QTimer::singleShot(300, this, [this, msg]() {
-    if (!this->waveParamsPub_)
-      return;
-    this->waveParamsPub_.Publish(msg);
+    keship::WavefieldPublisher(this->modelManager->GetNode()).Publish(msg);
     std::cout << "keship: 波浪参数已补发" << std::endl;
   });
 }
