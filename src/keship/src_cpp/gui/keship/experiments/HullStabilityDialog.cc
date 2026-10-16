@@ -5,6 +5,7 @@
 
 #include "HullStabilityDialog.hh"
 #include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 #include "../shared/UiTheme.hh"
 #include "keship/utils/LinearDamping.hh"
 #include "MeshUtils.hh"   // 与 ShipHullGenerator.hh 同目录（src_cpp/utils），非 include/keship/utils
@@ -181,18 +182,9 @@ HullStabilityDialog::~HullStabilityDialog() {
   if (!poseTopic_.empty()) transportNode_.Unsubscribe(poseTopic_);
   poseTimer_->stop(); doDeleteAll();
 
-  // 恢复波浪：PMS + gain=1.0（经进程内唯一发布器下发）
-  {
-    gz::msgs::Param msg;
-    auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    keship::WavefieldPublisher(transportNode_).Publish(msg);
-    std::cout << "HS-05: 已恢复波浪参数" << std::endl;
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void HullStabilityDialog::setupUI() {

@@ -90,6 +90,10 @@ WaveResponseCore::~WaveResponseCore() {
     std::lock_guard<std::mutex> lk(clock_->mutex);
     clock_->alive = false;
   }
+
+  // 恢复实验前波浪参数：CWR 规则波在波浪场侧持续生效，关闭对话框
+  // 必须覆盖（2026-10-16 修复：原析构不恢复，CWR 残留使船持续晃动）
+  keship::WaveParamSnapshot::Instance().Restore(node_);
 }
 
 void WaveResponseCore::setTarget(const std::string &_model, const std::string &_area) {

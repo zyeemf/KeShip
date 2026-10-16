@@ -1763,7 +1763,7 @@ int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &
   std::cout << "横摇 RAO   : " << m.rollRAO  << " 度/m\n";
   std::cout << "纵摇 RAO   : " << m.pitchRAO << " 度/m\n";
   std::cout << "升沉 RAO   : " << m.heaveRAO << " m/m\n";
-  std::cout << "横摇周期   : " << m.rollPeriod << " s\n";
+  std::cout << "受迫周期   : " << m.rollPeriod << " s\n";
   if (_a.Has("csv")) {
     const std::string csv = _a.Get("csv");
     if (core.exportCsv(csv)) Info("轨迹已导出 → " + csv);

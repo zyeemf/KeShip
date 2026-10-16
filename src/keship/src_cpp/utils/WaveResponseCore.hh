@@ -25,6 +25,7 @@
 #include <gz/msgs/world_stats.pb.h>
 
 #include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 
 namespace keship {
 

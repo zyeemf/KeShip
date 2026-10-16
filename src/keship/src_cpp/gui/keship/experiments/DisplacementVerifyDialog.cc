@@ -5,6 +5,7 @@
 
 #include "DisplacementVerifyDialog.hh"
 #include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 #include "../shared/UiTheme.hh"
 
 #include "../shared/UiTheme.hh"
@@ -192,16 +193,9 @@ DisplacementVerifyDialog::~DisplacementVerifyDialog() {
   poseTimer_->stop(); doDeleteHull();
   delete generator_;
 
-  // 恢复波浪：PMS + gain=1.0（经进程内唯一发布器下发）
-  {
-    gz::msgs::Param msg; auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    keship::WavefieldPublisher(transportNode_).Publish(msg);
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void DisplacementVerifyDialog::setupUI() {

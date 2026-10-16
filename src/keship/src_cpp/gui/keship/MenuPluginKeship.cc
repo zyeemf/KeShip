@@ -6,6 +6,7 @@
 
 #include "MenuPluginKeship.hh"
 #include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 
 #include <iostream>
 #include <fstream>
@@ -3087,6 +3088,9 @@ void MenuPluginKeship::OnBtn_MoveSubWorld(const QString &_chain)
 void MenuPluginKeship::PublishWaveParams(const keship::WaveParams &_wp,
                                          const std::string &_areaName)
 {
+  // 记录用户级下发：实验对话框关闭时以此为恢复基准（2026-10-16 修复，
+  // 取代原硬编码恢复 gain=1.0 的错误做法，见 WaveParamSnapshot.hh 文件头）
+  keship::WaveParamSnapshot::Instance().Save(_areaName, _wp);
   // 波浪参数通过 PMS 控制 topic 下发（KSPlugin_WavesModel 应用），
   // 带 area 标识只更新指定水区波浪场，使界面设置的波浪立即生效。
   // 实验对话框亦采用同一通道（无 area = 更新全部水区）。
