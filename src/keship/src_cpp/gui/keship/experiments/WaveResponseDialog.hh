@@ -54,6 +54,10 @@ public:
                      QWidget *_parent = nullptr);
   ~WaveResponseDialog() override;
 
+  /// 把 RAO 表内容写入 CSV（纯函数、无 GUI 交互；onExportRao 与回归测试共用）
+  static bool WriteRaoTableCsv(const QTableWidget *_table,
+                               const std::string &_path);
+
 private slots:
   void onStart();
   void onStop();

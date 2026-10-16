@@ -338,6 +338,21 @@ void WaveResponseDialog::onDeleteRow() {
   std::cout << "MS-03: 已删除 RAO 表第 " << row + 1 << " 行" << std::endl;
 }
 
+bool WaveResponseDialog::WriteRaoTableCsv(const QTableWidget *_table,
+                                          const std::string &_path) {
+  if (!_table || _table->rowCount() == 0) return false;
+  std::ofstream f(_path);
+  if (!f) return false;
+  f << "wave_period_s,roll_amp_deg,roll_rao_deg_per_m,forced_period_s\n";
+  for (int r = 0; r < _table->rowCount(); ++r) {
+    f << _table->item(r, 0)->text().toStdString() << ","
+      << _table->item(r, 1)->text().toStdString() << ","
+      << _table->item(r, 2)->text().toStdString() << ","
+      << _table->item(r, 3)->text().toStdString() << "\n";
+  }
+  return true;
+}
+
 void WaveResponseDialog::onExportRao() {
   if (!raoTable_ || raoTable_->rowCount() == 0) {
     QMessageBox::information(this, "导出 RAO 表", "尚无记录。");
@@ -346,20 +361,11 @@ void WaveResponseDialog::onExportRao() {
   QString path = QFileDialog::getSaveFileName(this, "导出 RAO–周期表 CSV",
       "ms03_rao.csv", "CSV (*.csv)");
   if (path.isEmpty()) return;
-  std::ofstream f(path.toStdString());
-  if (!f) {
+  if (!WriteRaoTableCsv(raoTable_, path.toStdString()))
     QMessageBox::warning(this, "导出 RAO 表", "无法写入文件。");
-    return;
-  }
-  f << "wave_period_s,roll_amp_deg,roll_rao_deg_per_m,forced_period_s\n";
-  for (int r = 0; r < raoTable_->rowCount(); ++r) {
-    f << raoTable_->item(r, 0)->text().toStdString() << ","
-      << raoTable_->item(r, 1)->text().toStdString() << ","
-      << raoTable_->item(r, 2)->text().toStdString() << ","
-      << raoTable_->item(r, 3)->text().toStdString() << "\n";
-  }
-  std::cout << "MS-03: RAO 表已导出（" << raoTable_->rowCount()
-            << " 行）-> " << path.toStdString() << std::endl;
+  else
+    std::cout << "MS-03: RAO 表已导出（" << raoTable_->rowCount()
+              << " 行）-> " << path.toStdString() << std::endl;
 }
 
 void WaveResponseDialog::onExport() {
