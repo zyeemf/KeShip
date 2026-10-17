@@ -21,7 +21,14 @@ sudo apt install -y ros-jazzy-desktop python3-colcon-common-extensions
 ```
 
 ## 3. 安装 Gazebo Harmonic（未安装时）
+
+先添加 Gazebo 官方 apt 源（**必要**：`gz-harmonic` 不在 Ubuntu 默认源与 ROS 2 源中；2026-10-17 修正——原文档漏了加源，干净系统会报"无法定位软件包 gz-harmonic"）：
+
 ```bash
+sudo curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
+  -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] https://packages.osrfoundation.org/gazebo/ubuntu-stable noble main" \
+  | sudo tee /etc/apt/sources.list.d/gazebo-stable.list
 sudo apt update
 sudo apt install -y gz-harmonic
 ```
@@ -71,3 +78,4 @@ ros2 launch keship keship.launch.py
 - 编译验证：`colcon build --packages-select keship --merge-install` 通过，生成 6 个插件库（libKSPlugin_HydroBuoyancy / Thrust / VariableMass / WavesModel / WaveVisual / MenuPluginKeship）+ 脚本 + 资源。
 - 代码修复：`CMakeLists.txt` 测试 target 以 `if(EXISTS src_cpp/test)` 保护（测试源码不入库）；移除指向不存在 `urdf/` 的 install 段。
 - 2026-09-18 复核：依赖清单与 `CMakeLists.txt` `find_package` 逐项对照一致；本文件**随仓库分发并随 git 提交**，用户 clone 后即可按此配置环境。
+- 2026-10-17 修正：§3 补 Gazebo apt 源配置（发布 WSL 镜像时干净基准环境实测：不加源报 `E: 无法定位软件包 gz-harmonic`；原文档写自开发环境，漏了机器上已有的源配置）。
