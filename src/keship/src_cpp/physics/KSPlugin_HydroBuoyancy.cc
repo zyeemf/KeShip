@@ -9,6 +9,8 @@
 #include "KSPlugin_HydroBuoyancy.hh"
 
 #include <gz/sim/Model.hh>
+#include <gz/sim/Util.hh>
+#include <gz/msgs/any.pb.h>
 #include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/Geometry.hh>
 #include <gz/sim/components/ExternalWorldWrenchCmd.hh>
@@ -27,6 +29,7 @@
 #include "../utils/CylinderMeshGenerator.hh"
 #include "../utils/PrimitiveMeshGenerator.hh"
 #include "../utils/WaterAreaSerializer.hh"
+#include "../utils/PlanarMooring.hh"
 #include "keship/utils/KeshipPaths.hh"
 #include <gz/msgs/double.pb.h>
 #include <gz/sim/components/Name.hh>
@@ -351,6 +354,51 @@ void KSPlugin_HydroBuoyancy::Configure(
     }
   }
 
+  /// ── 软系泊：订阅 world 级命令话题并准备状态发布 ──────────────
+  /// 只对本模型生效（完整 scoped 名过滤），不影响其他模型与既有物理。
+  {
+    this->scopedName_ = gz::sim::scopedName(this->entity_, _ecm, "::", false);
+    const auto sep = this->scopedName_.find("::");
+    const std::string world = (sep == std::string::npos)
+        ? std::string("keship_world")
+        : this->scopedName_.substr(0, sep);
+    const std::string cmdTopic =
+        "/world/" + world + "/keship/experiment/mooring";
+    const std::string statusTopic =
+        "/world/" + world + "/keship/experiment/mooring_status";
+
+    this->dataPtr->mooringStatusPub =
+        this->dataPtr->node.Advertise<gz::msgs::Param>(statusTopic);
+    this->dataPtr->mooringStatusPubReady = true;
+
+    auto *mailbox = &this->dataPtr->mooringMailbox;
+    this->dataPtr->node.Subscribe<gz::msgs::Param>(cmdTopic,
+        [mailbox](const gz::msgs::Param &_msg) {
+          const auto &params = _msg.params();
+          auto itModel = params.find("target_model_scoped");
+          auto itEnabled = params.find("enabled");
+          auto itSession = params.find("session_id");
+          if (itModel == params.end() || itEnabled == params.end() ||
+              itSession == params.end())
+            return;
+          if (itModel->second.type() != gz::msgs::Any_ValueType_STRING ||
+              itEnabled->second.type() != gz::msgs::Any_ValueType_BOOLEAN ||
+              itSession->second.type() != gz::msgs::Any_ValueType_STRING)
+            return;
+          PlanarMooringCommand cmd;
+          cmd.targetModelScoped = itModel->second.string_value();
+          cmd.enabled = itEnabled->second.bool_value();
+          try {
+            cmd.sessionId = std::stoull(itSession->second.string_value());
+          } catch (...) {
+            return;
+          }
+          mailbox->Update(cmd);
+        });
+    gzmsg << "KSPlugin_HydroBuoyancy: 软系泊命令话题 " << cmdTopic
+          << " (scoped=" << this->scopedName_ << ")" << std::endl;
+  }
+
   gzmsg << "KSPlugin_HydroBuoyancy: 配置完成 — "
         << "buoyancy=" << (enableBuoyancy_?"on":"off")
         << ", hydro=" << (enableHydro_?"on":"off")
@@ -369,9 +417,23 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     return;
   if (this->linkEntity_ == gz::sim::kNullEntity)
     return;
-  if (!this->enableBuoyancy_ && !this->enableHydro_)
+  /// 软系泊命令在浮力/水动力关闭时仍需生效（RAO 边界条件）：
+  /// 因此早退条件必须把「本模型被指定为系泊目标」纳入判断。
+  const auto mooringSnapshot = this->dataPtr->mooringMailbox.Snapshot();
+  const bool mooringLeaseFresh = mooringSnapshot.found &&
+      (std::chrono::steady_clock::now() - mooringSnapshot.receivedAt) <
+          std::chrono::milliseconds(1500);
+  const auto targetLeafName = [](const std::string &_s) {
+    const auto p = _s.rfind("::");
+    return p == std::string::npos ? _s : _s.substr(p + 2);
+  };
+  const bool mooringWanted = mooringLeaseFresh &&
+      mooringSnapshot.command.enabled &&
+      targetLeafName(mooringSnapshot.command.targetModelScoped) == this->modelName_;
+
+  if (!this->enableBuoyancy_ && !this->enableHydro_ && !mooringWanted)
     return;
-  if (this->enableHydro_
+  if (this->enableHydro_ && !mooringWanted
       && this->dataPtr->dampingMode_ != "pose_based"
       && (!this->dataPtr->fossen || !this->dataPtr->fossen->valid()))
     return;
@@ -1080,6 +1142,10 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   }
   this->dataPtr->logWriteCounter++;
 
+  /// 7.5 软系泊（MS-02/03/06）：只约束水平位置与世界航向，
+  ///     保留 roll/pitch/heave 自由；力作用于质心，力矩为世界 Z 纯力矩。
+  this->ApplyMooring(_ecm, _info, linkWorldPose, acc);
+
   /// 8. 汇总写入 ECM（wrench 每步被物理系统 Clear，多插件共存无顺序依赖）
   this->ApplyForces(_ecm, acc.TotalForce(), acc.TotalTorque());
 }
@@ -1421,6 +1487,157 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
 }
 
 /////////////////////////////////////////////////
+void KSPlugin_HydroBuoyancy::ApplyMooring(
+    gz::sim::EntityComponentManager &_ecm,
+    const gz::sim::UpdateInfo &_info,
+    const gz::math::Pose3d &_linkWorldPose,
+    keship::ForceAccumulator &_acc)
+{
+  (void)_info;
+  auto &d = *this->dataPtr;
+  const auto snap = d.mooringMailbox.Snapshot();
+  const bool leaseFresh = snap.found &&
+      (std::chrono::steady_clock::now() - snap.receivedAt) <
+          std::chrono::milliseconds(1500);
+  // 目标匹配按 leaf 名（world 由话题隔离；ModelManager 保证同一 world 内 leaf 唯一）。
+  // 插件侧 scopedName 在不同 spawn 路径下可能只返回 leaf，故不依赖完整 scoped 串。
+  const auto targetLeaf = [](const std::string &_s) {
+    const auto p = _s.rfind("::");
+    return p == std::string::npos ? _s : _s.substr(p + 2);
+  };
+  const bool active = leaseFresh && snap.command.enabled &&
+      targetLeaf(snap.command.targetModelScoped) == this->modelName_;
+
+  auto publishStatus = [&](bool _force) {
+    if (!d.mooringStatusPubReady) return;
+    if (!_force && ++d.mooringStatusCounter % 100 != 0) return;
+    gz::msgs::Param msg;
+    auto setStr = [&msg](const char *_k, const std::string &_v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_STRING);
+      a.set_string_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setBool = [&msg](const char *_k, bool _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_BOOLEAN);
+      a.set_bool_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setDbl = [&msg](const char *_k, double _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_DOUBLE);
+      a.set_double_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setInt = [&msg](const char *_k, int _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_INT32);
+      a.set_int_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    setStr("model_scoped", this->scopedName_);
+    setStr("session_id", std::to_string(d.mooringSessionId));
+    setBool("applied", d.mooringApplied);
+    setStr("reason", d.mooringApplied ? "applied"
+                                     : (active ? "capturing" : "inactive"));
+    setDbl("anchor_x", d.mooringReference.x);
+    setDbl("anchor_y", d.mooringReference.y);
+    setDbl("anchor_yaw", d.mooringReference.yaw);
+    setDbl("position_error",
+           std::hypot(_linkWorldPose.Pos().X() - d.mooringReference.x,
+                      _linkWorldPose.Pos().Y() - d.mooringReference.y));
+    setDbl("yaw_error",
+           keship::WrapPlanarMooringAngle(
+               _linkWorldPose.Rot().Euler().Z() - d.mooringReference.yaw));
+    setDbl("force_x", d.mooringLastForce.X());
+    setDbl("force_y", d.mooringLastForce.Y());
+    setDbl("yaw_torque", d.mooringLastTorque);
+    setInt("force_saturated", d.mooringForceSaturated ? 1 : 0);
+    setInt("yaw_saturated", d.mooringYawSaturated ? 1 : 0);
+    d.mooringStatusPub.Publish(msg);
+  };
+
+  if (!active)
+  {
+    if (d.mooringApplied)
+    {
+      d.mooringApplied = false;
+      d.mooringLastForce.Set(0, 0, 0);
+      d.mooringLastTorque = 0.0;
+      d.mooringForceSaturated = false;
+      d.mooringYawSaturated = false;
+      publishStatus(true);
+    }
+    else if (snap.found)
+    {
+      publishStatus(false);
+    }
+    return;
+  }
+
+  const auto inerOpt =
+      _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_);
+  if (!inerOpt)
+  {
+    d.mooringApplied = false;
+    publishStatus(true);
+    return;
+  }
+  const auto &inertial = inerOpt->Data();
+  const double mass = inertial.MassMatrix().Mass();
+  const gz::math::Pose3d inertialPose = inertial.Pose();
+  const gz::math::Vector3d comWorld =
+      _linkWorldPose.Rot() * inertialPose.Pos() + _linkWorldPose.Pos();
+
+  /// 世界系惯量垂直分量：I_world = R · I · Rᵀ，取 (2,2)
+  const gz::math::Matrix3d rLink(_linkWorldPose.Rot());
+  const gz::math::Matrix3d rInertial(inertialPose.Rot());
+  const gz::math::Matrix3d rTotal = rLink * rInertial;
+  const gz::math::Matrix3d iWorld =
+      rTotal * inertial.MassMatrix().Moi() * rTotal.Transposed();
+  const double izzWorld = iWorld(2, 2);
+
+  /// 新 session：只捕获一次锚点（COM 水平位置 + link 航向）
+  if (d.mooringSessionId != snap.command.sessionId)
+  {
+    d.mooringSessionId = snap.command.sessionId;
+    d.mooringReference.x = comWorld.X();
+    d.mooringReference.y = comWorld.Y();
+    d.mooringReference.yaw = _linkWorldPose.Rot().Euler().Z();
+    d.mooringApplied = mass > 0.0 && izzWorld > 0.0;
+    publishStatus(true);
+    if (!d.mooringApplied) return;
+  }
+
+  PlanarMooringState state;
+  state.x = comWorld.X();
+  state.y = comWorld.Y();
+  state.yaw = _linkWorldPose.Rot().Euler().Z();
+  const auto linVel =
+      this->linkObj_.WorldLinearVelocity(_ecm, inertialPose.Pos());
+  if (linVel) { state.vx = linVel->X(); state.vy = linVel->Y(); }
+  const auto angVel = this->linkObj_.WorldAngularVelocity(_ecm);
+  if (angVel) state.yawRate = angVel->Z();
+
+  const auto out = keship::ComputePlanarMooring(
+      true, d.mooringReference, state, mass, izzWorld);
+
+  d.mooringApplied = true;
+  d.mooringLastForce = out.force;
+  d.mooringLastTorque = out.yawTorque;
+  d.mooringForceSaturated = out.forceSaturated;
+  d.mooringYawSaturated = out.yawSaturated;
+
+  /// 水平力作用于质心 ⇒ 不直接产生 roll/pitch 力矩；
+  /// 偏航力矩为世界 Z 纯力矩（applyPoint 取 link 原点，叉乘为 0）。
+  _acc.Add({"mooring/planar", out.force, comWorld});
+  _acc.Add({"mooring/yaw", gz::math::Vector3d::Zero,
+            _linkWorldPose.Pos(), gz::math::Vector3d(0.0, 0.0, out.yawTorque)});
+
+  publishStatus(false);
+}
+
 void KSPlugin_HydroBuoyancy::ApplyForces(
     gz::sim::EntityComponentManager &_ecm,
     const gz::math::Vector3d &_force,

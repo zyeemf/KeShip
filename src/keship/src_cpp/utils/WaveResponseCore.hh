@@ -66,6 +66,33 @@ struct WaveClockShared {
   bool found = false;
 };
 
+/// Latest physics-side soft-mooring acknowledgement/telemetry.
+struct WaveMooringStatusShared {
+  std::mutex mutex;
+  bool alive = true;
+  bool found = false;
+  std::string modelScopedName;
+  std::string sessionId;
+  bool applied = false;
+  std::string reason;
+  double anchorX = 0.0, anchorY = 0.0, anchorYaw = 0.0;
+  double positionError = 0.0, yawError = 0.0;
+  double forceX = 0.0, forceY = 0.0, yawTorque = 0.0;
+  bool forceSaturated = false, yawSaturated = false;
+};
+
+struct WaveMooringStatus {
+  bool found = false;
+  bool applied = false;
+  std::string modelScopedName;
+  std::string sessionId;
+  std::string reason;
+  double anchorX = 0.0, anchorY = 0.0, anchorYaw = 0.0;
+  double positionError = 0.0, yawError = 0.0;
+  double forceX = 0.0, forceY = 0.0, yawTorque = 0.0;
+  bool forceSaturated = false, yawSaturated = false;
+};
+
 class WaveResponseCore {
 public:
   WaveResponseCore(gz::transport::Node &_node, const std::string &_worldName);
@@ -75,6 +102,17 @@ public:
   WaveResponseCore &operator=(const WaveResponseCore &) = delete;
 
   void setTarget(const std::string &_model, const std::string &_area = "");
+  /// 请求/取消本次实验的软系泊。启用创建新 session；重复心跳不重捕获锚点。
+  bool setMooringEnabled(bool _enabled);
+  /// 开始新的 sweep 锚点 session（清零/目标切换时调用）。
+  void resetMooringSession();
+  /// 发布一帧心跳；GUI 由独立 QTimer 调用，headless 由采样循环调用。
+  void publishMooringHeartbeat();
+  bool mooringRequested() const { return mooringRequested_; }
+  bool mooringApplied() const;
+  WaveMooringStatus mooringStatus() const;
+  const std::string &targetModelScopedName() const { return modelScopedName_; }
+
   /// ★ 下发单一 CWR 规则波（振幅 = 输入波幅 × 增益；与 GUI 水域环境参数同一通道）
   /// @param _direction 波浪传播方向 (rad)：0 = 沿 +X（顺浪，激励升沉/纵摇）；
   ///        π/2 = 沿 +Y（横浪，激励横摇——横摇 RAO 实验的前提，2026-10-16）
@@ -103,9 +141,18 @@ public:
   bool exportCsv(const std::string &_path) const;
 
 private:
+  bool findTargetPose(gz::msgs::Pose &_pose, std::string *_scopedModel) const;
+  void publishMooringCommand(bool _enabled);
+  void newMooringSession();
+
   gz::transport::Node &node_;
-  std::string worldName_, poseTopic_;
-  std::string model_, area_;
+  gz::transport::Node::Publisher mooringCommandPub_;
+  std::string worldName_, poseTopic_, mooringCommandTopic_, mooringStatusTopic_;
+  std::string model_, area_, modelScopedName_;
+  std::shared_ptr<WaveMooringStatusShared> mooringStatus_;
+  std::string mooringSessionId_;
+  bool mooringRequested_ = false;
+  bool lastRunMooringApplied_ = false;
 
   bool   running_ = false;
   double elapsed_ = 0.0;  ///< 仿真经过时间

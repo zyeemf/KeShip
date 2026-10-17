@@ -1728,6 +1728,24 @@ int CmdExpWaveRun(keship::ModelManager &_mm, const Args &_a, const std::string &
   // 波浪方向：MS-03（横摇 RAO）默认横浪 90°，MS-02（升沉/纵摇）默认顺浪 0°
   const double defDir = (_tag == "MS-03") ? M_PI / 2.0 : 0.0;
   const double direction = _a.GetD("direction", defDir);
+
+  // 软系泊（可选，默认关闭）：只约束水平位置与航向，保留 roll/pitch/heave 自由
+  const bool useMooring = _a.Has("mooring");
+  if (useMooring) {
+    core.setMooringEnabled(true);
+    bool applied = false;
+    for (int i = 0; i < 60; ++i) {   // 最多等 6 s 墙钟
+      core.publishMooringHeartbeat();
+      if (core.mooringApplied()) { applied = true; break; }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (!applied) {
+      const auto st = core.mooringStatus();
+      Fail("软系泊未生效（" + st.reason + "）—— 确认目标模型含浮力插件且仿真正在运行");
+    }
+    Info("软系泊已生效（" + core.targetModelScopedName() + "）");
+  }
+
   core.sendWave(amp, wperiod, gain, direction);
   Info(_tag + " 开始：波幅 " + std::to_string(amp) + " m / 周期 " +
        std::to_string(wperiod) + " s / 仿真时长 " + std::to_string(duration) + " s");

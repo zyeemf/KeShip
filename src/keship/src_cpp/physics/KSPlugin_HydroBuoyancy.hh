@@ -26,11 +26,14 @@
 #include "../utils/WaterAreaManager.hh"
 #include "components/Wavefield.hh"
 #include "components/EnvFlow.hh"
+#include "../utils/PlanarMooring.hh"
 
 namespace keship
 {
   class Buoyancy;
   class FossenModel;
+  class ForceAccumulator;
+  class ForceAccumulator;
 
   /// 单个浮力体描述
   struct BuoyancyBody
@@ -92,6 +95,14 @@ namespace keship
                      const gz::math::Vector3d &_force,
                      const gz::math::Vector3d &_torque);
 
+    /// 软系泊（MS-02/03/06）：仅约束水平位置与世界航向，
+    /// 保留 roll/pitch/heave 自由。力作用于质心、力矩为世界 Z 纯力矩。
+    void ApplyMooring(gz::sim::EntityComponentManager &_ecm,
+                      const gz::sim::UpdateInfo &_info,
+                      const gz::math::Pose3d &_linkWorldPose,
+                      keship::ForceAccumulator &_acc);
+
+
   private:
     gz::sim::Entity entity_{gz::sim::kNullEntity};
 
@@ -103,6 +114,9 @@ namespace keship
     std::string modelName_{""};
     /// \brief 诊断日志前缀 "模型名_link名"
     std::string logPrefix_{""};
+    /// \brief 完整 scoped 名 "world::model"（软系泊目标身份）
+    std::string scopedName_{""};
+    /// \brief 完整 scoped 名 "world::model"（软系泊目标身份）
 
     std::string meshPath_{};
 
@@ -140,6 +154,21 @@ namespace keship
 
     gz::transport::Node node;
     std::mutex mutex;
+
+    /// ── 软系泊（MS-02/03/06）──────────────────────────────────────
+    /// 命令由实验核心（GUI/CLI）发布，本插件按完整 scoped 名过滤。
+    /// 只约束水平位置与 yaw；roll/pitch/heave 不受直接约束。
+    PlanarMooringMailbox mooringMailbox;
+    gz::transport::Node::Publisher mooringStatusPub;
+    bool mooringStatusPubReady = false;
+    uint64_t mooringSessionId = 0;
+    PlanarMooringReference mooringReference;
+    bool mooringApplied = false;
+    int mooringStatusCounter = 0;
+    gz::math::Vector3d mooringLastForce{0.0, 0.0, 0.0};
+    double mooringLastTorque = 0.0;
+    bool mooringForceSaturated = false;
+    bool mooringYawSaturated = false;
 
     /// 浸水体积对外发布（opt-in：SDF 写 <publish_subvolume>true</publish_subvolume>）
     /// 默认关闭 —— 仅供排水量实验（HS-02）作为"实测 ∇"数据源；

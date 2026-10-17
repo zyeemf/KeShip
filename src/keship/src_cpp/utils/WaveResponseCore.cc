@@ -6,6 +6,8 @@
 #include "WaveResponseCore.hh"
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -13,11 +15,66 @@
 
 #include <gz/msgs/any.pb.h>
 #include <gz/msgs/pose.pb.h>
+#include <gz/msgs/any.pb.h>
 
 namespace keship {
 
 namespace {
 constexpr double kRad2Deg = 180.0 / M_PI;
+std::atomic<uint64_t> gMooringSessionCounter{0};
+
+std::string nextMooringSessionId() {
+  const auto ticks = static_cast<uint64_t>(
+      std::chrono::steady_clock::now().time_since_epoch().count());
+  return std::to_string(ticks + ++gMooringSessionCounter);
+}
+
+void setParamString(gz::msgs::Param *_msg, const std::string &_key,
+                    const std::string &_value) {
+  gz::msgs::Any v;
+  v.set_type(gz::msgs::Any_ValueType_STRING);
+  v.set_string_value(_value);
+  (*_msg->mutable_params())[_key] = v;
+}
+void setParamBool(gz::msgs::Param *_msg, const std::string &_key, bool _value) {
+  gz::msgs::Any v;
+  v.set_type(gz::msgs::Any_ValueType_BOOLEAN);
+  v.set_bool_value(_value);
+  (*_msg->mutable_params())[_key] = v;
+}
+const gz::msgs::Any *findParam(const gz::msgs::Param &_msg,
+                               const std::string &_key) {
+  const auto it = _msg.params().find(_key);
+  return it == _msg.params().end() ? nullptr : &it->second;
+}
+bool getParamString(const gz::msgs::Param &_msg, const std::string &_key,
+                    std::string &_value) {
+  const auto *v = findParam(_msg, _key);
+  if (!v || v->type() != gz::msgs::Any_ValueType_STRING) return false;
+  _value = v->string_value();
+  return true;
+}
+bool getParamBool(const gz::msgs::Param &_msg, const std::string &_key,
+                  bool &_value) {
+  const auto *v = findParam(_msg, _key);
+  if (!v || v->type() != gz::msgs::Any_ValueType_BOOLEAN) return false;
+  _value = v->bool_value();
+  return true;
+}
+bool getParamDouble(const gz::msgs::Param &_msg, const std::string &_key,
+                    double &_value) {
+  const auto *v = findParam(_msg, _key);
+  if (!v || v->type() != gz::msgs::Any_ValueType_DOUBLE) return false;
+  _value = v->double_value();
+  return true;
+}
+bool getParamInt(const gz::msgs::Param &_msg, const std::string &_key,
+                 int &_value) {
+  const auto *v = findParam(_msg, _key);
+  if (!v || v->type() != gz::msgs::Any_ValueType_INT32) return false;
+  _value = v->int_value();
+  return true;
+}
 
 /// 由四元数取 roll / pitch（deg）
 void quatToRpy(const gz::msgs::Quaternion &_q, double &_rollDeg, double &_pitchDeg) {
@@ -79,9 +136,62 @@ WaveResponseCore::WaveResponseCore(gz::transport::Node &_node,
                                + _msg.sim_time().nsec() * 1e-9;
         clockState->found = true;
       });
+
+  mooringCommandTopic_ = "/world/" + worldName_ + "/keship/experiment/mooring";
+  mooringStatusTopic_ = "/world/" + worldName_ + "/keship/experiment/mooring_status";
+  mooringCommandPub_ = node_.Advertise<gz::msgs::Param>(mooringCommandTopic_);
+  mooringStatus_ = std::make_shared<WaveMooringStatusShared>();
+  auto mooringState = mooringStatus_;
+  node_.Subscribe<gz::msgs::Param>(mooringStatusTopic_,
+      [mooringState](const gz::msgs::Param &_msg) {
+        std::string model, session, reason;
+        bool applied = false, forceSat = false, yawSat = false;
+        double ax = 0.0, ay = 0.0, ayaw = 0.0, pe = 0.0, ye = 0.0;
+        double fx = 0.0, fy = 0.0, ty = 0.0;
+        if (!getParamString(_msg, "model_scoped", model) ||
+            !getParamString(_msg, "session_id", session) ||
+            !getParamBool(_msg, "applied", applied)) return;
+        getParamString(_msg, "reason", reason);
+        getParamDouble(_msg, "anchor_x", ax);
+        getParamDouble(_msg, "anchor_y", ay);
+        getParamDouble(_msg, "anchor_yaw", ayaw);
+        getParamDouble(_msg, "position_error", pe);
+        getParamDouble(_msg, "yaw_error", ye);
+        getParamDouble(_msg, "force_x", fx);
+        getParamDouble(_msg, "force_y", fy);
+        getParamDouble(_msg, "yaw_torque", ty);
+        int forceSatInt = 0, yawSatInt = 0;
+        getParamInt(_msg, "force_saturated", forceSatInt);
+        getParamInt(_msg, "yaw_saturated", yawSatInt);
+        forceSat = forceSatInt != 0;
+        yawSat = yawSatInt != 0;
+        std::lock_guard<std::mutex> lk(mooringState->mutex);
+        if (!mooringState->alive) return;
+        mooringState->found = true;
+        mooringState->modelScopedName = std::move(model);
+        mooringState->sessionId = std::move(session);
+        mooringState->applied = applied;
+        mooringState->reason = std::move(reason);
+        mooringState->anchorX = ax; mooringState->anchorY = ay;
+        mooringState->anchorYaw = ayaw;
+        mooringState->positionError = pe; mooringState->yawError = ye;
+        mooringState->forceX = fx; mooringState->forceY = fy;
+        mooringState->yawTorque = ty;
+        mooringState->forceSaturated = forceSat;
+        mooringState->yawSaturated = yawSat;
+      });
 }
 
 WaveResponseCore::~WaveResponseCore() {
+  if (mooringRequested_) {
+    mooringRequested_ = false;
+    newMooringSession();
+    for (int i = 0; i < 3; ++i) publishMooringCommand(false);
+  }
+  if (mooringStatus_) {
+    std::lock_guard<std::mutex> lk(mooringStatus_->mutex);
+    mooringStatus_->alive = false;
+  }
   if (pose_) {
     std::lock_guard<std::mutex> lk(pose_->mutex);
     pose_->alive = false;
@@ -97,8 +207,86 @@ WaveResponseCore::~WaveResponseCore() {
 }
 
 void WaveResponseCore::setTarget(const std::string &_model, const std::string &_area) {
+  const bool changed = model_ != _model || area_ != _area;
   model_ = _model;
   area_ = _area;
+  modelScopedName_.clear();
+  if (changed && mooringRequested_)
+    resetMooringSession();
+}
+
+void WaveResponseCore::newMooringSession() {
+  mooringSessionId_ = nextMooringSessionId();
+}
+
+bool WaveResponseCore::setMooringEnabled(bool _enabled) {
+  if (_enabled == mooringRequested_) {
+    publishMooringCommand(_enabled);
+    return true;
+  }
+  mooringRequested_ = _enabled;
+  newMooringSession();
+  publishMooringCommand(_enabled);
+  return !_enabled || !model_.empty();
+}
+
+void WaveResponseCore::resetMooringSession() {
+  if (!mooringRequested_) return;
+  newMooringSession();
+  publishMooringCommand(true);
+}
+
+void WaveResponseCore::publishMooringCommand(bool _enabled) {
+  if (_enabled && modelScopedName_.empty()) {
+    gz::msgs::Pose pose;
+    std::string scoped;
+    if (findTargetPose(pose, &scoped))
+      modelScopedName_ = std::move(scoped);
+  }
+  if (modelScopedName_.empty()) return;
+  gz::msgs::Param msg;
+  setParamString(&msg, "target_model_scoped", modelScopedName_);
+  setParamBool(&msg, "enabled", _enabled);
+  setParamString(&msg, "session_id", mooringSessionId_);
+  if (mooringCommandPub_)
+    mooringCommandPub_.Publish(msg);
+}
+
+void WaveResponseCore::publishMooringHeartbeat() {
+  if (mooringRequested_)
+    publishMooringCommand(true);
+}
+
+WaveMooringStatus WaveResponseCore::mooringStatus() const {
+  WaveMooringStatus out;
+  if (!mooringStatus_) return out;
+  std::lock_guard<std::mutex> lk(mooringStatus_->mutex);
+  out.found = mooringStatus_->found;
+  out.applied = mooringStatus_->applied;
+  out.modelScopedName = mooringStatus_->modelScopedName;
+  out.sessionId = mooringStatus_->sessionId;
+  out.reason = mooringStatus_->reason;
+  out.anchorX = mooringStatus_->anchorX; out.anchorY = mooringStatus_->anchorY;
+  out.anchorYaw = mooringStatus_->anchorYaw;
+  out.positionError = mooringStatus_->positionError;
+  out.yawError = mooringStatus_->yawError;
+  out.forceX = mooringStatus_->forceX; out.forceY = mooringStatus_->forceY;
+  out.yawTorque = mooringStatus_->yawTorque;
+  out.forceSaturated = mooringStatus_->forceSaturated;
+  out.yawSaturated = mooringStatus_->yawSaturated;
+  return out;
+}
+
+bool WaveResponseCore::mooringApplied() const {
+  const auto status = mooringStatus();
+  const auto leaf = [](const std::string &_s) {
+    const auto p = _s.rfind("::");
+    return p == std::string::npos ? _s : _s.substr(p + 2);
+  };
+  // 目标身份按 leaf 比对：world 已由话题隔离，leaf 在同一 world 内唯一。
+  return mooringRequested_ && status.found && status.applied &&
+         status.sessionId == mooringSessionId_ &&
+         leaf(status.modelScopedName) == leaf(modelScopedName_);
 }
 
 void WaveResponseCore::sendWave(double _amplitude, double _period,
@@ -134,7 +322,9 @@ void WaveResponseCore::sendWave(double _amplitude, double _period,
   keship::WavefieldPublisher(node_).Publish(msg);
 }
 
-bool WaveResponseCore::fetchPose(double &_rollDeg, double &_pitchDeg, double &_z) const {
+bool WaveResponseCore::findTargetPose(gz::msgs::Pose &_pose,
+                                      std::string *_scopedModel) const {
+  if (!pose_) return false;
   gz::msgs::Pose_V snap;
   {
     std::lock_guard<std::mutex> lk(pose_->mutex);
@@ -144,14 +334,28 @@ bool WaveResponseCore::fetchPose(double &_rollDeg, double &_pitchDeg, double &_z
   for (int i = 0; i < snap.pose_size(); ++i) {
     const auto &p = snap.pose(i);
     std::string nm = p.name();
-    auto pos = nm.rfind("::");
-    if (pos != std::string::npos) nm = nm.substr(pos + 2);
-    if (nm != model_) continue;
-    quatToRpy(p.orientation(), _rollDeg, _pitchDeg);
-    _z = p.position().z();
+    const auto pos = nm.rfind("::");
+    const std::string leaf = pos == std::string::npos ? nm : nm.substr(pos + 2);
+    if (leaf != model_) continue;
+    // ModelManager presents unique model leaf names. Keep the complete scoped identity
+    // from pose/info, prefixing the world only when Gazebo supplies a bare model name.
+    std::string scoped = p.name();
+    const std::string worldPrefix = worldName_ + "::";
+    if (scoped.rfind(worldPrefix, 0) != 0)
+      scoped = worldPrefix + scoped;
+    _pose = p;
+    if (_scopedModel) *_scopedModel = std::move(scoped);
     return true;
   }
   return false;
+}
+
+bool WaveResponseCore::fetchPose(double &_rollDeg, double &_pitchDeg, double &_z) const {
+  gz::msgs::Pose p;
+  if (!findTargetPose(p, nullptr)) return false;
+  quatToRpy(p.orientation(), _rollDeg, _pitchDeg);
+  _z = p.position().z();
+  return true;
 }
 
 bool WaveResponseCore::fetchSimTime(double &_simTimeSec) const {
@@ -177,6 +381,7 @@ bool WaveResponseCore::start() {
   lastSampleSimTime_ = simTime;
   elapsed_ = 0.0;
   clockReset_ = false;
+  lastRunMooringApplied_ = mooringApplied();
   running_ = true;
   return true;
 }
@@ -198,6 +403,7 @@ void WaveResponseCore::clear() {
 
 bool WaveResponseCore::sample() {
   if (!running_) return false;
+  publishMooringHeartbeat();
   // 周期性重发波浪参数（gz-transport 首帧易丢）。
   // ★ 2026-10-16 修复：重发必须携带 direction（原实现漏传 ⇒ 方向被重置为 0，
   //   横浪设置静默失效、横摇力矩恒 0）。gain 传 1.0 正确：waveAmp_ 已含增益。
@@ -262,9 +468,10 @@ WaveResponseMetrics WaveResponseCore::computeMetrics(
 bool WaveResponseCore::exportCsv(const std::string &_path) const {
   std::ofstream ofs(_path);
   if (!ofs) return false;
-  ofs << "t_sim_s,roll_deg,pitch_deg,heave_m\n";
+  ofs << "t_sim_s,roll_deg,pitch_deg,heave_m,mooring_enabled\n";
   for (const auto &p : trail_)
-    ofs << p.t << "," << p.rollDeg << "," << p.pitchDeg << "," << p.heave << "\n";
+    ofs << p.t << "," << p.rollDeg << "," << p.pitchDeg << "," << p.heave
+        << "," << (lastRunMooringApplied_ ? "true" : "false") << "\n";
   return true;
 }
 

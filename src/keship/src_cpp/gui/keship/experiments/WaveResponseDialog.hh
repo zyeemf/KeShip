@@ -12,6 +12,7 @@
 #ifndef WAVE_RESPONSE_DIALOG_HH_
 #define WAVE_RESPONSE_DIALOG_HH_
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
@@ -72,7 +73,8 @@ public:
   static bool WritePracticePacket(
       const std::string &_dir,
       const std::vector<std::vector<keship::WaveSample>> &_rounds,
-      const std::vector<double> &_periods, const std::vector<double> &_amps);
+      const std::vector<double> &_periods, const std::vector<double> &_amps,
+      const std::vector<bool> &_mooring = {});
 
   /// MS-06：解析并比对 student_rao.csv（周期匹配容差 0.5 s）
   /// 纯函数、无 GUI 交互；onSubmitStudent 与回归测试共用
@@ -93,12 +95,16 @@ private slots:
   void onExportPacket();   ///< MS-06：导出练习数据包（位姿 CSV×N + 参数 + 任务书）
   void onSubmitStudent();  ///< MS-06：提交学生结果 CSV 并与参考值比对
   void onImportGm();       ///< MS-03：导入 HS-04 GM 交付物
+  void onMooringToggled(bool _on);  ///< 软系泊开关（默认不勾选）
+  void onShowRaoHelp();             ///< RAO 教学+技术说明
+  void onMooringHeartbeat();        ///< 系泊心跳与状态刷新
   void updateGmCompare();  ///< MS-03：刷新理论 T₀ vs 实测峰值周期对照行
   /// 按交付物的「船模信息」重建同一对象并设为实验对象（张老师方案）
   bool ensureObjectFromDeliverable(const keship::GmDeliverable &_d);
 
 private:
   void syncParamsToCore();
+  void updateMooringStatusLabel();
   void updateReadout();
   void showResults();
 
@@ -110,6 +116,10 @@ private:
   QDoubleSpinBox *gainSpin_ = nullptr;        ///< 增益
   QDoubleSpinBox *periodSpin_ = nullptr;      ///< 采样周期 (s)
   QDoubleSpinBox *directionSpin_ = nullptr;   ///< 波浪方向 (°)：ms02 顺浪 0，ms03/06 横浪 90
+  QCheckBox   *mooringCheck_ = nullptr;       ///< 水平软系泊（默认不勾选）
+  QLabel      *mooringStatusLabel_ = nullptr; ///< 系泊物理端确认状态
+  QPushButton *helpBtn_ = nullptr;            ///< RAO 说明
+  QTimer      *mooringTimer_ = nullptr;       ///< 系泊心跳（200 ms）
 
   QPushButton *applyWaveBtn_ = nullptr;
   QPushButton *startBtn_ = nullptr;
@@ -143,8 +153,10 @@ private:
   std::vector<std::vector<keship::WaveSample>> rounds_;  ///< 各轮位姿时程
   std::vector<double> roundPeriods_;      ///< 各轮波浪周期 (s)
   std::vector<double> roundAmps_;         ///< 各轮有效波幅 (m)
+  std::vector<bool> roundMooring_;        ///< 各轮开始时系泊是否已生效
   std::vector<double> refRao_;            ///< 各轮参考 RAO (°/m，平台计算)
 
+  bool freeRunWarned_ = false;  ///< 自由响应提示每对话框只弹一次
   QTimer *timer_ = nullptr;
   std::unique_ptr<keship::WaveResponseCore> core_;
 };

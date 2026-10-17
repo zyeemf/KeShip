@@ -157,7 +157,26 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   directionSpin_->setSuffix(" °");
   form->addRow("波浪方向：", directionSpin_);
   form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
+
+  /// 软系泊：只约束水平位置与航向，保留 roll/pitch/heave 自由。
+  /// 默认不勾选（不静默改变物理模型）；勾选后由物理插件在仿真步内施加 PD 约束。
+  mooringCheck_ = new QCheckBox(
+      "启用水平软系泊（保持平均位置与航向；横摇/纵摇/升沉仍自由）", paramBox);
+  mooringCheck_->setChecked(false);
+  form->addRow("实验边界：", mooringCheck_);
+  mooringStatusLabel_ = new QLabel(
+      "系泊状态：未启用（船模可自由漂移/偏航）", paramBox);
+  mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
+  mooringStatusLabel_->setWordWrap(true);
+  form->addRow("", mooringStatusLabel_);
   root->addWidget(paramBox);
+
+  mooringTimer_ = new QTimer(this);
+  mooringTimer_->setInterval(200);
+  connect(mooringTimer_, &QTimer::timeout, this,
+          &WaveResponseDialog::onMooringHeartbeat);
+  connect(mooringCheck_, &QCheckBox::toggled, this,
+          &WaveResponseDialog::onMooringToggled);
 
   auto *ctrlRow = new QHBoxLayout();
   applyWaveBtn_ = new QPushButton("施加波浪", this);
@@ -171,7 +190,11 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   ctrlRow->addWidget(stopBtn_);
   ctrlRow->addWidget(clearBtn_);
   ctrlRow->addStretch();
+  helpBtn_ = new QPushButton("RAO 说明 (?)", this);
+  ctrlRow->addWidget(helpBtn_);
   ctrlRow->addWidget(exportBtn_);
+  connect(helpBtn_, &QPushButton::clicked, this,
+          &WaveResponseDialog::onShowRaoHelp);
   root->addLayout(ctrlRow);
 
   readoutLabel_ = new QLabel("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —", this);
@@ -196,15 +219,15 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
           "① 设定波浪周期与波幅 →「施加波浪」→「开始记录」，仿真时钟累计 ≥40 s 后「停止」；"
           "② 点「记录本次结果」，将本次 (周期, RAO) 存入下表；"
           "③ 改变波浪周期，重复 ①② 约 5~8 次；"
-          "④ 从表中找横摇 RAO 的峰值（共振峰），对应周期即横摇固有周期的估计，"
-          "可与 HS-04 的 GM 理论周期对照。",
+          "④ 从表中找横摇 RAO 的峰值（通常提示共振区），峰值周期可与 HS-04 的"
+          "简化理论 T₀ 对照；两者不必相等（阻尼、附加质量、耦合均会影响）。",
         this);
     guideLabel_->setWordWrap(true);
     root->addWidget(guideLabel_);
 
-    raoTable_ = new QTableWidget(0, 4, this);
+    raoTable_ = new QTableWidget(0, 5, this);
     raoTable_->setHorizontalHeaderLabels(
-        {"波浪周期 (s)", "横摇幅值 (°)", "横摇 RAO (°/m)", "受迫周期 (s)"});
+        {"波浪周期 (s)", "横摇幅值 (°)", "横摇 RAO (°/m)", "受迫周期 (s)", "系泊状态"});
     raoTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     raoTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     raoTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -293,6 +316,98 @@ void WaveResponseDialog::syncParamsToCore() {
   core_->setTarget(modelCombo_->currentText().toStdString());
 }
 
+void WaveResponseDialog::onMooringToggled(bool _on) {
+  syncParamsToCore();
+  core_->setMooringEnabled(_on);
+  if (_on) {
+    mooringTimer_->start();
+    mooringStatusLabel_->setText("系泊状态：请求中（等待物理端确认）…");
+    mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
+  } else {
+    mooringTimer_->stop();
+    mooringStatusLabel_->setText("系泊状态：未启用（船模可自由漂移/偏航）");
+    mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
+  }
+}
+
+void WaveResponseDialog::onMooringHeartbeat() {
+  core_->publishMooringHeartbeat();
+  updateMooringStatusLabel();
+}
+
+void WaveResponseDialog::updateMooringStatusLabel() {
+  if (!mooringCheck_ || !mooringStatusLabel_) return;
+  if (!mooringCheck_->isChecked()) {
+    mooringStatusLabel_->setText("系泊状态：未启用（船模可自由漂移/偏航）");
+    mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
+    return;
+  }
+  const auto st = core_->mooringStatus();
+  if (!st.found) {
+    mooringStatusLabel_->setText("系泊状态：请求中（等待物理端确认）…");
+    mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
+    return;
+  }
+  if (!core_->mooringApplied()) {
+    mooringStatusLabel_->setText(
+        QString("系泊状态：未生效（%1）。请确认目标船模已加载且仿真正在运行。")
+            .arg(QString::fromStdString(st.reason)));
+    mooringStatusLabel_->setStyleSheet("color: #b03030;");
+    return;
+  }
+  mooringStatusLabel_->setText(
+      QString("系泊状态：已生效（位置误差 %1 m，航向误差 %2°%3）")
+          .arg(st.positionError, 0, 'f', 3)
+          .arg(st.yawError * 180.0 / M_PI, 0, 'f', 2)
+          .arg(st.forceSaturated || st.yawSaturated ? "，已限幅" : ""));
+  mooringStatusLabel_->setStyleSheet("color: #2e7d32;");
+}
+
+void WaveResponseDialog::onShowRaoHelp() {
+  const bool ms03 = (mode_ == "ms03");
+  const bool ms06 = (mode_ == "ms06");
+  QString title = ms06 ? "MS-06 · RAO 说明"
+                       : (ms03 ? "MS-03 · RAO 说明" : "MS-02 · 响应与 RAO 说明");
+  QString modeText;
+  if (ms03 || ms06) {
+    modeText = "本实验测的是<b>横摇</b>响应（波浪方向默认 90° 横浪）。";
+  } else {
+    modeText = "本实验主要观察<b>升沉与纵摇</b>响应（波浪方向默认 0° 顺浪）；"
+               "主结果区显示幅值，不直接显示 RAO 数值（命令行入口会输出纵摇/升沉 RAO）。";
+  }
+  const QString html = QString(
+      "<h3>教学直观</h3>"
+      "<p>RAO（响应幅值算子）回答一个问题：<b>单位波幅的规则波，能让船体产生多大响应？</b>"
+      "把波浪周期逐次改变，就能看出船在哪个周期附近“晃得最厉害”。</p>"
+      "%1"
+      "<p><b>为什么需要软系泊？</b>船在波浪里会缓慢漂移、甚至被推着转向。"
+      "船头一转向，同一列波浪相对船的入射角就变了，测量的已经不是同一个工况，"
+      "多轮数据无法互相比较。勾选软系泊后，平台只把<b>平均水平位置与航向</b>拉回参考值，"
+      "<b>横摇、纵摇、升沉仍然自由</b>——要观察的响应不会被锁死。</p>"
+      "<p><b>注意</b>：软系泊会轻微改变船体动力学，系泊与自由漂移两种条件下的数据"
+      "应分别标注、不要混在一起比较。</p>"
+      "<h3>技术定义</h3>"
+      "<p>对指定自由度 j、航向条件 β 与遭遇频率 ω<sub>e</sub>，复传递函数可写为"
+      " H<sub>j</sub>(ω<sub>e</sub>,β)=X̂<sub>j</sub>/â；本平台给出的 RAO 是"
+      "<b>幅值型</b> RAO，即稳态响应幅值与有效输入波幅之比："
+      " roll/pitch 为 °/m，heave 为 m/m。<b>本界面不输出相位</b>。</p>"
+      "<p>测量前提：① 记录段处于<b>稳态</b>（排除起振瞬态）；② 波幅不宜大到明显进入"
+      "强非线性；③ <b>入射方向与航向固定</b>——自由漂移/偏航会使 β 随时间变化，"
+      "破坏“单一工况”假设。</p>"
+      "<p><b>关于峰值</b>：RAO 峰值表示在该模型、航向、阻尼与频率条件下响应达到最大，"
+      "通常提示<b>共振区</b>；但峰值周期<b>不等于</b>简化理论固有周期 "
+      "T₀=2π√(Ixx/(Δ·GM))。T₀ 只能作为对照量，差异还可能来自阻尼、附加质量与耦合。</p>"
+      "<p>记录建议：每轮至少 max(40 s, 6×输入周期) 仿真秒，指标取末半段；"
+      "同一周期建议重复 2~3 次并取中位。</p>")
+      .arg(modeText);
+  QMessageBox box(this);
+  box.setWindowTitle(title);
+  box.setTextFormat(Qt::RichText);
+  box.setText(html);
+  box.setStandardButtons(QMessageBox::Ok);
+  box.exec();
+}
+
 void WaveResponseDialog::onApplyWave() {
   syncParamsToCore();
   core_->sendWave(waveAmpSpin_->value(), wavePeriodSpin_->value(),
@@ -306,6 +421,25 @@ void WaveResponseDialog::onApplyWave() {
 void WaveResponseDialog::onStart() {
   if (core_->running()) return;
   syncParamsToCore();
+  if (mooringCheck_ && mooringCheck_->isChecked() && !core_->mooringApplied()) {
+    updateMooringStatusLabel();
+    QMessageBox::information(this, "软系泊尚未生效",
+        "已勾选软系泊，但物理端尚未确认生效。\n\n"
+        "请确认：① 目标船模已加载（含浮力插件）；② 仿真未暂停；"
+        "③ 状态行显示「系泊状态：已生效」。\n\n"
+        "本次记录未启动。若只想做自由响应观察，可取消勾选后重新开始。");
+    return;
+  }
+  if (!freeRunWarned_ && (mode_ == "ms03" || mode_ == "ms06") &&
+      (!mooringCheck_ || !mooringCheck_->isChecked())) {
+    const auto ret = QMessageBox::question(this, "未启用软系泊",
+        "当前未启用软系泊：船模可能漂移或偏航，入射角会随航向改变。\n\n"
+        "本轮适合观察自由响应；不保证跨轮定量 RAO 可比，"
+        "也不应把该数据用于定量 T₀ 对照。\n\n是否继续记录？",
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) return;
+    freeRunWarned_ = true;
+  }
   if (!core_->start()) {
     QMessageBox::warning(this, "实验",
         "未能读到船模位姿或仿真时钟 —— 请确认「船模」名与场景一致，且仿真正在运行。");
@@ -345,9 +479,11 @@ void WaveResponseDialog::onClear() {
   if (studentTable_) studentTable_->setRowCount(0);
   if (studentResultLabel_)
     studentResultLabel_->setText("等待学生提交 student_rao.csv");
+  core_->resetMooringSession();
   rounds_.clear();
   roundPeriods_.clear();
   roundAmps_.clear();
+  roundMooring_.clear();
   refRao_.clear();
   updateGmCompare();
 }
@@ -367,6 +503,8 @@ void WaveResponseDialog::onTick() {
   }
   chart_->setTrail(core_->trail());
   updateReadout();
+  if (mooringCheck_ && mooringCheck_->isChecked())
+    updateMooringStatusLabel();
 }
 
 void WaveResponseDialog::updateReadout() {
@@ -407,6 +545,8 @@ void WaveResponseDialog::onRecordResult() {
   raoTable_->setItem(row, 1, new QTableWidgetItem(num(m.rollAmp)));
   raoTable_->setItem(row, 2, new QTableWidgetItem(num(m.rollRAO)));
   raoTable_->setItem(row, 3, new QTableWidgetItem(num(m.rollPeriod)));
+  const bool moored = core_->mooringApplied();
+  raoTable_->setItem(row, 4, new QTableWidgetItem(moored ? "已系泊" : "自由"));
   recordBtn_->setEnabled(false);   ///< 一次停止只记一行，防重复
   std::cout << "MS-03: 已记录 RAO 点（周期 " << m.wavePeriod
             << " s，RAO " << m.rollRAO << " °/m）" << std::endl;
@@ -415,6 +555,7 @@ void WaveResponseDialog::onRecordResult() {
     rounds_.push_back(core_->trail());
     roundPeriods_.push_back(m.wavePeriod);
     roundAmps_.push_back(m.waveAmp);
+    roundMooring_.push_back(core_->mooringApplied());
     refRao_.push_back(m.rollRAO);
     std::cout << "MS-06: 已收集第 " << rounds_.size()
               << " 轮练习数据（周期 " << m.wavePeriod << " s）" << std::endl;
@@ -438,12 +579,16 @@ bool WaveResponseDialog::WriteRaoTableCsv(const QTableWidget *_table,
   if (!_table || _table->rowCount() == 0) return false;
   std::ofstream f(_path);
   if (!f) return false;
-  f << "wave_period_s,roll_amp_deg,roll_rao_deg_per_m,forced_period_s\n";
+  f << "wave_period_s,roll_amp_deg,roll_rao_deg_per_m,forced_period_s,mooring_enabled\n";
   for (int r = 0; r < _table->rowCount(); ++r) {
     f << _table->item(r, 0)->text().toStdString() << ","
       << _table->item(r, 1)->text().toStdString() << ","
       << _table->item(r, 2)->text().toStdString() << ","
-      << _table->item(r, 3)->text().toStdString() << "\n";
+      << _table->item(r, 3)->text().toStdString() << ","
+      << (_table->columnCount() > 4 && _table->item(r, 4)
+              ? (_table->item(r, 4)->text() == "已系泊" ? "true" : "false")
+              : "unknown")
+      << "\n";
   }
   return true;
 }
@@ -618,7 +763,8 @@ void WaveResponseDialog::onExportPacket()
   QString dir = QFileDialog::getExistingDirectory(this, "选择数据包保存目录");
   if (dir.isEmpty()) return;
   const std::string base = (dir + "/ms06_packet").toStdString();
-  if (!WritePracticePacket(base, rounds_, roundPeriods_, roundAmps_)) {
+  if (!WritePracticePacket(base, rounds_, roundPeriods_, roundAmps_,
+                           roundMooring_)) {
     QMessageBox::warning(this, "导出练习数据包", "写入失败（目录不可写？）。");
     return;
   }
@@ -676,7 +822,8 @@ void WaveResponseDialog::onSubmitStudent()
 bool WaveResponseDialog::WritePracticePacket(
     const std::string &_dir,
     const std::vector<std::vector<keship::WaveSample>> &_rounds,
-    const std::vector<double> &_periods, const std::vector<double> &_amps)
+    const std::vector<double> &_periods, const std::vector<double> &_amps,
+    const std::vector<bool> &_mooring)
 {
   if (_rounds.empty() || _rounds.size() != _periods.size() ||
       _rounds.size() != _amps.size())
@@ -699,7 +846,9 @@ bool WaveResponseDialog::WritePracticePacket(
     f << "{\n  \"rounds\": [\n";
     for (size_t i = 0; i < _rounds.size(); ++i) {
       f << "    {\"period_s\": " << _periods[i]
-        << ", \"wave_amp_m\": " << _amps[i] << "}"
+        << ", \"wave_amp_m\": " << _amps[i]
+        << ", \"mooring_enabled\": "
+        << ((i < _mooring.size() && _mooring[i]) ? "true" : "false") << "}"
         << (i + 1 < _rounds.size() ? "," : "") << "\n";
     }
     f << "  ]\n}\n";
