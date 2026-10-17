@@ -59,9 +59,20 @@ void WaveChartWidget::paintEvent(QPaintEvent *) {
     return;
   }
 
-  const double tMax = pts_.back().t;
+  /// ★ 2026-10-17：显示最近 60 s 时间窗。
+  ///   原先总是把整段记录压缩到画布：记录到 3114 s 时约 620 个波周期挤进
+  ///   850 px（每周期 <1.4 px），必然糊成实心色块且看不出波形。
+  ///   窗口内仍逐像素抽稀，兼顾可读性与开销。
+  constexpr double kWindowSec = 60.0;
+  const double tEnd = pts_.back().t;
+  const double tStart = std::max(0.0, tEnd - kWindowSec);
+  size_t firstIdx = 0;
+  while (firstIdx + 1 < pts_.size() && pts_[firstIdx].t < tStart) ++firstIdx;
+  const double tSpan = std::max(1e-6, tEnd - pts_[firstIdx].t);
+
   double yMin = 0, yMax = 0;
-  for (const auto &s : pts_) {
+  for (size_t i = firstIdx; i < pts_.size(); ++i) {
+    const auto &s = pts_[i];
     yMin = std::min({yMin, s.rollDeg, s.pitchDeg, s.heave});
     yMax = std::max({yMax, s.rollDeg, s.pitchDeg, s.heave});
   }
@@ -71,7 +82,7 @@ void WaveChartWidget::paintEvent(QPaintEvent *) {
 
   const double W = width() - 50.0, H = height() - 30.0;
   auto toPix = [&](double t, double y) {
-    return QPointF(40 + (t / std::max(1e-6, tMax)) * W,
+    return QPointF(40 + ((t - pts_[firstIdx].t) / tSpan) * W,
                    15 + H - ((y - yMin) / (yMax - yMin)) * H);
   };
 
@@ -81,11 +92,19 @@ void WaveChartWidget::paintEvent(QPaintEvent *) {
     p.drawLine(QPointF(40, gy), QPointF(40 + W, gy));
   }
 
+  /// ★ 2026-10-17：按像素抽稀。原先逐点 lineTo（长记录可达上万点），
+  ///   抗锯齿下既慢又把曲线糊成实心色块（张老师 12504 点截图）。
+  ///   每个像素列最多画 2 个点，并强制包含末点，保证形状与最新值不失真。
+  const size_t visible = pts_.size() - firstIdx;
+  const size_t maxDraw = static_cast<size_t>(std::max(2.0, W * 2.0));
+  const size_t step = std::max<size_t>(1, visible / maxDraw);
   auto drawCurve = [&](auto getter, const QColor &_c) {
     QPainterPath path;
-    path.moveTo(toPix(pts_[0].t, getter(pts_[0])));
-    for (size_t i = 1; i < pts_.size(); ++i)
+    path.moveTo(toPix(pts_[firstIdx].t, getter(pts_[firstIdx])));
+    for (size_t i = firstIdx + step; i < pts_.size(); i += step)
       path.lineTo(toPix(pts_[i].t, getter(pts_[i])));
+    if ((pts_.size() - 1 - firstIdx) % step != 0)
+      path.lineTo(toPix(pts_.back().t, getter(pts_.back())));
     p.setPen(QPen(_c, 2));
     p.drawPath(path);
   };
@@ -94,7 +113,8 @@ void WaveChartWidget::paintEvent(QPaintEvent *) {
   drawCurve([](const keship::WaveSample &s) { return s.heave; },    QColor(50, 160, 90));
 
   p.setPen(QColor(90, 95, 105));
-  p.drawText(12, 16, QString("红=横摇(°)  蓝=纵摇(°)  绿=升沉(m) · %1 点").arg(pts_.size()));
+  p.drawText(12, 16, QString("红=横摇(°)  蓝=纵摇(°)  绿=升沉(m) · 显示最近 %1 s / 共 %2 点")
+      .arg(kWindowSec, 0, 'f', 0).arg(pts_.size()));
   p.drawText(6, 28, QString::number(yMax, 'f', 1));
   p.drawText(6, static_cast<int>(15 + H), QString::number(yMin, 'f', 1));
 }
