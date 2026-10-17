@@ -1544,9 +1544,16 @@ void KSPlugin_HydroBuoyancy::ApplyMooring(
     setDbl("anchor_x", d.mooringReference.x);
     setDbl("anchor_y", d.mooringReference.y);
     setDbl("anchor_yaw", d.mooringReference.yaw);
+    /// ★ 2026-10-17 修复：误差必须与锚点同参考点（都是质心水平位置）。
+    ///   原先锚点取质心、误差取 link 原点，两者水平相距约 1.88 m
+    ///   ⇒ 即使完全约束也恒显示 ~1.9 m，误导使用者。
+    gz::math::Vector3d comForStatus = _linkWorldPose.Pos();
+    if (auto ic = _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_))
+      comForStatus = _linkWorldPose.Rot() * ic->Data().Pose().Pos()
+                   + _linkWorldPose.Pos();
     setDbl("position_error",
-           std::hypot(_linkWorldPose.Pos().X() - d.mooringReference.x,
-                      _linkWorldPose.Pos().Y() - d.mooringReference.y));
+           std::hypot(comForStatus.X() - d.mooringReference.x,
+                      comForStatus.Y() - d.mooringReference.y));
     setDbl("yaw_error",
            keship::WrapPlanarMooringAngle(
                _linkWorldPose.Rot().Euler().Z() - d.mooringReference.yaw));
