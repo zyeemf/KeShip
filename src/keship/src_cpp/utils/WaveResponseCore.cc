@@ -384,7 +384,6 @@ bool WaveResponseCore::start() {
   lastSampleSimTime_ = simTime;
   elapsed_ = 0.0;
   clockReset_ = false;
-  lastRunMooringApplied_ = mooringApplied();
   running_ = true;
   return true;
 }
@@ -419,6 +418,12 @@ bool WaveResponseCore::sample() {
     return false;
   }
   if (simTime <= lastSampleSimTime_ + 1e-9) return false;  // 暂停或同一仿真步
+  /// ★ 2026-10-17：系泊状态快照放在**本轮第一个采样点**，而不是 start()。
+  ///   CLI 的 `--mooring` 在 start() 之后才启用系泊，若在 start() 快照，
+  ///   导出 CSV 会永远写 false（与实际情况不符）。GUI 同样受益：
+  ///   状态以“数据真正开始记录的时刻”为准。
+  if (trail_.empty())
+    lastRunMooringApplied_ = mooringApplied();
   lastSampleSimTime_ = simTime;
   elapsed_ = simTime - startSimTime_;
   trail_.push_back(WaveSample{elapsed_, r, pi, z - z0_});
