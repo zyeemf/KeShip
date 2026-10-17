@@ -208,10 +208,16 @@ WaveResponseCore::~WaveResponseCore() {
 
 void WaveResponseCore::setTarget(const std::string &_model, const std::string &_area) {
   const bool changed = model_ != _model || area_ != _area;
+  /// ★ 2026-10-17 修复：目标未变时必须直接返回。
+  ///   原先无条件 modelScopedName_.clear()，而 GUI 在「施加波浪」「开始记录」前都会
+  ///   syncParamsToCore() → setTarget() ⇒ 已解析的目标名被清空，
+  ///   mooringApplied() 的 leaf 比对随即失败，界面出现「状态行已生效、点开始却报未生效」。
+  if (!changed)
+    return;
   model_ = _model;
   area_ = _area;
   modelScopedName_.clear();
-  if (changed && mooringRequested_)
+  if (mooringRequested_)
     resetMooringSession();
 }
 
@@ -279,14 +285,11 @@ WaveMooringStatus WaveResponseCore::mooringStatus() const {
 
 bool WaveResponseCore::mooringApplied() const {
   const auto status = mooringStatus();
-  const auto leaf = [](const std::string &_s) {
-    const auto p = _s.rfind("::");
-    return p == std::string::npos ? _s : _s.substr(p + 2);
-  };
-  // 目标身份按 leaf 比对：world 已由话题隔离，leaf 在同一 world 内唯一。
+  /// 只认「当前 session 且 applied」：session 唯一标识一次命令，
+  /// 插件只会对发给自己的命令回 ACK，因此无需再比对模型名
+  /// （模型名比对曾在 setTarget 清空缓存时造成误判，见 setTarget 注释）。
   return mooringRequested_ && status.found && status.applied &&
-         status.sessionId == mooringSessionId_ &&
-         leaf(status.modelScopedName) == leaf(modelScopedName_);
+         status.sessionId == mooringSessionId_;
 }
 
 void WaveResponseCore::sendWave(double _amplitude, double _period,
