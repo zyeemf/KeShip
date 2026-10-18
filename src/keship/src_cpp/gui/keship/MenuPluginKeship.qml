@@ -943,6 +943,11 @@ Rectangle {
                     model: experimentModel
                     clip: true
                     spacing: 2
+                    // 2026-10-18：首次滚动卡顿修复——cacheBuffer 默认 0 时 delegate
+                    // 随滚随建，42 项首遍快滚集中创建会掉帧；滚过一遍后代理池热了
+                    // 才流畅。预建视口外约 2 屏（delegate 高约 1 行），空闲时建好。
+                    cacheBuffer: 1200
+                    reuseItems: true
 
                     ScrollBar.vertical: ScrollBar {
                         anchors.right: parent.right
