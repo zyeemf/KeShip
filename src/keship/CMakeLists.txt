@@ -158,6 +158,8 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/experiments/TurningCircleDialog.cc
   src_cpp/gui/keship/experiments/ZigzagDialog.cc
   src_cpp/gui/keship/experiments/WaveResponseDialog.cc
+  src_cpp/gui/keship/experiments/MS06CodePracticeDialog.cc
+  src_cpp/gui/keship/shared/StudentCodeRunner.cc
   src_cpp/gui/keship/experiments/SensorEstimationDialog.cc
   src_cpp/gui/keship/tasks/TaskMonitorDialog.cc
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
