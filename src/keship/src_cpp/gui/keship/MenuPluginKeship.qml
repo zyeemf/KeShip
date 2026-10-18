@@ -1022,6 +1022,8 @@ Rectangle {
                                     MenuPluginKeship.OnBtn_MS02_WaveResponse();
                                 } else if (expId === "MS-03") {
                                     MenuPluginKeship.OnBtn_MS03_Rao();
+                                } else if (expId === "MS-06") {
+                                    MenuPluginKeship.OnBtn_MS06_RaoPractice();
                                 } else if (expId === "MS-04") {
                                     MenuPluginKeship.OnBtn_MS04_Zigzag();
                                 } else if (expId === "MS-01") {
