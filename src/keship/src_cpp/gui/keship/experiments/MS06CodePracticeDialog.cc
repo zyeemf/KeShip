@@ -147,6 +147,20 @@ void MS06CodePracticeDialog::setupUI() {
   resRow->addStretch();
   root->addLayout(resRow);
 
+  // objectName：供离屏测试按名字查找（不依赖 findChildren 顺序）
+  dataCombo_->setObjectName("dataCombo");
+  taskCombo_->setObjectName("taskCombo");
+  cRadio_->setObjectName("cRadio");
+  pythonRadio_->setObjectName("pythonRadio");
+  builtinLabel_->setObjectName("builtinLabel");
+  codeEdit_->setObjectName("codeEdit");
+  outputEdit_->setObjectName("outputEdit");
+  runBtn_->setObjectName("runBtn");
+  hintBtn_->setObjectName("hintBtn");
+  resetBtn_->setObjectName("resetBtn");
+  resultLabel_->setObjectName("resultLabel");
+  verdictLabel_->setObjectName("verdictLabel");
+
   connect(taskCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &MS06CodePracticeDialog::onTaskChanged);
   connect(pythonRadio_, &QRadioButton::toggled,
@@ -205,7 +219,7 @@ QString MS06CodePracticeDialog::buildTemplate() const {
         "  double roll_amp_deg = %3;  /* 横摇稳态幅值（末半段，平台已求出） */\n"
         "  double wave_amp_m   = %4;  /* 波浪波幅 */\n"
         "  double rao = 0.0;          /* TODO: RAO = 横摇幅值 / 波幅 */\n"
-        "  printf(\"%%.4f\\n\", rao);\n"
+        "  printf(\"%.4f\\n\", rao);\n"
         "  return 0;\n"
         "}\n")
         .arg(fmt(wavePeriod_, 1), fmt(waveAmp_, 2), fmt(builtinRollAmp_, 4),
@@ -249,7 +263,7 @@ QString MS06CodePracticeDialog::buildTemplate() const {
       "     2) 幅值 = 该段 (max - min) / 2\n"
       "     3) RAO = 幅值 / 波幅 */\n"
       "  double rao = 0.0;\n"
-      "  printf(\"%%.4f\\n\", rao);\n"
+      "  printf(\"%.4f\\n\", rao);\n"
       "  return 0;\n"
       "}\n")
       .arg(QString::number(kSampleN), ts, rs, fmt(waveAmp_, 2));

@@ -97,8 +97,10 @@ void StudentCodeRunner::RunAsync(QObject *_parent, const QString &_lang,
                    });
   QObject::connect(proc, &QProcess::errorOccurred, proc,
                    [proc, finish](QProcess::ProcessError) {
-                     finish(proc->readAllStandardOutput(),
-                            proc->readAllStandardError());
+                     QByteArray err = proc->readAllStandardError();
+                     if (err.isEmpty())
+                       err = QByteArrayLiteral("无法启动代码运行器");
+                     finish(proc->readAllStandardOutput(), err);
                    });
   proc->start("python3", {RunnerPath(), _lang, _code});
 }
