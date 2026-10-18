@@ -21,6 +21,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <random>
 #include <cmath>
 #include <cctype>
 #include <filesystem>
@@ -278,28 +279,52 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     gmCompareLabel_->setStyleSheet("font-family: monospace;");
     root->addWidget(gmCompareLabel_);
 
-    // ── MS-06 专用：编程练习（数据包导出 + 学生提交）──
+    // ── MS-06 v2：学生算法面板 + 本轮结果 + 隐藏验收 + RAO–T 曲线 ──
     if (ms06) {
-      packetBtn_ = new QPushButton("导出练习数据包", this);
-      raoRow->addWidget(packetBtn_);
-      studentTable_ = new QTableWidget(0, 4, this);
-      studentTable_->setHorizontalHeaderLabels(
-          {"波浪周期 (s)", "学生 RAO (°/m)", "参考 RAO (°/m)", "误差"});
-      studentTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
-      studentTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-      studentTable_->setMaximumHeight(150);
-      studentTable_->horizontalHeader()->setSectionResizeMode(
-          QHeaderView::Stretch);
-      root->addWidget(studentTable_);
+      resize(1120, 920);
+      auto *algoRow = new QHBoxLayout();
+      algoPanel_ = new StudentAlgorithmPanel(this);
+      algoRow->addWidget(algoPanel_, 3);
 
-      auto *stuRow = new QHBoxLayout();
-      submitBtn_ = new QPushButton("提交学生结果", this);
-      stuRow->addWidget(submitBtn_);
-      stuRow->addStretch();
-      studentResultLabel_ = new QLabel("等待学生提交 student_rao.csv", this);
-      studentResultLabel_->setStyleSheet("font-family: monospace;");
-      stuRow->addWidget(studentResultLabel_);
-      root->addLayout(stuRow);
+      auto *rightCol = new QVBoxLayout();
+      roundResultLabel_ = new QLabel("本轮：运行学生代码后显示（内置值运行前不显示）", this);
+      roundResultLabel_->setWordWrap(true);
+      roundResultLabel_->setStyleSheet("font-family: monospace; color:#333;");
+      rightCol->addWidget(roundResultLabel_);
+      submitValidationBtn_ = new QPushButton("提交验收（隐藏数据 5 组）", this);
+      rightCol->addWidget(submitValidationBtn_);
+      validationStatusLabel_ = new QLabel("", this);
+      validationStatusLabel_->setWordWrap(true);
+      rightCol->addWidget(validationStatusLabel_);
+      validationTable_ = new QTableWidget(0, 5, this);
+      validationTable_->setHorizontalHeaderLabels(
+          {"组", "T (s)", "波幅 (m)", "标准 RAO", "学生 RAO"});
+      validationTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+      validationTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+      validationTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+      validationTable_->setMaximumHeight(150);
+      rightCol->addWidget(validationTable_);
+      exportValidationBtn_ = new QPushButton("导出验收数据", this);
+      rightCol->addWidget(exportValidationBtn_);
+      rightCol->addStretch();
+      algoRow->addLayout(rightCol, 2);
+      root->addLayout(algoRow);
+
+      raoCurve_ = new RaoCurveWidget(this);
+      root->addWidget(raoCurve_);
+
+      roundResultLabel_->setObjectName("roundResultLabel");
+      submitValidationBtn_->setObjectName("submitValidationBtn");
+      validationStatusLabel_->setObjectName("validationStatusLabel");
+      validationTable_->setObjectName("validationTable");
+      exportValidationBtn_->setObjectName("exportValidationBtn");
+      raoCurve_->setObjectName("raoCurve");
+      connect(algoPanel_, &StudentAlgorithmPanel::studentRaoReady, this,
+              &WaveResponseDialog::onStudentRaoReady);
+      connect(submitValidationBtn_, &QPushButton::clicked, this,
+              &WaveResponseDialog::onSubmitValidation);
+      connect(exportValidationBtn_, &QPushButton::clicked, this,
+              &WaveResponseDialog::onExportValidation);
     }
   }
 
@@ -496,15 +521,13 @@ void WaveResponseDialog::onClear() {
     raoTable_->setRowCount(0);
     recordBtn_->setEnabled(false);
   }
-  if (studentTable_) studentTable_->setRowCount(0);
-  if (studentResultLabel_)
-    studentResultLabel_->setText("等待学生提交 student_rao.csv");
   core_->resetMooringSession();
   rounds_.clear();
   roundPeriods_.clear();
   roundAmps_.clear();
   roundMooring_.clear();
   refRao_.clear();
+  resetStudentState();
   updateGmCompare();
 }
 
@@ -572,13 +595,8 @@ void WaveResponseDialog::onRecordResult() {
             << " s，RAO " << m.rollRAO << " °/m）" << std::endl;
   if (mode_ == "ms06") {
     // 收集本轮数据（下一轮 start 会 clear trail，须先快照）
-    rounds_.push_back(core_->trail());
-    roundPeriods_.push_back(m.wavePeriod);
-    roundAmps_.push_back(m.waveAmp);
-    roundMooring_.push_back(core_->mooringApplied());
-    refRao_.push_back(m.rollRAO);
-    std::cout << "MS-06: 已收集第 " << rounds_.size()
-              << " 轮练习数据（周期 " << m.wavePeriod << " s）" << std::endl;
+    addRound(core_->trail(), m.wavePeriod, m.waveAmp, core_->mooringApplied(),
+             m.rollRAO);
   }
   updateGmCompare();
 }
@@ -935,4 +953,170 @@ WaveResponseDialog::CompareStudentCsv(const std::string &_path,
     out.push_back(r);
   }
   return out;
+}
+
+// ══════════════════════════════════════════════════════════════
+// MS-06 v2：学生算法 / RAO–T 曲线 / 隐藏验收
+// ══════════════════════════════════════════════════════════════
+
+void WaveResponseDialog::addRound(const std::vector<keship::WaveSample> &_trail,
+                                  double _period, double _waveAmp, bool _mooring,
+                                  double _refRao) {
+  rounds_.push_back(_trail);
+  roundPeriods_.push_back(_period);
+  roundAmps_.push_back(_waveAmp);
+  roundMooring_.push_back(_mooring);
+  refRao_.push_back(_refRao);
+  studentRao_.push_back(-1.0);  // 本轮尚未运行
+  if (algoPanel_) algoPanel_->SetRound(_trail, _waveAmp, _period);
+  if (roundResultLabel_)
+    roundResultLabel_->setText(
+        QString("第 %1 轮已就绪（T = %2 s）：运行学生代码后显示学生/内置对比")
+            .arg(static_cast<int>(rounds_.size()))
+            .arg(_period, 0, 'f', 2));
+  updateCurve();
+  std::cout << "MS-06: 已收集第 " << rounds_.size() << " 轮（周期 " << _period
+            << " s）" << std::endl;
+}
+
+void WaveResponseDialog::AddRoundForTest(const std::vector<keship::WaveSample> &_trail,
+                                         double _period, double _waveAmp) {
+  const auto m = keship::WaveResponseCore::computeMetrics(_trail, _waveAmp, _period);
+  addRound(_trail, _period, _waveAmp, false, m.rollRAO);
+}
+
+void WaveResponseDialog::onStudentRaoReady(double _rao) {
+  if (rounds_.empty()) return;
+  const size_t idx = rounds_.size() - 1;
+  if (idx < studentRao_.size()) studentRao_[idx] = _rao;
+  const double ref = refRao_[idx];
+  const double err = keship::StudentCodeRunner::ErrorPct(_rao, ref);
+  const int v = keship::StudentCodeRunner::Verdict(_rao, ref);
+  const QString verdict = (v == 0) ? "通过" : (v == 1 ? "接近" : "不通过");
+  if (roundResultLabel_)
+    roundResultLabel_->setText(
+        QString("第 %1 轮：学生 RAO = %2 °/m ｜ 内置 RAO = %3 °/m ｜ 误差 %4% ｜ %5")
+            .arg(static_cast<int>(idx + 1))
+            .arg(_rao, 0, 'f', 4)
+            .arg(ref, 0, 'f', 4)
+            .arg(err, 0, 'f', 2)
+            .arg(verdict));
+  updateCurve();
+}
+
+void WaveResponseDialog::updateCurve() {
+  if (!raoCurve_) return;
+  std::vector<std::pair<double, double>> b, s;
+  for (size_t i = 0; i < rounds_.size(); ++i) {
+    if (i < refRao_.size()) b.emplace_back(roundPeriods_[i], refRao_[i]);
+    if (i < studentRao_.size() && studentRao_[i] > 0)
+      s.emplace_back(roundPeriods_[i], studentRao_[i]);
+  }
+  raoCurve_->SetData(b, s);
+}
+
+void WaveResponseDialog::resetStudentState() {
+  studentRao_.clear();
+  hiddenCases_.clear();
+  hiddenStudent_.clear();
+  validationRunning_ = false;
+  validationIndex_ = 0;
+  if (validationTable_) validationTable_->setRowCount(0);
+  if (validationStatusLabel_) validationStatusLabel_->clear();
+  if (roundResultLabel_)
+    roundResultLabel_->setText("本轮：运行学生代码后显示（内置值运行前不显示）");
+  if (raoCurve_) raoCurve_->Clear();
+}
+
+void WaveResponseDialog::onSubmitValidation() {
+  if (validationRunning_) return;
+  if (!algoPanel_ || !algoPanel_->HasRound()) {
+    QMessageBox::information(this, "提交验收", "请先记录一轮数据并写好算法。");
+    return;
+  }
+  const QString code = algoPanel_->CurrentCode();
+  if (code.trimmed().isEmpty()) return;
+  hiddenCases_ = keship::GenerateHiddenCases(
+      5, static_cast<unsigned>(std::random_device{}()));
+  hiddenStudent_.assign(hiddenCases_.size(), -1.0);
+  validationIndex_ = 0;
+  validationRunning_ = true;
+  if (validationTable_) validationTable_->setRowCount(0);
+  if (submitValidationBtn_) submitValidationBtn_->setEnabled(false);
+  if (validationStatusLabel_)
+    validationStatusLabel_->setText(
+        QString("验收中…（共 %1 组，过程隐藏数据）")
+            .arg(static_cast<int>(hiddenCases_.size())));
+  startNextHiddenCase();
+}
+
+void WaveResponseDialog::startNextHiddenCase() {
+  if (validationIndex_ >= static_cast<int>(hiddenCases_.size())) {
+    // 完成：公开全部结果
+    validationRunning_ = false;
+    if (submitValidationBtn_) submitValidationBtn_->setEnabled(true);
+    int pass = 0;
+    if (validationTable_) validationTable_->setRowCount(0);
+    for (size_t i = 0; i < hiddenCases_.size(); ++i) {
+      const auto &c = hiddenCases_[i];
+      const double stu = hiddenStudent_[i];
+      const double err =
+          stu > 0 ? keship::StudentCodeRunner::ErrorPct(stu, c.refRao) : -1.0;
+      const bool ok = (err >= 0.0 && err <= 5.0);
+      if (ok) ++pass;
+      if (validationTable_) {
+        const int row = validationTable_->rowCount();
+        validationTable_->insertRow(row);
+        auto set = [&](int col, const QString &s) {
+          validationTable_->setItem(row, col, new QTableWidgetItem(s));
+        };
+        set(0, QString::number(static_cast<int>(i) + 1));
+        set(1, QString::number(c.period, 'f', 2));
+        set(2, QString::number(c.waveAmp, 'f', 2));
+        set(3, QString::number(c.refRao, 'f', 3));
+        set(4, stu > 0 ? QString::number(stu, 'f', 3) : QString("—"));
+      }
+    }
+    if (validationStatusLabel_)
+      validationStatusLabel_->setText(
+          QString("验收完成：%1/%2 组通过（≤5%）%3")
+              .arg(pass)
+              .arg(static_cast<int>(hiddenCases_.size()))
+              .arg(pass == static_cast<int>(hiddenCases_.size()) ? " PASS" : " FAIL"));
+    return;
+  }
+  const auto &c = hiddenCases_[validationIndex_];
+  if (validationStatusLabel_)
+    validationStatusLabel_->setText(
+        QString("验收中… 第 %1/%2 组（数据隐藏）")
+            .arg(validationIndex_ + 1)
+            .arg(static_cast<int>(hiddenCases_.size())));
+  keship::WriteRoundDataCsv(c.trail, c.waveAmp, keship::kRoundDataPath);
+  keship::StudentCodeRunner::RunAsync(
+      this, algoPanel_->IsPython() ? "python" : "c", algoPanel_->CurrentCode(),
+      [this](const keship::StudentRunResult &_r) {
+        if (_r.ok && _r.valueOk &&
+            validationIndex_ < static_cast<int>(hiddenStudent_.size()))
+          hiddenStudent_[validationIndex_] = _r.value;
+        ++validationIndex_;
+        startNextHiddenCase();
+      });
+}
+
+void WaveResponseDialog::onExportValidation() {
+  if (hiddenCases_.empty()) {
+    QMessageBox::information(this, "导出验收数据", "尚无验收数据（请先提交验收）。");
+    return;
+  }
+  QString dir = QFileDialog::getExistingDirectory(this, "选择导出目录");
+  if (dir.isEmpty()) return;
+  for (size_t i = 0; i < hiddenCases_.size(); ++i) {
+    const auto &c = hiddenCases_[i];
+    const QString path = QString("%1/hidden_case_%2.csv").arg(dir).arg(i + 1);
+    std::ofstream f(path.toStdString());
+    if (!f) continue;
+    f << "t_s,roll_deg\n";
+    for (const auto &s : c.trail) f << s.t << "," << s.rollDeg << "\n";
+  }
+  QMessageBox::information(this, "导出验收数据", "已导出各组时程 CSV。");
 }

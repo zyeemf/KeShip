@@ -50,7 +50,6 @@
 #include "shared/UiTheme.hh"
 #include "experiments/DisplacementVerifyDialog.hh"
 #include "experiments/CodeRunnerDialog.hh"
-#include "experiments/MS06CodePracticeDialog.hh"
 #include "experiments/TurningCircleDialog.hh"
 #include "experiments/ZigzagDialog.hh"
 #include "experiments/WaveResponseDialog.hh"
@@ -3198,7 +3197,8 @@ void MenuPluginKeship::OnBtn_MS03_Rao()
 void MenuPluginKeship::OnBtn_MS06_RaoPractice()
 {
   if (ms06Dialog_) { ms06Dialog_->raise(); ms06Dialog_->activateWindow(); return; }
-  auto *dialog = new MS06CodePracticeDialog();
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms06");
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms06Dialog_ = nullptr; });
   ms06Dialog_ = dialog; dialog->show();

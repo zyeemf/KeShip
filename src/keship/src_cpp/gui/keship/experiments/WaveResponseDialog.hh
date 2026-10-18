@@ -31,6 +31,10 @@
 
 #include "WaveResponseCore.hh"
 #include "../shared/WaveInertiaIO.hh"
+#include "../shared/StudentAlgorithmPanel.hh"
+#include "../shared/RaoCurveWidget.hh"
+#include "../shared/StudentCodeRunner.hh"
+#include "HiddenCaseGenerator.hh"
 
 /// 响应时程图（自绘：三条曲线 roll / pitch / heave）
 class WaveChartWidget : public QWidget {
@@ -59,6 +63,10 @@ public:
   /// 把 RAO 表内容写入 CSV（纯函数、无 GUI 交互；onExportRao 与回归测试共用）
   static bool WriteRaoTableCsv(const QTableWidget *_table,
                                const std::string &_path);
+
+  /// 测试用：直接加入一轮数据（不依赖仿真；供离屏测试驱动）
+  void AddRoundForTest(const std::vector<keship::WaveSample> &_trail,
+                       double _period, double _waveAmp);
 
   /// MS-06 学生提交的一行比对结果
   struct StudentCompareRow {
@@ -155,6 +163,28 @@ private:
   std::vector<double> roundAmps_;         ///< 各轮有效波幅 (m)
   std::vector<bool> roundMooring_;        ///< 各轮开始时系泊是否已生效
   std::vector<double> refRao_;            ///< 各轮参考 RAO (°/m，平台计算)
+
+  // ── MS-06 v2：学生算法 + RAO–T 曲线 + 隐藏验收 ──
+  StudentAlgorithmPanel *algoPanel_ = nullptr;
+  RaoCurveWidget *raoCurve_ = nullptr;
+  QLabel *roundResultLabel_ = nullptr;       ///< 本轮学生 vs 内置（运行后显示内置）
+  QPushButton *submitValidationBtn_ = nullptr;
+  QTableWidget *validationTable_ = nullptr;  ///< 验收结果（完成后公开）
+  QLabel *validationStatusLabel_ = nullptr;
+  QPushButton *exportValidationBtn_ = nullptr;
+  std::vector<double> studentRao_;           ///< 各轮学生 RAO（-1 = 未运行）
+  std::vector<keship::HiddenWaveCase> hiddenCases_;
+  std::vector<double> hiddenStudent_;
+  bool validationRunning_ = false;
+  int validationIndex_ = 0;
+  void addRound(const std::vector<keship::WaveSample> &_trail, double _period,
+                double _waveAmp, bool _mooring, double _refRao);
+  void onStudentRaoReady(double _rao);
+  void updateCurve();
+  void resetStudentState();
+  void onSubmitValidation();
+  void startNextHiddenCase();
+  void onExportValidation();
 
   bool freeRunWarned_ = false;  ///< 自由响应提示每对话框只弹一次
   QTimer *timer_ = nullptr;
