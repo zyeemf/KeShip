@@ -68,27 +68,12 @@ public:
   void AddRoundForTest(const std::vector<keship::WaveSample> &_trail,
                        double _period, double _waveAmp);
 
-  /// MS-06 学生提交的一行比对结果
-  struct StudentCompareRow {
-    double period = 0.0;   ///< 波浪周期 (s)
-    double stuRao = -1.0;  ///< 学生 RAO (°/m；缺测为 -1)
-    double refRao = -1.0;  ///< 平台参考 RAO (°/m)
-    double errPct = -1.0;  ///< 误差 %（缺测为 -1）
-  };
-
-  /// MS-06：写练习数据包（poses CSV × N + wave_params.json + task.md）
-  /// 纯函数、无 GUI 交互；onExportPacket 与回归测试共用
-  static bool WritePracticePacket(
+  /// MS-06 v2：把隐藏验收各组时程写成 hidden_case_N.csv（t_s,roll_deg）
+  /// 纯函数、无 GUI 交互；onExportValidation 与回归测试共用
+  /// @return 成功写出的文件数（写入失败的文件跳过，不抛异常）
+  static int WriteValidationCases(
       const std::string &_dir,
-      const std::vector<std::vector<keship::WaveSample>> &_rounds,
-      const std::vector<double> &_periods, const std::vector<double> &_amps,
-      const std::vector<bool> &_mooring = {});
-
-  /// MS-06：解析并比对 student_rao.csv（周期匹配容差 0.5 s）
-  /// 纯函数、无 GUI 交互；onSubmitStudent 与回归测试共用
-  static std::vector<StudentCompareRow> CompareStudentCsv(
-      const std::string &_path, const std::vector<double> &_periods,
-      const std::vector<double> &_refRao, std::string *_err);
+      const std::vector<keship::HiddenWaveCase> &_cases);
 
 private slots:
   void onStart();
@@ -100,8 +85,6 @@ private slots:
   void onRecordResult();   ///< MS-03：把本次结果追加到 RAO 记录表
   void onDeleteRow();      ///< MS-03：删除 RAO 表选中行
   void onExportRao();      ///< MS-03：导出 RAO–周期汇总表 CSV
-  void onExportPacket();   ///< MS-06：导出练习数据包（位姿 CSV×N + 参数 + 任务书）
-  void onSubmitStudent();  ///< MS-06：提交学生结果 CSV 并与参考值比对
   void onImportGm();       ///< MS-03：导入 HS-04 GM 交付物
   void onMooringToggled(bool _on);  ///< 软系泊开关（默认不勾选）
   void onShowRaoHelp();             ///< RAO 教学+技术说明
@@ -153,11 +136,7 @@ private:
   keship::GmDeliverable gmDeliverable_;   ///< 已导入的交付物
   bool hasGm_ = false;                    ///< 是否已导入交付物
 
-  // ── MS-06 专用：编程练习数据收集与学生比对 ──
-  QPushButton *packetBtn_ = nullptr;      ///< 导出练习数据包
-  QPushButton *submitBtn_ = nullptr;      ///< 提交学生结果
-  QTableWidget *studentTable_ = nullptr;  ///< 学生结果比对表
-  QLabel *studentResultLabel_ = nullptr;  ///< 比对总判定
+  // ── MS-06 专用：各轮数据收集（v2 复用：学生算法 / RAO–T 曲线 / 隐藏验收）──
   std::vector<std::vector<keship::WaveSample>> rounds_;  ///< 各轮位姿时程
   std::vector<double> roundPeriods_;      ///< 各轮波浪周期 (s)
   std::vector<double> roundAmps_;         ///< 各轮有效波幅 (m)

@@ -23,11 +23,8 @@
 #include <algorithm>
 #include <random>
 #include <cmath>
-#include <cctype>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
 
 #include <QAbstractItemView>
 #include <QHeaderView>
@@ -343,12 +340,6 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     connect(deleteRowBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onDeleteRow);
     connect(exportRaoBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onExportRao);
     connect(importGmBtn_, &QPushButton::clicked, this, &WaveResponseDialog::onImportGm);
-    if (packetBtn_)
-      connect(packetBtn_, &QPushButton::clicked, this,
-              &WaveResponseDialog::onExportPacket);
-    if (submitBtn_)
-      connect(submitBtn_, &QPushButton::clicked, this,
-              &WaveResponseDialog::onSubmitStudent);
   }
 
   std::cout << tag
@@ -790,171 +781,6 @@ void WaveResponseDialog::updateGmCompare()
   gmCompareLabel_->setText(txt);
 }
 
-void WaveResponseDialog::onExportPacket()
-{
-  if (rounds_.empty()) {
-    QMessageBox::information(this, "导出练习数据包",
-        "尚无记录。请逐周期「施加波浪 → 开始记录 → 停止 → 记录本次结果」，\n"
-        "收集多轮数据后再导出。");
-    return;
-  }
-  QString dir = QFileDialog::getExistingDirectory(this, "选择数据包保存目录");
-  if (dir.isEmpty()) return;
-  const std::string base = (dir + "/ms06_packet").toStdString();
-  if (!WritePracticePacket(base, rounds_, roundPeriods_, roundAmps_,
-                           roundMooring_)) {
-    QMessageBox::warning(this, "导出练习数据包", "写入失败（目录不可写？）。");
-    return;
-  }
-  std::cout << "MS-06: 练习数据包已导出（" << rounds_.size()
-            << " 轮）-> " << base << std::endl;
-  QMessageBox::information(this, "导出练习数据包",
-      QString("已导出 %1 轮数据（位姿 CSV + wave_params.json + task.md）。\n"
-              "学生按 task.md 编程计算 RAO 后，用「提交学生结果」提交。")
-          .arg(static_cast<int>(rounds_.size())));
-}
-
-void WaveResponseDialog::onSubmitStudent()
-{
-  if (refRao_.empty()) {
-    QMessageBox::information(this, "提交学生结果",
-        "尚无参考数据。请先逐周期记录（每轮停止后点「记录本次结果」）。");
-    return;
-  }
-  QString path = QFileDialog::getOpenFileName(this, "选择学生结果 CSV",
-      "student_rao.csv", "CSV (*.csv)");
-  if (path.isEmpty()) return;
-  std::string err;
-  const auto rows =
-      CompareStudentCsv(path.toStdString(), roundPeriods_, refRao_, &err);
-  if (!err.empty()) {
-    QMessageBox::warning(this, "提交学生结果", QString::fromStdString(err));
-    return;
-  }
-  studentTable_->setRowCount(0);
-  bool allPass = true;
-  for (const auto &r : rows) {
-    const int row = studentTable_->rowCount();
-    studentTable_->insertRow(row);
-    auto num = [](double v) { return QString::number(v, 'f', 3); };
-    studentTable_->setItem(row, 0, new QTableWidgetItem(num(r.period)));
-    studentTable_->setItem(row, 1,
-        new QTableWidgetItem(r.stuRao > 0 ? num(r.stuRao) : "—"));
-    studentTable_->setItem(row, 2, new QTableWidgetItem(num(r.refRao)));
-    if (r.errPct >= 0.0) {
-      studentTable_->setItem(row, 3,
-          new QTableWidgetItem(QString::number(r.errPct, 'f', 1) + "%"));
-      if (r.errPct >= 10.0) allPass = false;
-    } else {
-      studentTable_->setItem(row, 3, new QTableWidgetItem("缺"));
-      allPass = false;
-    }
-  }
-  studentResultLabel_->setText(allPass
-      ? QString("通过：%1 轮全部与参考值误差 <10%").arg(rows.size())
-      : QString("未通过：存在误差 ≥10% 或缺测周期"));
-  std::cout << "MS-06: 学生结果已比对（" << rows.size() << " 轮参考）"
-            << std::endl;
-}
-
-bool WaveResponseDialog::WritePracticePacket(
-    const std::string &_dir,
-    const std::vector<std::vector<keship::WaveSample>> &_rounds,
-    const std::vector<double> &_periods, const std::vector<double> &_amps,
-    const std::vector<bool> &_mooring)
-{
-  if (_rounds.empty() || _rounds.size() != _periods.size() ||
-      _rounds.size() != _amps.size())
-    return false;
-  std::error_code ec;
-  std::filesystem::create_directories(_dir, ec);
-  if (ec) return false;
-  for (size_t i = 0; i < _rounds.size(); ++i) {
-    char name[128];
-    std::snprintf(name, sizeof(name), "/poses_T%05.2fs.csv", _periods[i]);
-    std::ofstream f(_dir + name);
-    if (!f) return false;
-    f << "t_s,roll_deg,pitch_deg,heave_m\n";
-    for (const auto &s : _rounds[i])
-      f << s.t << "," << s.rollDeg << "," << s.pitchDeg << "," << s.heave << "\n";
-  }
-  {
-    std::ofstream f(_dir + "/wave_params.json");
-    if (!f) return false;
-    f << "{\n  \"rounds\": [\n";
-    for (size_t i = 0; i < _rounds.size(); ++i) {
-      f << "    {\"period_s\": " << _periods[i]
-        << ", \"wave_amp_m\": " << _amps[i]
-        << ", \"mooring_enabled\": "
-        << ((i < _mooring.size() && _mooring[i]) ? "true" : "false") << "}"
-        << (i + 1 < _rounds.size() ? "," : "") << "\n";
-    }
-    f << "  ]\n}\n";
-  }
-  {
-    std::ofstream f(_dir + "/task.md");
-    if (!f) return false;
-    f <<
-      "# MS-06 RAO 编程计算实践 · 任务书\n\n"
-      "## 给定数据\n"
-      "- `poses_T*.csv`：各波浪周期下的船体位姿时程（列：t_s, roll_deg, pitch_deg, heave_m）\n"
-      "- `wave_params.json`：各轮的波浪周期与有效波幅\n\n"
-      "## 任务\n"
-      "1. 对每个周期，取**稳态段**（建议仿真时间后半段，排除起振瞬态）\n"
-      "2. 计算横摇稳态幅值：`amp = (max(roll) - min(roll)) / 2`（单位 °）\n"
-      "3. 计算 RAO：`RAO = amp / wave_amp`（单位 °/m）\n"
-      "4. 找出 RAO 峰值对应的周期（实测共振周期）\n"
-      "5. （对照）理论横摇周期 T0 = 2π√(Ixx/(Δ·GM))（由 HS-04 初稳性实验的\n"
-      "   GM 交付物计算），与实测峰值周期比较并讨论差异\n\n"
-      "## 提交格式\n"
-      "`student_rao.csv`：两列 `周期(s),RAO(°/m)`，每行一个周期，可含表头。\n";
-  }
-  return true;
-}
-
-std::vector<WaveResponseDialog::StudentCompareRow>
-WaveResponseDialog::CompareStudentCsv(const std::string &_path,
-                                      const std::vector<double> &_periods,
-                                      const std::vector<double> &_refRao,
-                                      std::string *_err)
-{
-  std::vector<StudentCompareRow> out;
-  std::ifstream f(_path);
-  if (!f) {
-    if (_err) *_err = "无法打开学生结果文件: " + _path;
-    return out;
-  }
-  std::vector<std::pair<double, double>> stu;
-  std::string line;
-  while (std::getline(f, line)) {
-    if (line.empty()) continue;
-    bool hasAlpha = false;
-    for (char c : line)
-      if (std::isalpha(static_cast<unsigned char>(c))) { hasAlpha = true; break; }
-    if (hasAlpha) continue;   ///< 跳过表头
-    std::stringstream ss(line);
-    std::string a, b;
-    if (!std::getline(ss, a, ',')) continue;
-    if (!std::getline(ss, b, ',')) continue;
-    try { stu.emplace_back(std::stod(a), std::stod(b)); } catch (...) { continue; }
-  }
-  if (stu.empty()) {
-    if (_err) *_err = "未解析到数据行（格式：周期(s),RAO(°/m)，每行一个周期）。";
-    return out;
-  }
-  for (size_t i = 0; i < _periods.size(); ++i) {
-    StudentCompareRow r;
-    r.period = _periods[i];
-    r.refRao = (i < _refRao.size()) ? _refRao[i] : -1.0;
-    for (const auto &p : stu)
-      if (std::fabs(p.first - r.period) < 0.5) { r.stuRao = p.second; break; }
-    if (r.stuRao > 0 && r.refRao > 0)
-      r.errPct = std::fabs(r.stuRao - r.refRao) / r.refRao * 100.0;
-    out.push_back(r);
-  }
-  return out;
-}
-
 // ══════════════════════════════════════════════════════════════
 // MS-06 v2：学生算法 / RAO–T 曲线 / 隐藏验收
 // ══════════════════════════════════════════════════════════════
@@ -1110,13 +936,30 @@ void WaveResponseDialog::onExportValidation() {
   }
   QString dir = QFileDialog::getExistingDirectory(this, "选择导出目录");
   if (dir.isEmpty()) return;
-  for (size_t i = 0; i < hiddenCases_.size(); ++i) {
-    const auto &c = hiddenCases_[i];
-    const QString path = QString("%1/hidden_case_%2.csv").arg(dir).arg(i + 1);
+  const int written = WriteValidationCases(dir.toStdString(), hiddenCases_);
+  const int total = static_cast<int>(hiddenCases_.size());
+  QMessageBox::information(
+      this, "导出验收数据",
+      written == total
+          ? QString("已导出各组时程 CSV。")
+          : QString("已导出 %1/%2 组（部分写入失败）。")
+                .arg(written)
+                .arg(total));
+}
+
+int WaveResponseDialog::WriteValidationCases(
+    const std::string &_dir,
+    const std::vector<keship::HiddenWaveCase> &_cases) {
+  int written = 0;
+  for (size_t i = 0; i < _cases.size(); ++i) {
+    const QString path = QString("%1/hidden_case_%2.csv")
+                             .arg(QString::fromStdString(_dir))
+                             .arg(static_cast<int>(i) + 1);
     std::ofstream f(path.toStdString());
     if (!f) continue;
     f << "t_s,roll_deg\n";
-    for (const auto &s : c.trail) f << s.t << "," << s.rollDeg << "\n";
+    for (const auto &s : _cases[i].trail) f << s.t << "," << s.rollDeg << "\n";
+    ++written;
   }
-  QMessageBox::information(this, "导出验收数据", "已导出各组时程 CSV。");
+  return written;
 }
