@@ -42,7 +42,7 @@ StudentAlgorithmPanel::StudentAlgorithmPanel(QWidget *_parent) : QWidget(_parent
   codeEdit_->setFont(mono);
   codeEdit_->setStyleSheet("background-color: #f5f5dc;");
   codeEdit_->setTabStopDistance(20);
-  codeEdit_->setMinimumHeight(260);
+  codeEdit_->setMinimumHeight(170);
   root->addWidget(codeEdit_, 1);
 
   auto *btnRow = new QHBoxLayout();
