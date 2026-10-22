@@ -11,6 +11,7 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -199,24 +200,32 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
   mooringStatusLabel_->setWordWrap(true);
   form->addRow("", mooringStatusLabel_);
-  /// ★ MS-06 两栏布局（2026-10-22，张老师 GUI 实测后重排）：
-  ///   左栏 = 参数 / 控制 / 读数 / 说明 / RAO 表 / 时程图；
-  ///   右栏 = 学生算法面板 / 本轮结果 / 验收 / RAO–T 曲线。
-  /// 原因：单栏时各控件最小高度合计约 1450 px，远超窗口高度，
+  /// ★ MS-06 网格布局（2026-10-22 二改，张老师要求「先按行、再分列」）：
+  ///   3 行 × 2 列，**同一行的左右顶部对齐**，避免两列各自堆叠造成行错位。
+  ///   行1：左=参数/控制/读数/结果　　右=学生算法面板（代码+按钮+状态）
+  ///   行2：左=说明/RAO 表/记录行/T₀　右=本轮结果/提交验收/验收表/导出
+  ///   行3：左=响应时程图　　　　　　右=RAO–T 曲线
+  /// 起因：单栏时最小高度合计约 1450 px > 窗口高度
   /// ⇒「运行本轮」等按钮与状态行被挤到代码框上。
-  /// 参数区放左栏（不跨栏）：跨栏会在字段不拉满后留出大片空白。
-  /// ms02 / ms03 仍走原单栏（col 默认指向 root）。
-  QVBoxLayout *col = root;
-  QVBoxLayout *rightPane = nullptr;
+  /// ms02 / ms03 仍走原单栏（L*/R* 默认全指向 root，加入顺序即代码顺序）。
+  QVBoxLayout *L1 = root, *L2 = root, *L3 = root;
+  QVBoxLayout *R1 = root, *R2 = root, *R3 = root;
   if (ms06) {
-    auto *mainRow = new QHBoxLayout();
-    col = new QVBoxLayout();
-    rightPane = new QVBoxLayout();
-    mainRow->addLayout(col, 1);
-    mainRow->addLayout(rightPane, 1);
-    root->addLayout(mainRow, 1);
+    auto *grid = new QGridLayout();
+    L1 = new QVBoxLayout(); R1 = new QVBoxLayout();
+    L2 = new QVBoxLayout(); R2 = new QVBoxLayout();
+    L3 = new QVBoxLayout(); R3 = new QVBoxLayout();
+    grid->addLayout(L1, 0, 0); grid->addLayout(R1, 0, 1);
+    grid->addLayout(L2, 1, 0); grid->addLayout(R2, 1, 1);
+    grid->addLayout(L3, 2, 0); grid->addLayout(R3, 2, 1);
+    grid->setColumnStretch(0, 1);
+    grid->setColumnStretch(1, 1);
+    grid->setRowStretch(0, 3);
+    grid->setRowStretch(1, 4);
+    grid->setRowStretch(2, 3);
+    root->addLayout(grid, 1);
   }
-  col->addWidget(paramBox);
+  L1->addWidget(paramBox);
 
   mooringTimer_ = new QTimer(this);
   mooringTimer_->setInterval(200);
@@ -242,7 +251,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   ctrlRow->addWidget(exportBtn_);
   connect(helpBtn_, &QPushButton::clicked, this,
           &WaveResponseDialog::onShowRaoHelp);
-  col->addLayout(ctrlRow);
+  L1->addLayout(ctrlRow);
 
   readoutLabel_ = new QLabel("仿真 t = —   横摇 = —   纵摇 = —   升沉 = —", this);
   resultLabel_ = (ms03 || ms06)
@@ -252,8 +261,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   readoutLabel_->setStyleSheet("font-family: monospace;");
   resultLabel_->setWordWrap(true);
   resultLabel_->setStyleSheet("font-family: monospace; font-weight: bold;");
-  col->addWidget(readoutLabel_);
-  col->addWidget(resultLabel_);
+  L1->addWidget(readoutLabel_);
+  L1->addWidget(resultLabel_);
 
   // ── MS-03/MS-06 专用：RAO 累积记录表 ──
   if (ms03 || ms06) {
@@ -274,7 +283,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
         this);
     guideLabel_->setWordWrap(true);
     guideLabel_->setStyleSheet("font-size:11px;");
-    col->addWidget(guideLabel_);
+    L2->addWidget(guideLabel_);
 
     raoTable_ = new QTableWidget(0, 5, this);
     raoTable_->setHorizontalHeaderLabels(
@@ -286,7 +295,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     raoTable_->setMinimumHeight(110);
     raoTable_->horizontalHeader()->setSectionResizeMode(
         QHeaderView::Stretch);
-    col->addWidget(raoTable_);
+    L2->addWidget(raoTable_);
 
     auto *raoRow = new QHBoxLayout();
     recordBtn_ = new QPushButton("记录本次结果", this);
@@ -299,7 +308,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     raoRow->addStretch();
     raoRow->addWidget(exportRaoBtn_);
     raoRow->addWidget(importGmBtn_);
-    col->addLayout(raoRow);
+    L2->addLayout(raoRow);
 
     // T₀ 对照行：ms03（与实测峰值周期对照）与 ms06（任务书第 5 步理论对照）共用
     gmCompareLabel_ = new QLabel(
@@ -309,13 +318,13 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
         this);
     gmCompareLabel_->setWordWrap(true);
     gmCompareLabel_->setStyleSheet("font-family: monospace; font-size:11px;");
-    col->addWidget(gmCompareLabel_);
+    L2->addWidget(gmCompareLabel_);
 
     // ── MS-06 v2：学生算法面板 + 本轮结果 + 隐藏验收 + RAO–T 曲线 ──
     if (ms06) {
       resize(1600, 950);
       algoPanel_ = new StudentAlgorithmPanel(this);
-      rightPane->addWidget(algoPanel_, 3);
+      R1->addWidget(algoPanel_, 1);
 
       auto *rightCol = new QVBoxLayout();
       roundResultLabel_ = new QLabel("本轮：运行学生代码后显示（内置值运行前不显示）", this);
@@ -339,10 +348,10 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
       exportValidationBtn_ = new QPushButton("导出验收数据", this);
       rightCol->addWidget(exportValidationBtn_);
       rightCol->addStretch();
-      rightPane->addLayout(rightCol, 2);
+      R2->addLayout(rightCol, 1);
 
       raoCurve_ = new RaoCurveWidget(this);
-      rightPane->addWidget(raoCurve_);
+      R3->addWidget(raoCurve_);
 
       roundResultLabel_->setObjectName("roundResultLabel");
       submitValidationBtn_->setObjectName("submitValidationBtn");
@@ -360,7 +369,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   }
 
   chart_ = new WaveChartWidget(this);
-  col->addWidget(chart_, 1);
+  L3->addWidget(chart_, 1);
 
   timer_ = new QTimer(this);
   connect(timer_, &QTimer::timeout, this, &WaveResponseDialog::onTick);
