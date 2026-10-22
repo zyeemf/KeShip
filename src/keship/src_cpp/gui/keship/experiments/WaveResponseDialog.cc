@@ -217,6 +217,24 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     mainRow->addLayout(L1, 1);
     mainRow->addLayout(R1, 1);
     root->addLayout(mainRow, 5);
+
+    /// ★ 区块标题（2026-10-22，张老师选定方案 B）：左右两列原本是「裸的」，
+    /// 学生看不出右边那块代码区是干什么的。补区块标题 + 淡底。
+    /// 底色**只加在标题条上**（不给整块）：整块底色会与已有边框重复，
+    /// 且会在自绘图表周围留出色带。
+    /// 底部「响应曲线」本身是 QGroupBox，标题**不上色**（否则与组框边框重复）。
+    auto mkTitle = [this](const QString &_text, const QString &_bg) {
+      auto *l = new QLabel(_text, this);
+      l->setObjectName("sectionTitle");
+      QString ss =
+          "font-weight:500; font-size:13px; color:#1f2937; padding:3px 8px;";
+      if (!_bg.isEmpty())
+        ss += " background-color:" + _bg + "; border-radius:4px;";
+      l->setStyleSheet(ss);
+      return l;
+    };
+    L1->addWidget(mkTitle("测量与记录", "#D6E4F5"));
+    R1->addWidget(mkTitle("编程与验收", "#D9EAC0"));
   }
   L1->addWidget(paramBox);
 
