@@ -13,7 +13,7 @@
 #include <cmath>
 
 RaoCurveWidget::RaoCurveWidget(QWidget *_parent) : QWidget(_parent) {
-  setMinimumHeight(150);
+  setMinimumHeight(125);
 }
 
 void RaoCurveWidget::SetData(const std::vector<std::pair<double, double>> &_builtin,

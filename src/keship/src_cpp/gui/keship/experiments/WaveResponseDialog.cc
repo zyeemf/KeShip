@@ -35,7 +35,7 @@
 // 响应时程图（三曲线）
 // ══════════════════════════════════════════════════════════════════
 WaveChartWidget::WaveChartWidget(QWidget *_parent) : QWidget(_parent) {
-  setMinimumHeight(200);
+  setMinimumHeight(130);
   setAutoFillBackground(true);
 }
 
@@ -175,7 +175,9 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   directionSpin_->setSingleStep(15.0);
   directionSpin_->setSuffix(" °");
   form->addRow("波浪方向：", directionSpin_);
-  form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
+  /// 波型行：ms02/ms03 保留；ms06 省略（信息已在组标题与说明条里，省一行高度）。
+  if (!ms06)
+    form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
 
   /// 参数框宽度：字段不拉满整行（2026-10-22 张老师 GUI 实测：“参数框不用那么宽”）。
   /// ⚠ 不用 setFieldGrowthPolicy(FieldsStayAtSizeHint)：那会让 wordWrap 的
@@ -200,30 +202,35 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
   mooringStatusLabel_->setWordWrap(true);
   form->addRow("", mooringStatusLabel_);
-  /// ★ MS-06 网格布局（2026-10-22 二改，张老师要求「先按行、再分列」）：
-  ///   3 行 × 2 列，**同一行的左右顶部对齐**，避免两列各自堆叠造成行错位。
-  ///   行1：左=参数/控制/读数/结果　　右=学生算法面板（代码+按钮+状态）
-  ///   行2：左=说明/RAO 表/记录行/T₀　右=本轮结果/提交验收/验收表/导出
-  ///   行3：左=响应时程图　　　　　　右=RAO–T 曲线
-  /// 起因：单栏时最小高度合计约 1450 px > 窗口高度
-  /// ⇒「运行本轮」等按钮与状态行被挤到代码框上。
+  /// ★ MS-06 三段横带（2026-10-22 三改，方案 A）：
+  ///   每行一个 QGroupBox ⇒ **横线贯穿整宽，视觉上先看行、再看列**。
+  ///   为何不用纯 QGridLayout：实测证明两列之间的空白会形成
+  ///   **贯穿三行的竖缝**，人眼仍先抓「两列」（张老师指出）。
+  ///   ① 参数与测量：左=参数/控制/读数/结果　右=学生算法（代码+按钮+状态）
+  ///   ② 记录与验收：左=说明/RAO 表/记录行/T₀　右=本轮结果/提交验收/验收表/导出
+  ///   ③ 响应曲线：　左=时程图　　　　　　　　右=RAO–T 曲线
   /// ms02 / ms03 仍走原单栏（L*/R* 默认全指向 root，加入顺序即代码顺序）。
   QVBoxLayout *L1 = root, *L2 = root, *L3 = root;
   QVBoxLayout *R1 = root, *R2 = root, *R3 = root;
   if (ms06) {
-    auto *grid = new QGridLayout();
-    L1 = new QVBoxLayout(); R1 = new QVBoxLayout();
-    L2 = new QVBoxLayout(); R2 = new QVBoxLayout();
-    L3 = new QVBoxLayout(); R3 = new QVBoxLayout();
-    grid->addLayout(L1, 0, 0); grid->addLayout(R1, 0, 1);
-    grid->addLayout(L2, 1, 0); grid->addLayout(R2, 1, 1);
-    grid->addLayout(L3, 2, 0); grid->addLayout(R3, 2, 1);
-    grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
-    grid->setRowStretch(0, 3);
-    grid->setRowStretch(1, 4);
-    grid->setRowStretch(2, 3);
-    root->addLayout(grid, 1);
+    auto *g1 = new QGroupBox("① 参数与测量", this);
+    auto *g2 = new QGroupBox("② 记录与验收", this);
+    auto *g3 = new QGroupBox("③ 响应曲线", this);
+    auto mkRow = [](QGroupBox *_g, QVBoxLayout *&_l, QVBoxLayout *&_r) {
+      auto *row = new QHBoxLayout(_g);
+      row->setContentsMargins(10, 3, 10, 5);
+      row->setSpacing(12);
+      _l = new QVBoxLayout();
+      _r = new QVBoxLayout();
+      row->addLayout(_l, 1);
+      row->addLayout(_r, 1);
+    };
+    mkRow(g1, L1, R1);
+    mkRow(g2, L2, R2);
+    mkRow(g3, L3, R3);
+    root->addWidget(g1, 3);
+    root->addWidget(g2, 4);
+    root->addWidget(g3, 3);
   }
   L1->addWidget(paramBox);
 
@@ -268,12 +275,11 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   if (ms03 || ms06) {
     guideLabel_ = new QLabel(ms06
         ? "<b>操作步骤（MS-06 为编程实践类实验）</b>："
-          "① 逐周期：设定周期与波幅 →「施加波浪」→「开始记录」，仿真时钟 ≥40 s 后「停止」"
-          "→「记录本次结果」（右侧「学生算法」面板自动载入本轮时程）；"
-          "② 点「运行本轮」跑你的代码 → 本轮结果行给出学生 RAO 与内置 RAO 的对比；"
-          "③ 改变波浪周期重复 ①② 约 5~8 次，下方 RAO–T 曲线随之累积（学生 vs 内置）；"
-          "④ 点「提交验收（隐藏数据 5 组）」——过程不显示数据，完成后 5 组全部公开；"
-          "留档用「导出验收数据」。"
+          "① 设周期/波幅 →「施加波浪」→「开始记录」→ ≥40 仿真秒后「停止」"
+          "→「记录本次结果」（右侧面板自动载入本轮时程）；"
+          "② 「运行本轮」跑你的代码 → 结果行对比学生/内置 RAO；"
+          "③ 改周期重复 ①② 约 5~8 次，RAO–T 曲线累积；"
+          "④ 「提交验收（隐藏 5 组）」——过程隐藏、完成后公开；留档用「导出验收数据」。"
         : "<b>操作步骤（MS-03 为操作类实验）</b>："
           "① 设定波浪周期与波幅 →「施加波浪」→「开始记录」，仿真时钟累计 ≥40 s 后「停止」；"
           "② 点「记录本次结果」，将本次 (周期, RAO) 存入下表；"
@@ -292,7 +298,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     raoTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     raoTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     raoTable_->setMaximumHeight(150);
-    raoTable_->setMinimumHeight(110);
+    raoTable_->setMinimumHeight(75);
     raoTable_->horizontalHeader()->setSectionResizeMode(
         QHeaderView::Stretch);
     L2->addWidget(raoTable_);
@@ -312,9 +318,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
 
     // T₀ 对照行：ms03（与实测峰值周期对照）与 ms06（任务书第 5 步理论对照）共用
     gmCompareLabel_ = new QLabel(
-        "理论横摇固有周期 T₀：尚未导入 HS-04 的 GM 交付物\n"
-        "（点「导入 GM 交付物」选择 hs04_gm.json；"
-        "T₀ = 2π√(Ixx/(Δ·GM)) 由 HS-04 的初稳性高、排水量与纵向转动惯量算出）",
+        "理论横摇固有周期 T₀：尚未导入 HS-04 的 GM 交付物"
+        "（点「导入 GM 交付物」选 hs04_gm.json；T₀ = 2π√(Ixx/(Δ·GM))）",
         this);
     gmCompareLabel_->setWordWrap(true);
     gmCompareLabel_->setStyleSheet("font-family: monospace; font-size:11px;");
@@ -322,7 +327,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
 
     // ── MS-06 v2：学生算法面板 + 本轮结果 + 隐藏验收 + RAO–T 曲线 ──
     if (ms06) {
-      resize(1600, 950);
+      resize(1600, 980);
       algoPanel_ = new StudentAlgorithmPanel(this);
       R1->addWidget(algoPanel_, 1);
 
@@ -343,7 +348,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
       validationTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
       validationTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
       validationTable_->setMaximumHeight(150);
-      validationTable_->setMinimumHeight(90);
+      validationTable_->setMinimumHeight(85);
       rightCol->addWidget(validationTable_);
       exportValidationBtn_ = new QPushButton("导出验收数据", this);
       rightCol->addWidget(exportValidationBtn_);
