@@ -36,7 +36,7 @@
 // 响应时程图（三曲线）
 // ══════════════════════════════════════════════════════════════════
 WaveChartWidget::WaveChartWidget(QWidget *_parent) : QWidget(_parent) {
-  setMinimumHeight(195);
+  setMinimumHeight(260);
   setAutoFillBackground(true);
 }
 
@@ -141,31 +141,59 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
 
   auto *root = new QVBoxLayout(this);
   auto *paramBox = new QGroupBox("规则波参数（与「水域环境参数」同一通道）", this);
-  auto *form = new QFormLayout(paramBox);
+  /// ★ MS-06 参数区两列化（2026-10-22）：9 行 → 6 行，省约 100 px 还给底部曲线。
+  /// ms02 / ms03 **保持原 QFormLayout**（观感不变）。
+  QFormLayout *form = nullptr;
+  QGridLayout *pgrid = nullptr;
+  if (ms06) {
+    pgrid = new QGridLayout(paramBox);
+    pgrid->setHorizontalSpacing(10);
+    pgrid->setVerticalSpacing(2);
+    pgrid->setColumnStretch(4, 1);  ///< 右侧留白吸收多余宽度
+  } else {
+    form = new QFormLayout(paramBox);
+  }
+  int slot = 0;
+  auto addField = [&](const QString &_label, QWidget *_w) {
+    if (pgrid) {
+      pgrid->addWidget(new QLabel(_label, paramBox), slot / 2, (slot % 2) * 2);
+      pgrid->addWidget(_w, slot / 2, (slot % 2) * 2 + 1);
+      ++slot;
+    } else {
+      form->addRow(_label, _w);
+    }
+  };
+  int wideRow = 3;
+  auto addWide = [&](QWidget *_w) {
+    if (pgrid)
+      pgrid->addWidget(_w, wideRow++, 0, 1, 4);
+    else
+      form->addRow("", _w);
+  };
 
   modelCombo_ = new QComboBox(paramBox);
   modelCombo_->addItems(_models.isEmpty() ? QStringList{"GT1"} : _models);
-  form->addRow("船模：", modelCombo_);
+  addField("船模：", modelCombo_);
 
   waveAmpSpin_ = new QDoubleSpinBox(paramBox);
   waveAmpSpin_->setRange(0.0, 5.0); waveAmpSpin_->setValue(0.5);
   waveAmpSpin_->setSingleStep(0.1); waveAmpSpin_->setSuffix(" m");
-  form->addRow("波幅：", waveAmpSpin_);
+  addField("波幅：", waveAmpSpin_);
 
   wavePeriodSpin_ = new QDoubleSpinBox(paramBox);
   wavePeriodSpin_->setRange(0.5, 20.0); wavePeriodSpin_->setValue(5.0);
   wavePeriodSpin_->setSingleStep(0.5); wavePeriodSpin_->setSuffix(" s");
-  form->addRow("波浪周期：", wavePeriodSpin_);
+  addField("波浪周期：", wavePeriodSpin_);
 
   gainSpin_ = new QDoubleSpinBox(paramBox);
   gainSpin_->setRange(0.0, 2.0); gainSpin_->setValue(1.0);
   gainSpin_->setSingleStep(0.1);
-  form->addRow("增益（波幅倍率）：", gainSpin_);
+  addField("增益（波幅倍率）：", gainSpin_);
 
   periodSpin_ = new QDoubleSpinBox(paramBox);
   periodSpin_->setRange(0.02, 1.0); periodSpin_->setValue(0.05);
   periodSpin_->setSingleStep(0.01); periodSpin_->setSuffix(" s");
-  form->addRow("采样轮询周期：", periodSpin_);
+  addField("采样轮询周期：", periodSpin_);
 
   /// 波浪方向：横摇 RAO（ms03/ms06）需横浪（90°）——顺浪下横摇被对称性
   /// 严格抵消（2026-10-16 端到端验证：驳船顺浪横摇 4e-15°）；
@@ -175,8 +203,13 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   directionSpin_->setValue((ms03 || ms06) ? 90.0 : 0.0);
   directionSpin_->setSingleStep(15.0);
   directionSpin_->setSuffix(" °");
-  form->addRow("波浪方向：", directionSpin_);
-  form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
+  addField("波浪方向：", directionSpin_);
+  if (pgrid) {
+    pgrid->addWidget(new QLabel("波型：CWR 单频规则波（实验固定）", paramBox), 3, 0, 1, 4);
+    wideRow = 4;
+  } else {
+    form->addRow("波型：", new QLabel("CWR 单频规则波（实验固定）", paramBox));
+  }
 
   /// 参数框宽度：字段不拉满整行（2026-10-22 张老师 GUI 实测：“参数框不用那么宽”）。
   /// ⚠ 不用 setFieldGrowthPolicy(FieldsStayAtSizeHint)：那会让 wordWrap 的
@@ -195,12 +228,17 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   mooringCheck_ = new QCheckBox(
       "启用水平软系泊（保持平均位置与航向；横摇/纵摇/升沉仍自由）", paramBox);
   mooringCheck_->setChecked(false);
-  form->addRow("实验边界：", mooringCheck_);
+  if (pgrid) {
+    pgrid->addWidget(new QLabel("实验边界：", paramBox), wideRow, 0);
+    pgrid->addWidget(mooringCheck_, wideRow++, 1, 1, 3);
+  } else {
+    form->addRow("实验边界：", mooringCheck_);
+  }
   mooringStatusLabel_ = new QLabel(
       "系泊状态：未启用（船模可自由漂移/偏航）", paramBox);
   mooringStatusLabel_->setStyleSheet("color: #8a6d00;");
   mooringStatusLabel_->setWordWrap(true);
-  form->addRow("", mooringStatusLabel_);
+  addWide(mooringStatusLabel_);
   /// ★ MS-06 方案 2（2026-10-22 四改）：**左右两列 + 底部通栏曲线**。
   ///   左列 = 测量（参数/控制/读数/说明/RAO 表/T₀）；
   ///   右列 = 编程与验收（学生算法/本轮结果/提交验收/验收表/导出）；
@@ -237,9 +275,6 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     R1->addWidget(mkTitle("编程与验收", "#D9EAC0"));
   }
   L1->addWidget(paramBox);
-
-  /// ms06 参数区收紧垂直间距：9 行每行省约 4 px（ms02/03 保持默认观感）。
-  if (ms06) form->setVerticalSpacing(2);
 
   mooringTimer_ = new QTimer(this);
   mooringTimer_->setInterval(200);
@@ -336,7 +371,7 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
     if (ms06) {
       resize(1600, 980);
       algoPanel_ = new StudentAlgorithmPanel(this);
-      R1->addWidget(algoPanel_, 1);
+      R1->addWidget(algoPanel_, 3);  ///< 验收表隐藏后右列有余量，让代码框吃掉
 
       auto *rightCol = new QVBoxLayout();
       roundResultLabel_ = new QLabel("本轮：运行学生代码后显示（内置值运行前不显示）", this);
@@ -356,11 +391,12 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
       validationTable_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
       validationTable_->setMaximumHeight(150);
       validationTable_->setMinimumHeight(100);
+      validationTable_->setVisible(false);  ///< 未提交前不占位（只有表头也是空的）
       rightCol->addWidget(validationTable_);
       exportValidationBtn_ = new QPushButton("导出验收数据", this);
       rightCol->addWidget(exportValidationBtn_);
       rightCol->addStretch();
-      R1->addLayout(rightCol, 1);
+      R1->addLayout(rightCol, 2);
 
       raoCurve_ = new RaoCurveWidget(this);
 
@@ -380,6 +416,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
   }
 
   chart_ = new WaveChartWidget(this);
+  /// 通栏大图只给 ms06；ms02/ms03 单栏保持 200 px（否则窗口被顶到 956）。
+  if (!ms06) chart_->setMinimumHeight(200);
   if (ms06) {
     /// 底部通栏：页签切换两张图 + 右上角小读数条（张老师 2026-10-22 拍板）。
     /// 两张图的使用时机不同（逐轮看时程判稳态 / 多轮后看 RAO–T 趋势）
@@ -925,7 +963,10 @@ void WaveResponseDialog::resetStudentState() {
   hiddenStudent_.clear();
   validationRunning_ = false;
   validationIndex_ = 0;
-  if (validationTable_) validationTable_->setRowCount(0);
+  if (validationTable_) {
+    validationTable_->setRowCount(0);
+    validationTable_->setVisible(false);  ///< 回到未提交状态
+  }
   if (validationStatusLabel_) validationStatusLabel_->clear();
   if (roundResultLabel_)
     roundResultLabel_->setText("本轮：运行学生代码后显示（内置值运行前不显示）");
@@ -945,7 +986,10 @@ void WaveResponseDialog::onSubmitValidation() {
   hiddenStudent_.assign(hiddenCases_.size(), -1.0);
   validationIndex_ = 0;
   validationRunning_ = true;
-  if (validationTable_) validationTable_->setRowCount(0);
+  if (validationTable_) {
+    validationTable_->setRowCount(0);
+    validationTable_->setVisible(true);  ///< 提交后公开结果表
+  }
   if (submitValidationBtn_) submitValidationBtn_->setEnabled(false);
   if (validationStatusLabel_)
     validationStatusLabel_->setText(
