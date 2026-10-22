@@ -1,7 +1,12 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* Phase D: 学生编程模块对话框 */
+/* Phase D: 学生编程模块对话框
+ *
+ * ⚠ 当前无调用点（v2 起同等能力由 StudentAlgorithmPanel +
+ *   StudentCodeRunner 承担）。张老师 2026-10-22 决定**暂时保留**，
+ *   作参考实现 —— 请勿按“死代码”删除。
+ */
 
 #ifndef CODE_RUNNER_DIALOG_HH_
 #define CODE_RUNNER_DIALOG_HH_
