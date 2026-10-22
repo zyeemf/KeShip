@@ -146,6 +146,7 @@ private:
   // ── MS-06 v2：学生算法 + RAO–T 曲线 + 隐藏验收 ──
   StudentAlgorithmPanel *algoPanel_ = nullptr;
   RaoCurveWidget *raoCurve_ = nullptr;
+  QLabel *curveReadout_ = nullptr;  ///< 底部曲线区右上角小读数条（第 N 轮/T/RAO）
   QLabel *roundResultLabel_ = nullptr;       ///< 本轮学生 vs 内置（运行后显示内置）
   QPushButton *submitValidationBtn_ = nullptr;
   QTableWidget *validationTable_ = nullptr;  ///< 验收结果（完成后公开）
