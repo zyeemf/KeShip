@@ -230,60 +230,11 @@ echo ""
 #   ⚠ 两个变量都要设：LD_LIBRARY_PATH 管库；GZ_SIM_SYSTEM_PLUGIN_PATH 管 gz 系统插件。
 #   ⚠ 前缀不存在时保持原行为（走系统/vendor，S2 降级），不报错、不中断启动。
 # ═══════════════════════════════════════════════════════════
-# 自动探测：优先 /opt/keship-gz（系统级部署），其次 $HOME/keship-gz（用户级部署，免 sudo）
-# 也可用环境变量 KESHIP_GZ_PREFIX 显式指定
-KESHIP_GZ_PREFIX=""
-if [ -n "${KESHIP_GZ_PREFIX:-}" ]; then
-    :   # 环境变量显式指定优先
-elif [ -d "/opt/keship-gz/lib" ]; then
-    KESHIP_GZ_PREFIX="/opt/keship-gz"
-elif [ -d "$HOME/keship-gz/lib" ]; then
-    KESHIP_GZ_PREFIX="$HOME/keship-gz"
-else
-    KESHIP_GZ_PREFIX="/opt/keship-gz"   # 都不存在时的提示路径
-fi
-if [ -d "$KESHIP_GZ_PREFIX/lib" ]; then
-    export LD_LIBRARY_PATH="$KESHIP_GZ_PREFIX/lib:$LD_LIBRARY_PATH"
-    # 自建 gz-sim（8.11.0）与系统 8.10 栈版本错配，需补 ROS vendor 的 Jetty 版
-    # gz-common/gz-math/gz-transport/sdformat/... ；自建前缀在最前优先命中打过补丁的库
-    for _d in /opt/ros/jazzy/opt/gz_*_vendor/lib; do
-        [ -d "$_d" ] && export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$_d"
-    done
-    if [ -d "$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins" ]; then
-        export GZ_SIM_SYSTEM_PLUGIN_PATH="$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins:$GZ_SIM_SYSTEM_PLUGIN_PATH"
-    fi
-    echo "[环境] 已启用自建 gz-sim: $KESHIP_GZ_PREFIX （S2 出水取消 M_A 生效）"
-    echo "[环境] LD_LIBRARY_PATH 已追加 ROS gz vendor 栈（版本匹配）"
-else
-    echo "[环境] 未发现自建 gz-sim（$KESHIP_GZ_PREFIX）—— S2 将自动降级"
-fi
-
-# ═══════════════════════════════════════════════════════════
-# Step 3.7: 自建 gz-physics 引擎插件（A）+ DART 告警静默（B）
-#   背景：DART 的 Inertia 语义是「刚体参数 (m,c,I)」，而附加质量 M_A 是各向异性
-#         对称阵 ⇒ M_RB+M_A 不再是刚体惯性形式 ⇒ verifySpatialTensor 告警刷屏。
-#         该告警**已判定良性**（求解器用原始 6×6，M_A 正确生效）。
-#         见 doc/audit/inertia_warning_2026-10-07.md §6.5。
-#   A: 自建 gz-physics7 的 dartsim 引擎插件（AddedMassFeatures 调 setSpatialTensor(M,false)）
-#      ⇒ 12 行/次 → 1 行/次（降 92%）。**需同时设两个变量**（gz-sim 默认引擎路径优先）。
-#   B: LD_PRELOAD 静默库（覆盖 dart::common::colorErr，吞 Inertia.cpp 的告警）⇒ 归零。
-#   ⚠ 两者都不改物理、不改数据；回退：KESHIP_PHYSICS_PREFIX="" / KESHIP_QUIET_INERTIA=0
-# ═══════════════════════════════════════════════════════════
-KESHIP_PHYSICS_PREFIX="${KESHIP_PHYSICS_PREFIX-/home/keship/gz-build/install-physics-7.8.0}"
-if [ -n "$KESHIP_PHYSICS_PREFIX" ] && [ -d "$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins" ]; then
-    export GZ_SIM_PHYSICS_ENGINE_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${GZ_SIM_PHYSICS_ENGINE_PATH:+:$GZ_SIM_PHYSICS_ENGINE_PATH}"
-    export LD_LIBRARY_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    echo "[环境] 已启用自建 gz-physics 引擎插件（A：关闭 DART 惯性自校验）: $KESHIP_PHYSICS_PREFIX"
-else
-    echo "[环境] 未发现自建 gz-physics（$KESHIP_PHYSICS_PREFIX）—— 走系统/vendor（告警照旧）"
-fi
-
-KESHIP_QUIET_INERTIA="${KESHIP_QUIET_INERTIA-1}"
-KESHIP_QUIET_SO=/home/keship/gz-build/kship_quiet_inertia.so
-if [ "$KESHIP_QUIET_INERTIA" = "1" ] && [ -f "$KESHIP_QUIET_SO" ]; then
-    export LD_PRELOAD="$KESHIP_QUIET_SO${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[环境] 已启用 DART 告警静默库（B）: $KESHIP_QUIET_SO"
-fi
+# 2026-10-23：环境准备已抽到 tools/keship_env.sh（**唯一来源**）
+#   修复「GUI 与无头台架环境不一致」的测试隐患（张老师指出）：
+#   原先自建 gz-sim / gz-physics / DART 静默库的配置写在本脚本内，
+#   绕过本脚本的 `ros2 launch` 路径会缺环境 ⇒ 曾导致 E0~E6 跑在系统 8.10.0 上。
+source "$(cd "$(dirname "$0")" && pwd)/tools/keship_env.sh"
 
 echo ""
 
