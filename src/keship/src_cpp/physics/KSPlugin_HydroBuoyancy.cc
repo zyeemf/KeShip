@@ -813,61 +813,19 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       }
       else
       {
-        /// ★ 2026-10-23 连续插值（张老师定）：
-        ///   原先直接回填 ECM 原值（全值），与出水时的 0 形成**离散跳变**
-        ///   ⇒ 动量 M·v 跳变 ⇒ 等效冲量 ⇒ 实测 roll 峰值 8.17°（E7）。
-        ///   改为按**当前帧逐体浸没比** `bodySubFrac_` 算几何 M_A，
-        ///   随吃水连续变化；配合下方 `MaRelEps` 阈值门控，每次 ΔM 很小
-        ///   ⇒ 冲量可忽略。出水时 target 仍为零（上方 `outStable` 分支）。
-        /// ★ 分离实验开关（2026-10-23）：KESHIP_MA_CONT=0 时不做连续插值，
-        ///   回到「入水即回填 ECM 全值」（用于定位 RAO 差异）。
-        static const bool maContEnabled = []() {
-          const char *e = std::getenv("KESHIP_MA_CONT");
-          return !(e && std::string(e) == "0");
-        }();
-        bool usedGeom = false;
-        double capMa = 0.0;
-        for (const auto &b : this->dataPtr->bodies)
-          capMa += b.totalVolume;
-        if (maContEnabled && capMa > 1e-12)
+        /// ★ 2026-10-23：**入水 ⇒ ECM 原值；出水 ⇒ 零**（离散两态，S2 原设计）。
+        ///   不做浸没比缩放：连续插值会让 target 每帧都变 ⇒ 阈值门控每帧触发
+        ///   ⇒ 每帧调 SetFluidAddedMass ⇒ 每步 setSpatialTensor（与修 S1 Clear 前等效）。
+        ///   保持恒定值，命令才只在状态翻转时下发一次。
+        ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它与 SDF 标定值不是同一个数，实测 RAO −10%。
+        auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
+        if (orig)
         {
-          /// ★ 用**整船浸没比**（所有体同值），而非逐体 `bodySubFrac_`：
-          ///   逐体比在横摇时两浮筒交替变深/变浅 ⇒ M_A 随相位剧烈变化
-          ///   ⇒ 变惯量系统 ⇒ 额外耗散 ⇒ RAO 被压低 10%（分离实验实测）。
-          ///   整船比把一深一浅平均掉 ⇒ M_A 近似恒定；出水时整船比=0 ⇒ M_A 仍归零。
-          /// ★ 用 **ECM 原值 × 整船浸没比**：形状沿用 SDF `am=` 标定矩阵，
-          ///   只按浸没比缩放 ⇒ 全浸时与基线**逐位一致**（RAO 不变），
-          ///   出水时归零，半浸时连续。
-          ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它按圆柱解析算出的值
-          ///   与 SDF 标定值（15/360/270/132.5/135/480）**不是同一个数**，
-          ///   实测会把 RAO 压低 10%（分离实验）。
-          auto origMa = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
-          if (origMa)
-          {
-            /// ★ 2026-10-23 回归**离散两态**（与 S2 原设计一致）：
-            ///   入水 ⇒ ECM 原值（不做浸没比缩放）；出水 ⇒ 零（上方 outStable 分支）。
-            ///   为何不做连续插值：连续插值让 target 每帧都变 ⇒ 阈值门控每帧触发
-            ///   ⇒ **每帧都调 SetFluidAddedMass** ⇒ 每步 setSpatialTensor，与修 Clear 前等效。
-            ///   保持恒定值，命令才只在状态翻转时下发一次。
-            ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它与 SDF 标定值不是同一个数，实测 RAO -10%。
-            target = *origMa;
-            usedGeom = true;
-            maOrigHas = 1;
-            for (int i = 0; i < 6; ++i)
-              maOrigMax = std::max(maOrigMax, std::abs(target(i, i)));
-          }
-        }
-        if (!usedGeom)
-        {
-          auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
-          if (orig)
-          {
-            target = *orig;
-            maOrigHas = 1;
-            for (int i = 0; i < 6; ++i)
-              for (int j = 0; j < 6; ++j)
-                maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
-          }
+          target = *orig;
+          maOrigHas = 1;
+          for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+              maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
         }
       }
     }
@@ -877,6 +835,9 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     ///     之后不再因目标值随帧变化而下发 ⇒ 不破坏动量守恒。
     ///   S3 关（默认，KESHIP_MA_DRAFT≠1）：沿用「相对上次下发值变化超阈值」门控，
     ///     行为与改动前逐位一致。
+    /// ⚠ 门控依赖 target **恒定**：若 target 每帧变（如加浸没比插值），
+    ///   needSend 会每帧为真 ⇒ 每帧 SetFluidAddedMass ⇒ 每步 setSpatialTensor。
+    ///   2026-10-23 已因此踩坑（连续插值版本 RAO −10%），改动前务必确认。
     bool needSend = false;
     /// ★ S3′（2026-10-07 最终形态）：状态翻转（出水↔入水）**且静止**时下发；
     ///   保持 S2 的"完全出水 ⇒ 归零"语义。
@@ -959,20 +920,13 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   {
     if (inWater && this->enableHydro_)
     {
-      /// ★ 阻尼按浸没比连续缩放（2026-10-23，张老师定）：
-      ///   f = Σbody.subVol / Σbody.totalVolume ∈ [0,1]。
-      ///   · 完全出水 ⇒ 0（空中无水阻尼，纯重力自由落体）
-      ///   · 全浸　　 ⇒ 1（**与改前逐位一致** ⇒ 静水/半浸教学实验不受影响）
-      ///   阻尼是**力**（非惯性）⇒ 连续缩放不引起动量跳变，安全。
-      ///   ⚠ 不设下限：不用阻尼掩盖异常状态（张老师定）。
-      /// ★ 分离实验开关（2026-10-23）：KESHIP_DAMP_IMMERSION=0 时退回
-      ///   「只要 inWater 就全阻尼」的旧行为（用于定位 RAO 差异）。
-      static const bool dampImmersionEnabled = []() {
-        const char *e = std::getenv("KESHIP_DAMP_IMMERSION");
-        return !(e && std::string(e) == "0");
-      }();
+      /// ★ 阻尼按浸没比连续缩放（2026-10-23）—— **默认关闭**（张老师定）。
+      ///   false：f ≡ 1，与 2026-10-23 之前**逐位一致**（当前选择）
+      ///   true ：f = Σbody.subVol / Σbody.totalVolume（完全出水 0 / 全浸 1）
+      ///   ⚠ 开启会使 MS-03 RAO 10.8754 → 10.7648（−1.0%），需先更新基线。
+      ///   开关：Implementation::dampImmersionScaleEnabled_（.hh）。
       double fDamp = 1.0;
-      if (dampImmersionEnabled)
+      if (this->dataPtr->dampImmersionScaleEnabled_)
       {
         double cap = 0.0;
         for (const auto &b : this->dataPtr->bodies)

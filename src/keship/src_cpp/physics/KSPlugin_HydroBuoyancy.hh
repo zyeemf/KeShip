@@ -149,6 +149,13 @@ namespace keship
     /// 目标阻尼比 (pose_based 模式用)
     double dampingRatio_{0.1};
 
+    /// ★ 阻尼按浸没比连续缩放（2026-10-23）—— **默认关闭**（张老师定）。
+    ///   false：f ≡ 1，与 2026-10-23 之前**逐位一致**（当前选择）
+    ///   true ：f = Σbody.subVol / Σbody.totalVolume ∈ [0,1]（空中 0 / 全浸 1）
+    ///   ⚠ 开启会使 MS-03 RAO 10.8754 → 10.7648（−1.0%），
+    ///     需同步更新基线后再开。
+    bool dampImmersionScaleEnabled_ = false;
+
     /// Fossen 水动力模型
     std::unique_ptr<FossenModel> fossen;
 
