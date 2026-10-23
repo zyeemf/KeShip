@@ -44,6 +44,8 @@ fi
 #   ⇒ 结论：不改 M_A（始终保持 SDF 标定值）。代价：空中垂荡失真（53%），
 #     但静水/半浸/落水演示全部正常。详见 doc/plans/gzsim_s1_clear_fix_plan.md §5.6。
 export KESHIP_MA_CANCEL=0
+#   ⚠ **若有抛落演示**（模型在空中飞行多秒），改为 1：
+#     那时空中垂荡才是正确的（100% 而非 53%），代价是小落差入水横摇 4.75°→8.17°。
 
 # ── Step 2: 自建 gz-physics 引擎插件（关 DART 惯性自校验）+ DART 告警静默 ──
 KESHIP_PHYSICS_PREFIX="${KESHIP_PHYSICS_PREFIX-/home/keship/gz-build/install-physics-7.8.0}"
