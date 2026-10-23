@@ -912,6 +912,21 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   {
     if (inWater && this->enableHydro_)
     {
+      /// ★ 阻尼按浸没比连续缩放（2026-10-23，张老师定）：
+      ///   f = Σbody.subVol / Σbody.totalVolume ∈ [0,1]。
+      ///   · 完全出水 ⇒ 0（空中无水阻尼，纯重力自由落体）
+      ///   · 全浸　　 ⇒ 1（**与改前逐位一致** ⇒ 静水/半浸教学实验不受影响）
+      ///   阻尼是**力**（非惯性）⇒ 连续缩放不引起动量跳变，安全。
+      ///   ⚠ 不设下限：不用阻尼掩盖异常状态（张老师定）。
+      double fDamp = 1.0;
+      {
+        double cap = 0.0;
+        for (const auto &b : this->dataPtr->bodies)
+          cap += b.totalVolume;
+        if (cap > 1e-12)
+          fDamp = std::min(1.0, std::max(0.0, totalSubVol / cap));
+      }
+
       /// ★ 阻尼力作用点 = 质心（2026-10-14 修复，见 doc/audit/hydro_damping_arm_2026-10-14.md）
       /// 原填 linkWorldPos（link 原点＝船体角点，距质心 1.6 m/0.99 m），而引擎按 link 原点解释力
       /// ⇒ 绕质心多出 (linkOrigin − CoM) × F_damping 的**寄生偏航力矩**
@@ -931,6 +946,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
             _ecm, modelPose, totalSubVol, effectiveFluidLevel,
             dampForce, dampTorque, totalMass);
         /// 阻尼的**力项无力臂**（作用于质心）⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+        dampForce *= fDamp;   ///< 按浸没比缩放（2026-10-23）
+        dampTorque *= fDamp;
         acc.Add({"damping/pose_based", dampForce, dampApplyPoint, dampTorque});
       }
       else if (this->dataPtr->fossen && this->dataPtr->fossen->valid())
@@ -958,10 +975,12 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
 
           /// 同上：Fossen 阻尼的力项无力臂（作用于质心）
           /// ⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+          forceWorld *= fDamp;   ///< 按浸没比缩放（2026-10-23）
+          torqueWorld *= fDamp;
           acc.Add({"damping/fossen", forceWorld, dampApplyPoint, torqueWorld});
 
           auto &d = this->dataPtr->hydroDiag;
-          for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i);
+          for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i) * fDamp;
           d.hydroActive = true;
           d.waterFrameCount++;
         }
