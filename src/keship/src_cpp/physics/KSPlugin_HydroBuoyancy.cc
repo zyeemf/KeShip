@@ -813,14 +813,36 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       }
       else
       {
-        auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
-        if (orig)
+        /// ★ 2026-10-23 连续插值（张老师定）：
+        ///   原先直接回填 ECM 原值（全值），与出水时的 0 形成**离散跳变**
+        ///   ⇒ 动量 M·v 跳变 ⇒ 等效冲量 ⇒ 实测 roll 峰值 8.17°（E7）。
+        ///   改为按**当前帧逐体浸没比** `bodySubFrac_` 算几何 M_A，
+        ///   随吃水连续变化；配合下方 `MaRelEps` 阈值门控，每次 ΔM 很小
+        ///   ⇒ 冲量可忽略。出水时 target 仍为零（上方 `outStable` 分支）。
+        bool usedGeom = false;
+        if (!this->dataPtr->bodies.empty()
+            && this->dataPtr->bodySubFrac_.size()
+                   == this->dataPtr->bodies.size())
         {
-          target = *orig;
+          target = ShipGeometricAddedMass(this->dataPtr->bodies,
+                                          this->dataPtr->bodySubFrac_,
+                                          this->dataPtr->fluidDensity_);
+          usedGeom = true;
           maOrigHas = 1;
           for (int i = 0; i < 6; ++i)
-            for (int j = 0; j < 6; ++j)
-              maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
+            maOrigMax = std::max(maOrigMax, std::abs(target(i, i)));
+        }
+        if (!usedGeom)
+        {
+          auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
+          if (orig)
+          {
+            target = *orig;
+            maOrigHas = 1;
+            for (int i = 0; i < 6; ++i)
+              for (int j = 0; j < 6; ++j)
+                maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
+          }
         }
       }
     }
