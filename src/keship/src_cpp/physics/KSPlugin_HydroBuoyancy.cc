@@ -819,18 +819,51 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         ///   改为按**当前帧逐体浸没比** `bodySubFrac_` 算几何 M_A，
         ///   随吃水连续变化；配合下方 `MaRelEps` 阈值门控，每次 ΔM 很小
         ///   ⇒ 冲量可忽略。出水时 target 仍为零（上方 `outStable` 分支）。
+        /// ★ 分离实验开关（2026-10-23）：KESHIP_MA_CONT=0 时不做连续插值，
+        ///   回到「入水即回填 ECM 全值」（用于定位 RAO 差异）。
+        static const bool maContEnabled = []() {
+          const char *e = std::getenv("KESHIP_MA_CONT");
+          return !(e && std::string(e) == "0");
+        }();
         bool usedGeom = false;
-        if (!this->dataPtr->bodies.empty()
-            && this->dataPtr->bodySubFrac_.size()
-                   == this->dataPtr->bodies.size())
+        double capMa = 0.0;
+        for (const auto &b : this->dataPtr->bodies)
+          capMa += b.totalVolume;
+        if (maContEnabled && capMa > 1e-12)
         {
-          target = ShipGeometricAddedMass(this->dataPtr->bodies,
-                                          this->dataPtr->bodySubFrac_,
-                                          this->dataPtr->fluidDensity_);
-          usedGeom = true;
-          maOrigHas = 1;
-          for (int i = 0; i < 6; ++i)
-            maOrigMax = std::max(maOrigMax, std::abs(target(i, i)));
+          /// ★ 用**整船浸没比**（所有体同值），而非逐体 `bodySubFrac_`：
+          ///   逐体比在横摇时两浮筒交替变深/变浅 ⇒ M_A 随相位剧烈变化
+          ///   ⇒ 变惯量系统 ⇒ 额外耗散 ⇒ RAO 被压低 10%（分离实验实测）。
+          ///   整船比把一深一浅平均掉 ⇒ M_A 近似恒定；出水时整船比=0 ⇒ M_A 仍归零。
+          /// ★ 用 **ECM 原值 × 整船浸没比**：形状沿用 SDF `am=` 标定矩阵，
+          ///   只按浸没比缩放 ⇒ 全浸时与基线**逐位一致**（RAO 不变），
+          ///   出水时归零，半浸时连续。
+          ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它按圆柱解析算出的值
+          ///   与 SDF 标定值（15/360/270/132.5/135/480）**不是同一个数**，
+          ///   实测会把 RAO 压低 10%（分离实验）。
+          auto origMa = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
+          if (origMa)
+          {
+            /// ★ 用 **相对平衡态的浸没比** tauShip/tau0 作缩放因子：
+            ///   静水平衡时 tauShip=tau0 ⇒ ratio=1 ⇒ M_A = SDF 标定值（与基线逐位一致）；
+            ///   完全出水 tauShip=0 ⇒ ratio=0 ⇒ M_A=0；半浸按比例连续。
+            ///   ⚠ 不能直接用 tauShip：空船的体积浸没比仅 0.27
+            ///   （静排水 0.300 m³ / 两浮筒总容积 1.104 m³），
+            ///   直接乘会把 M_A 压到 27%（实测 RAO 9.58）。
+            const double tauShip =
+                std::min(1.0, std::max(0.0, totalSubVol / capMa));
+            const double tau0 = this->dataPtr->maTau0_;
+            const double ratio =
+                (tau0 > 1e-9) ? std::min(1.0, tauShip / tau0) : 1.0;
+            target = *origMa;
+            for (int i = 0; i < 6; ++i)
+              for (int j = 0; j < 6; ++j)
+                target(i, j) *= ratio;
+            usedGeom = true;
+            maOrigHas = 1;
+            for (int i = 0; i < 6; ++i)
+              maOrigMax = std::max(maOrigMax, std::abs(target(i, i)));
+          }
         }
         if (!usedGeom)
         {
@@ -940,7 +973,14 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       ///   · 全浸　　 ⇒ 1（**与改前逐位一致** ⇒ 静水/半浸教学实验不受影响）
       ///   阻尼是**力**（非惯性）⇒ 连续缩放不引起动量跳变，安全。
       ///   ⚠ 不设下限：不用阻尼掩盖异常状态（张老师定）。
+      /// ★ 分离实验开关（2026-10-23）：KESHIP_DAMP_IMMERSION=0 时退回
+      ///   「只要 inWater 就全阻尼」的旧行为（用于定位 RAO 差异）。
+      static const bool dampImmersionEnabled = []() {
+        const char *e = std::getenv("KESHIP_DAMP_IMMERSION");
+        return !(e && std::string(e) == "0");
+      }();
       double fDamp = 1.0;
+      if (dampImmersionEnabled)
       {
         double cap = 0.0;
         for (const auto &b : this->dataPtr->bodies)
