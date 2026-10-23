@@ -37,6 +37,14 @@ else
     echo "[环境] ⚠ 未发现自建 gz-sim —— S2 将自动降级（空中仍带 M_A）"
 fi
 
+# ── Step 1b: 关闭 S2「出水取消 M_A」（2026-10-23，张老师实测定案）──
+#   实测：z=5 m 落水时，M_A 从 0 恢复到全值会使模型**沉底翻转 176°**
+#   （即使修好了 S1 补丁的 Clear 缺陷、命令只发 6 次也一样）。
+#   ⇒ DART 的 setSpatialTensor 在高速运动中改惯性本身不稳定，不是“每步重算”能解决的。
+#   ⇒ 结论：不改 M_A（始终保持 SDF 标定值）。代价：空中垂荡失真（53%），
+#     但静水/半浸/落水演示全部正常。详见 doc/plans/gzsim_s1_clear_fix_plan.md §5.6。
+export KESHIP_MA_CANCEL=0
+
 # ── Step 2: 自建 gz-physics 引擎插件（关 DART 惯性自校验）+ DART 告警静默 ──
 KESHIP_PHYSICS_PREFIX="${KESHIP_PHYSICS_PREFIX-/home/keship/gz-build/install-physics-7.8.0}"
 if [ -n "$KESHIP_PHYSICS_PREFIX" ] && [ -d "$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins" ]; then

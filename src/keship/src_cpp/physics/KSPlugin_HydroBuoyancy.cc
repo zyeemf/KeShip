@@ -844,21 +844,13 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           auto origMa = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
           if (origMa)
           {
-            /// ★ 用 **相对平衡态的浸没比** tauShip/tau0 作缩放因子：
-            ///   静水平衡时 tauShip=tau0 ⇒ ratio=1 ⇒ M_A = SDF 标定值（与基线逐位一致）；
-            ///   完全出水 tauShip=0 ⇒ ratio=0 ⇒ M_A=0；半浸按比例连续。
-            ///   ⚠ 不能直接用 tauShip：空船的体积浸没比仅 0.27
-            ///   （静排水 0.300 m³ / 两浮筒总容积 1.104 m³），
-            ///   直接乘会把 M_A 压到 27%（实测 RAO 9.58）。
-            const double tauShip =
-                std::min(1.0, std::max(0.0, totalSubVol / capMa));
-            const double tau0 = this->dataPtr->maTau0_;
-            const double ratio =
-                (tau0 > 1e-9) ? std::min(1.0, tauShip / tau0) : 1.0;
+            /// ★ 2026-10-23 回归**离散两态**（与 S2 原设计一致）：
+            ///   入水 ⇒ ECM 原值（不做浸没比缩放）；出水 ⇒ 零（上方 outStable 分支）。
+            ///   为何不做连续插值：连续插值让 target 每帧都变 ⇒ 阈值门控每帧触发
+            ///   ⇒ **每帧都调 SetFluidAddedMass** ⇒ 每步 setSpatialTensor，与修 Clear 前等效。
+            ///   保持恒定值，命令才只在状态翻转时下发一次。
+            ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它与 SDF 标定值不是同一个数，实测 RAO -10%。
             target = *origMa;
-            for (int i = 0; i < 6; ++i)
-              for (int j = 0; j < 6; ++j)
-                target(i, j) *= ratio;
             usedGeom = true;
             maOrigHas = 1;
             for (int i = 0; i < 6; ++i)
