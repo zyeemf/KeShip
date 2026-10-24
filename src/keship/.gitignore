@@ -22,9 +22,8 @@ models/waves/meshes/
 models/waves/model.sdf
 models/waves/model.config
 
-# 测试代码（不随仓库分发）
-src_cpp/test/
-test/
+# 测试代码：src_cpp/test/ 自 2026-10-24 起随仓库分发（甲类回归测试），不再忽略
+/test/
 worlds/test_buoyancy.sdf
 
 # 个人 IDE 配置

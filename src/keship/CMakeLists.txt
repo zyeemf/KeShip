@@ -297,72 +297,88 @@ target_link_libraries(KSPlugin_WavesModel PUBLIC
 install(TARGETS KSPlugin_WavesModel DESTINATION lib)
 
 
-############### 测试插件 - 编译/链接/安装 ###############
-# 测试源码不入库（.gitignore 排除 src_cpp/test/），仅本地存在时编译
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/test)
-add_library(TestBuoyancy SHARED
-  src_cpp/test/test_buoyancy.cc
-)
-target_link_libraries(TestBuoyancy PUBLIC
-  gz-sim8::core
-  gz-math7
-  keship_utils
-)
-install(TARGETS TestBuoyancy DESTINATION lib)
+############### 回归测试（2026-10-24 入库）###############
+# 背景：此前测试源码不入库（.gitignore 排除 src_cpp/test/），仅"本地存在时编译"。
+#   2026-10-24 核查发现：该目录当时并不存在，块内 5 个目标的源码也已丢失
+#   ⇒ 干净 clone 无法构建任何测试，历史验证结论不可复现。
+# 现状：甲类回归测试源码随仓库分发（src_cpp/test/），默认不构建，不影响生产。
+# 用法：colcon build --cmake-args -DKESHIP_BUILD_TESTS=ON && ctest --output-on-failure
+option(KESHIP_BUILD_TESTS "构建 KeShip 回归测试（默认 OFF，不影响生产构建）" OFF)
 
-# 独立浮力测试程序（待修复 Server API 访问）
-# add_executable(test_buoy
-#   src_cpp/test/standalone_test_buoy.cc
-# )
-# target_link_libraries(test_buoy ...)
-# install(TARGETS test_buoy DESTINATION lib/${PROJECT_NAME})
+if(KESHIP_BUILD_TESTS)
+  enable_testing()
+  find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
-# 浮力算法单元测试（独立可执行，无需 Gazebo Server）
-add_executable(test_buoyancy_unit
-  src_cpp/test/test_buoyancy_unit.cc
-)
-target_link_libraries(test_buoyancy_unit PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_buoyancy_unit DESTINATION lib/${PROJECT_NAME})
+  # ---- 甲-1：无 Qt 依赖（只链 keship_utils）----
+  add_executable(hidden_cases_test src_cpp/test/hidden_cases_test.cc)
+  target_include_directories(hidden_cases_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(hidden_cases_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(hidden_cases_test rclcpp ament_index_cpp)
+  add_test(NAME hidden_cases COMMAND hidden_cases_test)
 
-# 规范化缓存单元测试（验证缓存 OBJ 与源模型标准系一致）
-add_executable(test_mesh_normalize
-  src_cpp/test/test_mesh_normalize.cc
-)
-target_link_libraries(test_mesh_normalize PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_mesh_normalize DESTINATION lib/${PROJECT_NAME})
+  add_executable(verify_f3_enable_buoy src_cpp/test/verify_f3_enable_buoy.cc)
+  target_include_directories(verify_f3_enable_buoy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(verify_f3_enable_buoy gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(verify_f3_enable_buoy rclcpp ament_index_cpp)
+  add_test(NAME f3_enable_buoy COMMAND verify_f3_enable_buoy)
 
-# 海况等级（WMO/Douglas）与风级（Beaufort）换算单元测试
-add_executable(test_sea_state
-  src_cpp/test/test_sea_state.cc
-)
-target_link_libraries(test_sea_state PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_sea_state DESTINATION lib/${PROJECT_NAME})
+  # 需命令行参数，不进 ctest（用法：batch1_verify_probe <源文件>...）
+  add_executable(batch1_verify_probe src_cpp/test/batch1_verify_probe.cc)
+  target_include_directories(batch1_verify_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(batch1_verify_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(batch1_verify_probe rclcpp ament_index_cpp)
 
-# 测试世界生成工具（KSM → 世界 SDF，供自动化验证）
-add_executable(gen_test_world
-  src_cpp/test/gen_test_world.cc
-)
-target_link_libraries(gen_test_world PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS gen_test_world DESTINATION lib/${PROJECT_NAME})
+  # ---- 甲-2：Qt Widgets（离屏 GUI 测试）----
+  # 直接编译所需的 GUI 源文件，不链接整个 MenuPluginKeship 插件。
+  set(KS_GUI_TEST_SRCS
+    src_cpp/gui/keship/experiments/WaveResponseDialog.cc
+    src_cpp/gui/keship/shared/StudentAlgorithmPanel.cc
+    src_cpp/gui/keship/shared/RaoCurveWidget.cc
+    src_cpp/gui/keship/shared/StudentCodeRunner.cc
+    src_cpp/gui/keship/shared/UiTheme.cc
+    src_cpp/gui/keship/shared/BargeFactory.cc
+    src_cpp/gui/keship/shared/WaveInertiaIO.cc)
+
+  # 注：ms06_ui_offscreen_test.cc 未纳入 —— 它引用 MS06CodePracticeDialog（v1，已删除），
+  #     属过时测试；原件仍在 data/test/，但测的类已不存在，故降为丙类。
+  foreach(_t ms06_v2_offscreen_test ms06_v2_extra_test ms06_p3_modal_test ms06_layout_shot)
+    add_executable(${_t} src_cpp/test/${_t}.cc ${KS_GUI_TEST_SRCS})
+    target_include_directories(${_t} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+      ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(${_t} gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+    ament_target_dependencies(${_t} rclcpp ament_index_cpp)
+  endforeach()
+  add_test(NAME ms06_v2 COMMAND ms06_v2_offscreen_test)
+  add_test(NAME ms06_v2_extra COMMAND ms06_v2_extra_test)
+  add_test(NAME ms06_p3_modal COMMAND ms06_p3_modal_test)
+  add_test(NAME ms06_layout_shot COMMAND ms06_layout_shot)
+
+  # 回归判据：ctest -L regression
+  # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
+  #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
+  set_tests_properties(hidden_cases f3_enable_buoy
+                       PROPERTIES LABELS regression)
+  # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
+  set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
+                       PROPERTIES LABELS regression
+                                  ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（7 个可执行 / 6 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############
 # 让仿真在没有 GUI（MenuPluginKeship 不加载）时也能被命令行驱动。
 # 直接链接 keship_utils 复用同一个 ModelManager —— 不复制任何模型/水域/SDF 组装逻辑。
-# 注意：必须放在上面 if(EXISTS src_cpp/test) 之外（src_cpp/test 被 .gitignore 排除，
-# 本地不存在时该整块被跳过，放在里面会导致本目标不编译）。
+# 注意：必须放在上面的 if(KESHIP_BUILD_TESTS) 之外——测试默认不构建，
+# 而本目标是生产工具，必须始终编译。
 add_executable(keship_ctl
   src_cpp/headless/keship_ctl.cc
 )
