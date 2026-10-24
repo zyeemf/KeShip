@@ -4272,7 +4272,18 @@ bool ModelManager::SaveWorldManifest(const std::string &_dirpath,
       wave.obj.emplace_back("amplitude", JvMakeNum(a.waveParams.amplitude));
       wave.obj.emplace_back("scale", JvMakeNum(a.waveParams.scale));
       wave.obj.emplace_back("gain", JvMakeNum(a.waveParams.gain));
-      wave.obj.emplace_back("direction", JvMakeNum(a.waveParams.direction));
+      /// ★ 2026-10-24（张老师拍板方案 A）：directionAuto 为真时：
+      ///   浪向 = 「风速与流速中较大者」的方向；两者都为 0 时保持手动值。
+      ///   **生成期决定**（不依赖运行时联动）⇒ 改风/流方向后需重新生成 world。
+      double waveDirEff = a.waveParams.direction;
+      if (a.waveDirectionAuto)
+      {
+        const double vWind = a.windParams.speed;
+        const double vCur  = a.currentParams.speed;
+        if (vWind > 1e-9 || vCur > 1e-9)
+          waveDirEff = (vWind >= vCur) ? a.windParams.direction : a.currentParams.direction;
+      }
+      wave.obj.emplace_back("direction", JvMakeNum(waveDirEff));
       wave.obj.emplace_back("angle", JvMakeNum(a.waveParams.angle));
       wave.obj.emplace_back("steepness", JvMakeNum(a.waveParams.steepness));
       wave.obj.emplace_back("tau", JvMakeNum(a.waveParams.tau));
