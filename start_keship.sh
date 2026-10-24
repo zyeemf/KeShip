@@ -37,6 +37,7 @@ HEADLESS=false
 NO_GPU_WARM=false
 NO_D3D12=false
 EXTRA_GZ_ARGS=""
+GZ_VERBOSE=""   # gz 日志等级（空=用 launch 默认 4）
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -44,10 +45,12 @@ while [ $# -gt 0 ]; do
         --headless)     HEADLESS=true; shift ;;
         --no-gpu-warm)  NO_GPU_WARM=true; shift ;;
         --no-d3d12)     NO_D3D12=true; shift ;;
+        --gz-verbose)   GZ_VERBOSE="$2"; shift 2 ;;
         --help|-h)
             echo "KeShip 启动脚本"
             echo "  --no-build     跳过编译，直接启动（运行时可能是旧版本）"
             echo "  --headless     无头模式（gz sim -s，无 GUI）"
+            echo "  --gz-verbose N gz 日志等级 0~4（默认 4；调低可减少刷屏）"
             echo "  --no-gpu-warm  跳过 GPU 预热"
             echo "  --no-d3d12     退回 Mesa 默认渲染（软件渲染），用于对比/回滚"
             echo "  其余参数       转发为 Gazebo 的 extra_gz_args"
@@ -302,6 +305,9 @@ if [ "$HEADLESS" = true ]; then
 fi
 if [ -n "$EXTRA_GZ_ARGS" ]; then
     LAUNCH_CMD+=("extra_gz_args:=$EXTRA_GZ_ARGS")
+fi
+if [ -n "$GZ_VERBOSE" ]; then
+    LAUNCH_CMD+=("gz_verbose:=$GZ_VERBOSE")
 fi
 
 echo "[启动] 正在启动 KeShip 仿真..."

@@ -66,7 +66,9 @@ struct ShipHullSpec {
 struct HydroProperties {
   // 设计吃水参数
   double draft = 0.0;       // 吃水 [m]
-  double volume = 0.0;      // 排水体积 [m³]
+  double volume = 0.0;      // 全船体积 [m³] —— ★ 2026-10-24 更正：原注「排水体积」有误
+                            //   本字段被 4 处 `m = rho*volume` 当「均质船体体积」用；
+                            //   设计吃水处的排水体积请用下方 volumeD
   double KB = 0.0;          // 浮心垂向位置 [m]
   double BM = 0.0;          // 稳心半径 [m]
   double GM = 0.0;          // 初稳性高度 [m]

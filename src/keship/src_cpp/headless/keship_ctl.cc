@@ -1031,9 +1031,11 @@ int CmdHullInfo(const Args &_a) {
               << ",\"design_draft\":" << hp.draft
               << ",\"draft\":" << draft
               << ",\"volume_at_draft\":" << hull->volumeAtDraft(draft)
-              << ",\"Aw\":" << hp.Aw << ",\"Ix\":" << hp.Ix
+              /// ⚠ key 带口径后缀（2026-10-24）：裸名 KB/Aw 极易被误当「设计吃水处」的正确值。
+              ///    实测无脚本依赖这些 key（data/test 只解析 volume_full / volume_at_draft）。
+              << ",\"Aw_deck\":" << hp.Aw << ",\"Ix_deck\":" << hp.Ix
               << ",\"Cwp\":" << hp.Cwp << ",\"Ci\":" << hp.Ci
-              << ",\"KB\":" << hp.KB << ",\"BM\":" << hp.BM << ",\"GM\":" << hp.GM
+              << ",\"KB_depth\":" << hp.KB << ",\"BM_full\":" << hp.BM << ",\"GM_mixed\":" << hp.GM
               /// ★ 缺陷 ⑩ 修复（2026-09-20）新增：**设计吃水处**的正确静水力
               /// （上面 Aw/Ix/KB/BM/GM 是历史口径：甲板水线面 + 全深度积分 + 坐标系混用；
               ///  volume 仍是"全船体积"、被 4 处 `m = rho*volume` 依赖，不能改）

@@ -35,8 +35,9 @@ def launch(context, *args, **kwargs):
     headless:bool = LaunchConfiguration('headless').perform(context).lower() == 'true'
     gz_paused:bool = LaunchConfiguration('gz_paused').perform(context).lower() == 'true'
     extra_gz_args:str = LaunchConfiguration('extra_gz_args').perform(context)
+    gz_verbose:int = int(LaunchConfiguration('gz_verbose').perform(context))
     launch_processes.extend(
-        ks_launch.simulation(world_name, headless, gz_paused, extra_gz_args)
+        ks_launch.simulation(world_name, headless, gz_paused, extra_gz_args, gz_verbose)
     )
                     
     
@@ -125,6 +126,9 @@ def generate_launch_description():
         DeclareLaunchArgument('extra_gz_args', # 额外 Gazebo 参数
                               default_value='',
                               description='Extra arguments to pass to Gazebo.'),
+        DeclareLaunchArgument('gz_verbose', # Gazebo 日志等级（0~4，默认 4）
+                              default_value='4',
+                              description='Gazebo verbosity level 0-4; lower = less log spam.'),
 
 
 
