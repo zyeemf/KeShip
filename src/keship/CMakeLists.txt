@@ -377,6 +377,15 @@ if(KESHIP_BUILD_TESTS)
   ament_target_dependencies(sl02_hull_dialog_test rclcpp ament_index_cpp)
   add_test(NAME sl02_hull_dialog COMMAND sl02_hull_dialog_test)
 
+  # ---- 甲-4：数学船型"改质量→重建"回归探针（2026-10-25）
+  # 需要一套运行中的世界，故**不进 ctest**；用法见 tools/gui_test/run_rebuild_probe.sh
+  add_executable(mathhull_rebuild_probe src_cpp/test/mathhull_rebuild_probe.cc)
+  target_include_directories(mathhull_rebuild_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(mathhull_rebuild_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(mathhull_rebuild_probe rclcpp ament_index_cpp)
+
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
@@ -388,7 +397,7 @@ if(KESHIP_BUILD_TESTS)
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（8 个可执行 / 7 个 ctest 用例）")
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（9 个可执行 / 7 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############

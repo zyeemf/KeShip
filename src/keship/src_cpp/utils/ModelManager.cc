@@ -3918,6 +3918,78 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   auto it = sdfCache_.find(_instanceName);
   std::string base = it->second;
 
+  /// ★ 2026-10-25 修（张老师实测：数学船型改质量 +1kg 后自由落体）：
+  ///   本函数随后会把 SDF 截到最后一个 `</link>`，再按 BuoyancyConfig 重拼插件；
+  ///   而 BuoyancyConfig 只能表达 Box/Cylinder —— 数学船型的 `<buoyancy>` 是**网格**，
+  ///   无法表达 ⇒ 浮力插件整段丢失 ⇒ 模型失去浮力。
+  ///   对「SDF 自含 HydroBuoyancy 插件 **且** 没有缓存浮力配置」的模型改为**整段重放**：
+  ///   调用方（改质量那条路）已用 UpdateCachedSDFInertia 改好 `<inertial>`，
+  ///   重放即可让新质量生效，同时保住网格浮力体。
+  {
+    BuoyancyConfig probeCfg;
+    const bool haveCfgBuoy = GetCachedBuoyancyConfig(_instanceName, probeCfg)
+                             && !probeCfg.bodies.empty();
+    if (!haveCfgBuoy && base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+    {
+      std::cout << "RebuildModelWithAllPlugins: " << _instanceName
+                << " 为自含插件的模型（网格浮力体无法用 BuoyancyConfig 表达），整段重放"
+                << std::endl;
+      gz::msgs::EntityFactory req;
+      req.set_name(_instanceName);
+      req.set_allow_renaming(false);
+      req.set_sdf(base);
+      auto *rp = req.mutable_pose();
+      rp->mutable_position()->set_x(savedPose[0]);
+      rp->mutable_position()->set_y(savedPose[1]);
+      rp->mutable_position()->set_z(savedPose[2]);
+      gz::math::Quaterniond rq(savedPose[3], savedPose[4], savedPose[5]);
+      rp->mutable_orientation()->set_x(rq.X());
+      rp->mutable_orientation()->set_y(rq.Y());
+      rp->mutable_orientation()->set_z(rq.Z());
+      rp->mutable_orientation()->set_w(rq.W());
+
+      if (!CreateEntityViaService(req))
+      {
+        std::cerr << "RebuildModelWithAllPlugins: 重放失败，用原 SDF 还原: "
+                  << _instanceName << std::endl;
+        gz::msgs::EntityFactory req2;
+        req2.set_name(_instanceName);
+        req2.set_allow_renaming(false);
+        req2.set_sdf(origBaseSdf);
+        auto *rp2 = req2.mutable_pose();
+        rp2->mutable_position()->set_x(savedPose[0]);
+        rp2->mutable_position()->set_y(savedPose[1]);
+        rp2->mutable_position()->set_z(savedPose[2]);
+        rp2->mutable_orientation()->set_x(rq.X());
+        rp2->mutable_orientation()->set_y(rq.Y());
+        rp2->mutable_orientation()->set_z(rq.Z());
+        rp2->mutable_orientation()->set_w(rq.W());
+        CreateEntityViaService(req2);
+        uint32_t rid = 0;
+        if (GetModelIDByInstanceNameFromGazebo(_instanceName, rid))
+          modelList[_instanceName] = rid;
+        return false;
+      }
+
+      uint32_t rid = 0;
+      bool found2 = GetModelIDByInstanceNameFromGazebo(_instanceName, rid);
+      uint32_t tries2 = 100;
+      while (!found2 && tries2-- > 0)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        found2 = GetModelIDByInstanceNameFromGazebo(_instanceName, rid);
+      }
+      if (found2)
+      {
+        modelList[_instanceName] = rid;
+        SensorConfig scEmpty;
+        NotifyModelSpawned(_instanceName, scEmpty);
+        return true;
+      }
+      return false;
+    }
+  }
+
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
   bool hasExternalForce = base.find("<external_force>") != std::string::npos
