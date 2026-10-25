@@ -1351,6 +1351,24 @@ bool ModelManager::SpawnCylinderInGazebo(
 namespace
 {
 /// 水动力标签的唯一生成处（2026-10-25）：SdfBuilder 与 SpawnMathHull 共用，
+/// 提取 SDF 里所有 `<plugin filename="...">` 的文件名（2026-10-25）
+/// 用于重建后的"插件不丢失"不变量检查。
+std::vector<std::string> PluginFileNamesInSdf(const std::string &_sdf)
+{
+  std::vector<std::string> names;
+  const std::string key = "<plugin filename=\"";
+  size_t pos = 0;
+  while ((pos = _sdf.find(key, pos)) != std::string::npos)
+  {
+    pos += key.size();
+    const size_t end = _sdf.find('"', pos);
+    if (end == std::string::npos) break;
+    names.push_back(_sdf.substr(pos, end - pos));
+    pos = end;
+  }
+  return names;
+}
+
 /// 避免"同一套标签写两遍、改一处漏一处"。
 std::string BuildHydroSdfTags(const keship::HydroConfig &_hc)
 {
@@ -4038,9 +4056,31 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
   ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
 
+  /// ★ 2026-10-25 通用防护：**重建不得丢插件**
+  ///   重建按 BuoyancyConfig/SensorConfig 等**键值配置**重拼插件，
+  ///   而配置能表达的东西比 SDF 少（典型：数学船型的网格浮力体）。
+  ///   对比原缓存 SDF 与重建产物的 plugin 集合；少一个就整段重放 ——
+  ///   宁可放弃"按配置刷新"，也不让模型丢功能（2026-10-25 自由落体事故）。
+  std::string finalSdf = sdf.str();
+  {
+    const std::vector<std::string> before = PluginFileNamesInSdf(origBaseSdf);
+    const std::vector<std::string> after = PluginFileNamesInSdf(finalSdf);
+    std::vector<std::string> missing;
+    for (const auto &pname : before)
+      if (std::find(after.begin(), after.end(), pname) == after.end())
+        missing.push_back(pname);
+    if (!missing.empty())
+    {
+      std::cerr << "RebuildModelWithAllPlugins: 重建会丢失插件";
+      for (const auto &mname : missing) std::cerr << " [" << mname << "]";
+      std::cerr << " —— 改用整段重放（缓存 SDF 已含更新后的 inertia）" << std::endl;
+      finalSdf = base;
+    }
+  }
+
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
-  req.set_name(_instanceName); req.set_allow_renaming(false); req.set_sdf(sdf.str());
+  req.set_name(_instanceName); req.set_allow_renaming(false); req.set_sdf(finalSdf);
   auto rp = req.mutable_pose();
   rp->mutable_position()->set_x(savedPose[0]);
   rp->mutable_position()->set_y(savedPose[1]);
