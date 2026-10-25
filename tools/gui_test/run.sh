@@ -91,6 +91,16 @@ export ROS_DOMAIN_ID="66"
 export LIBGL_ALWAYS_SOFTWARE=1
 export GALLIUM_DRIVER=llvmpipe
 mkdir -p "$KESHIP_DATA_DIR"
+# 浮力插件要求"船在某个水区内"才施力（inWater=false 时整段跳过）。
+# 注意：不要在启动前写数据目录里的 keship_water_areas.json ——
+# GUI 启动时会用内存里的（空）状态覆盖它（2026-10-25 实测）。改为启动后 water set 热更新。
+cat > "$OUT/water_test.json" <<'JSON'
+{"version":2,"areas":[{"name":"测试水域","xMin":-50,"xMax":50,"yMin":-50,"yMax":50,"baseHeight":0,
+"vertices":[[-50,-50],[50,-50],[50,50],[-50,50]],"waveModel":"PMS","wavePeriod":5,"waveNumber":6,
+"waveScale":1.1,"waveGain":0,"waveDirection":0,"waveAngle":0.4,"waveSteepness":0,"waveAmplitude":0,
+"waveTau":2,"windSpeed":0,"windDirection":0,"currentSpeed":0,"currentDirection":0,
+"waveDirectionAuto":"true"}]}
+JSON
 
 # ── T2 产物新鲜度闸门（--no-build 不能静默跑旧二进制）──
 # 基准取 install/lib 下**最新**的 .so：改 GUI 只重建 MenuPluginKeship，不动水动力插件，
@@ -133,6 +143,20 @@ if [ "$LAUNCH_N" -eq 1 ] && [ "$RETRY_N" -eq 0 ]; then
   pass "T4 单次启动（无崩溃重试）"
 else
   fail "T4 启动次数=$LAUNCH_N 重试标志=$RETRY_N（应用一次启动）"
+fi
+
+# ── T4.5 注入测试水区（浮力插件要求船在水区内；启动后才可写）──
+CTL="$WS/install/lib/keship/keship_ctl"
+if "$CTL" --force water set "$OUT/water_test.json" > "$OUT/water_set.log" 2>&1; then
+  sleep 2
+  if "$CTL" --force --json water show 2>/dev/null | grep -q "测试水域"; then
+    pass "T4.5 测试水区已生效（热更新）"
+  else
+    fail "T4.5 水区写入后未读到"
+  fi
+else
+  fail "T4.5 water set 失败"
+  tail -3 "$OUT/water_set.log" | tee -a "$RESULT"
 fi
 
 sleep 5
@@ -181,6 +205,63 @@ if [ -n "${LOAD_BTN_X:-}" ] && [ -n "${LOAD_BTN_Y:-}" ]; then
         awk -v d="$D2" 'BEGIN { exit (d > 0.002) ? 0 : 1 }' \
           && pass "T9 打开数学船型对话框（画面变化）" \
           || fail "T9 对话框未打开（$D2）"
+        # ── T10 语义断言：GUI 生成的模型是否**真的**进入场景并浮稳 ──
+        if [ -n "${GEN_BTN_X:-}" ] && [ -n "${GEN_BTN_Y:-}" ]; then
+          CTL="$WS/install/lib/keship/keship_ctl"
+          MODEL_NAME="Wigley"
+          click_screen "$GEN_BTN_X" "$GEN_BTN_Y"
+          sleep 2
+          shot_window "$WIN" "$OUT/04_after_spawn.png" >/dev/null 2>&1 || true
+
+          IN_SCENE=false
+          for _ in $(seq 1 40); do
+            if "$CTL" --force --json model info "$MODEL_NAME" > "$OUT/model_info.json" 2>/dev/null \
+               && grep -q '"inScene":true' "$OUT/model_info.json"; then
+              IN_SCENE=true
+              break
+            fi
+            sleep 1
+          done
+          [ "$IN_SCENE" = true ] && pass "T10 模型已进入场景（inScene=true）" \
+            || fail "T10 40s 内模型未进入场景"
+
+          PX=""
+          PY=""
+          PZ=""
+          SETTLED=false
+          LAST=""
+          for _ in $(seq 1 30); do
+            CUR=$("$CTL" --force --json model pose "$MODEL_NAME" 2>/dev/null \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(*d["pos"])' 2>/dev/null) || true
+            if [ -n "${CUR:-}" ]; then
+              CZ=$(echo "$CUR" | awk '{print $3}')
+              if [ -n "${LAST:-}" ] && awk -v a="$LAST" -v b="$CZ" \
+                   'BEGIN { d=a-b; if (d<0) d=-d; exit (d < 0.02) ? 0 : 1 }'; then
+                SETTLED=true
+                LAST="$CZ"
+                break
+              fi
+              LAST="$CZ"
+            fi
+            sleep 1
+          done
+          if [ -n "${CUR:-}" ]; then
+            read -r PX PY PZ <<< "$CUR"
+            echo "  浮定后位姿: x=$PX y=$PY z=$PZ（生成时 z=0.6）" | tee -a "$RESULT"
+            awk -v x="$PX" -v y="$PY" 'BEGIN { exit (x*x + y*y < 0.09) ? 0 : 1 }' \
+              && pass "T11 水平位置未漂移（|x|,|y| < 0.3 m）" \
+              || fail "T11 水平位置漂移过大（x=$PX y=$PY）"
+            [ "$SETTLED" = true ] && pass "T12 已浮稳（相邻 1s |Δz| < 0.02 m）" \
+              || fail "T12 30s 内未浮稳（仍在持续下沉/上浮）"
+            awk -v z="$PZ" 'BEGIN { exit (z > -1.0 && z < 1.0) ? 0 : 1 }' \
+              && pass "T13 停在水面附近（z=$PZ）" \
+              || fail "T13 z=$PZ 不在水面附近（浮力未生效？）"
+          else
+            fail "T11 读取位姿失败"
+          fi
+        else
+          skip "T10 未标定「生成模型」按钮坐标（GEN_BTN_X/Y）"
+        fi
         xdotool key --window "$WIN" Escape 2>/dev/null
         sleep 1
       else
@@ -201,10 +282,10 @@ log "请求退出"
 kill -TERM -"$KSHIP_PID" 2>/dev/null
 GONE=false
 for _ in $(seq 1 30); do pg_alive "$KSHIP_PID" || { GONE=true; break; }; sleep 1; done
-[ "$GONE" = true ] && pass "T10 进程组已退出" || fail "T10 30s 内未退出"
+[ "$GONE" = true ] && pass "T14 进程组已退出" || fail "T10 30s 内未退出"
 
 RETRIES_AFTER=$(grep -c "次尝试\|检测到崩溃" "$OUT/keship.log" || true)
-[ "$RETRIES_AFTER" -eq 0 ] && pass "T11 退出前未触发崩溃重试" \
+[ "$RETRIES_AFTER" -eq 0 ] && pass "T15 退出前未触发崩溃重试" \
   || fail "T11 运行期间出现重试标志 $RETRIES_AFTER 次"
 
 # ── T12 生产数据未被触碰（KESHIP_DATA_DIR 隔离应保证这一点）──
@@ -213,7 +294,7 @@ if [ -f "$PROD_JSON" ]; then
   PROD_MTIME=$(stat -c %Y "$PROD_JSON")
   sleep 1
   [ "$(stat -c %Y "$PROD_JSON")" = "$PROD_MTIME" ] \
-    && pass "T12 生产水域 JSON 未被改写" \
+    && pass "T16 生产水域 JSON 未被改写" \
     || fail "T12 生产水域 JSON 被改写（隔离失效）"
 fi
 

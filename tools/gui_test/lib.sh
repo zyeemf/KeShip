@@ -53,3 +53,10 @@ click_win() {
 pg_alive() {
   kill -0 -"$1" 2>/dev/null
 }
+
+# 屏幕绝对坐标点击（本 run 独占 display，生成模型按钮可能落在主窗口下沿之外）
+click_screen() {
+  local x="$1" y="$2"
+  xdotool mousemove "$x" "$y" click 1
+  sleep "${CLICK_WAIT:-1.2}"
+}
