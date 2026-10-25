@@ -1511,36 +1511,21 @@ HydroConfig ModelManager::EstimateMathHullHydro(const ShipHullSpec &_spec, bool 
 }
 
 /////////////////////////////////////////////////
-bool ModelManager::SpawnMathHull(
-    const std::string &_instanceName,
-    const ShipHullSpec &_spec,
-    double _pos[6],
-    const MathHullPluginOpts &_opts)
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 数学船型 SDF 组装（纯函数，2026-10-25）
+/// 不写文件、不触 gz：给定 (名称/规格/插件选项/两个网格路径) 即得确定 SDF，
+/// 便于离线单测覆盖"名称/质量/惯性/浮力网格/水动力标签/附加质量"这些易错点。
+std::string ModelManager::MakeMathHullSDF(
+    const std::string &_instanceName, const ShipHullSpec &_spec,
+    const MathHullPluginOpts &_opts,
+    const std::string &visPath, const std::string &buoyPath)
 {
-  // 生成 OBJ 文件 (Phase B: 模型加载菜单)
-  std::string dir = keship::KeshipModelsDir();
-  if (std::system(("mkdir -p " + dir).c_str()) != 0)
-    std::cerr << "SpawnMathHull: 创建目录失败 " << dir << std::endl;
-
   ShipHullGenerator hull(_spec);
-  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与实验对话框同一处错）：
-  /// gz 的 `gz::common::MeshManager` **按文件路径**缓存网格 —— 同路径换内容仍返回旧网格。
-  /// 原先只按实例名命名（`<名>_vis.obj`）→ 同名实例换参数重新生成时，
-  /// 界面里显示的仍是旧船（GUI 进程常驻、缓存永不失效）。
-  /// 典型触发：`keship_ctl model spawn-hull hullA --L 6` → 删除 → `--L 9` 同名重生。
-  /// 加指纹后几何一变 URI 就变；几何相同则命中缓存是正确的（内容本就一致）。
-  const std::string meshTag = hull.meshTag();
-  std::string visPath = dir + _instanceName + "_vis_" + meshTag + ".obj";
-  std::string buoyPath = dir + _instanceName + "_buoy_" + meshTag + ".obj";
-  hull.writeVisualOBJ(visPath);
-  hull.writeBuoyancyOBJ(buoyPath);
-
-  double L = _spec.L, B = _spec.B, D = _spec.D;
-  double actualVol = hull.hydroProps().volume;
-  double m = _spec.rho * actualVol;
-  double ixx = m / 12.0 * (B * B + D * D);
-  double iyy = m / 12.0 * (L * L + D * D);
-  double izz = m / 12.0 * (L * L + B * B);
+  const double L = _spec.L, B = _spec.B, D = _spec.D;
+  const double m = _spec.rho * hull.hydroProps().volume;
+  const double ixx = m / 12.0 * (B * B + D * D);
+  const double iyy = m / 12.0 * (L * L + D * D);
+  const double izz = m / 12.0 * (L * L + B * B);
 
   /// 水动力标签（2026-10-25）：优先用完整 HydroConfig（与圆柱体/网格模型同一套标签），
   /// 否则退回旧的 3 项 <linear_damping>（keship_ctl --damping 兼容路径）
@@ -1604,6 +1589,51 @@ bool ModelManager::SpawnMathHull(
       << "    </plugin>\n"
       << "  </model>\n</sdf>\n";
 
+  std::string out = sdf.str();
+  if (_opts.hydro)
+  {
+    bool anyAm = false;
+    for (double v : _opts.hydro->addedMass)
+      if (v != 0.0) { anyAm = true; break; }
+    if (anyAm)
+      InjectFluidAddedMass(out, _opts.hydro->addedMass.data());
+  }
+  return out;
+}
+
+bool ModelManager::SpawnMathHull(
+    const std::string &_instanceName,
+    const ShipHullSpec &_spec,
+    double _pos[6],
+    const MathHullPluginOpts &_opts)
+{
+  // 生成 OBJ 文件 (Phase B: 模型加载菜单)
+  std::string dir = keship::KeshipModelsDir();
+  if (std::system(("mkdir -p " + dir).c_str()) != 0)
+    std::cerr << "SpawnMathHull: 创建目录失败 " << dir << std::endl;
+
+  ShipHullGenerator hull(_spec);
+  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与实验对话框同一处错）：
+  /// gz 的 `gz::common::MeshManager` **按文件路径**缓存网格 —— 同路径换内容仍返回旧网格。
+  /// 原先只按实例名命名（`<名>_vis.obj`）→ 同名实例换参数重新生成时，
+  /// 界面里显示的仍是旧船（GUI 进程常驻、缓存永不失效）。
+  /// 典型触发：`keship_ctl model spawn-hull hullA --L 6` → 删除 → `--L 9` 同名重生。
+  /// 加指纹后几何一变 URI 就变；几何相同则命中缓存是正确的（内容本就一致）。
+  const std::string meshTag = hull.meshTag();
+  std::string visPath = dir + _instanceName + "_vis_" + meshTag + ".obj";
+  std::string buoyPath = dir + _instanceName + "_buoy_" + meshTag + ".obj";
+  hull.writeVisualOBJ(visPath);
+  hull.writeBuoyancyOBJ(buoyPath);
+
+  double L = _spec.L, B = _spec.B, D = _spec.D;
+  double actualVol = hull.hydroProps().volume;
+  double m = _spec.rho * actualVol;
+  double ixx = m / 12.0 * (B * B + D * D);
+  double iyy = m / 12.0 * (L * L + D * D);
+  double izz = m / 12.0 * (L * L + B * B);
+
+  const std::string sdfStr = MakeMathHullSDF(_instanceName, _spec, _opts, visPath, buoyPath);
+
   // Spawn via EntityFactory
   std::string service = "/world/" + this->worldName + "/create/blocking";
   gz::msgs::EntityFactory req;
@@ -1618,16 +1648,6 @@ bool ModelManager::SpawnMathHull(
   pose->mutable_orientation()->set_y(q.Y());
   pose->mutable_orientation()->set_z(q.Z());
   pose->mutable_orientation()->set_w(q.W());
-  std::string sdfStr = sdf.str();
-  /// ★ 2026-10-25：完整档把 6×6 附加质量注入 <fluid_added_mass>（DART 隐式积分）
-  if (_opts.hydro)
-  {
-    bool anyAm = false;
-    for (double v : _opts.hydro->addedMass)
-      if (v != 0.0) { anyAm = true; break; }
-    if (anyAm)
-      this->InjectFluidAddedMass(sdfStr, _opts.hydro->addedMass.data());
-  }
   req.set_sdf(sdfStr);
 
   gz::msgs::Boolean rep;
@@ -1647,7 +1667,7 @@ bool ModelManager::SpawnMathHull(
   }
   if (found) {
     this->modelList[_instanceName] = id;
-    this->CacheNormalizedSDF(_instanceName, sdf.str());
+    this->CacheNormalizedSDF(_instanceName, sdfStr);
     SensorConfig scEmpty;
     NotifyModelSpawned(_instanceName, scEmpty);
     this->staticCache_[_instanceName] = false;
@@ -3333,6 +3353,13 @@ bool ModelManager::CreateEntityViaService(const gz::msgs::EntityFactory &_req)
 bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
     const double _addedMass[36])
 {
+  /// 2026-10-25：全零矩阵直接跳过 —— 避免生成无意义的全零 <fluid_added_mass> 块
+  {
+    bool anyNonZero = false;
+    for (int i = 0; i < 36; ++i)
+      if (std::abs(_addedMass[i]) > 1e-12) { anyNonZero = true; break; }
+    if (!anyNonZero) return true;
+  }
   // M_A 注入 DART <fluid_added_mass>（隐式积分，无条件稳定）
   //
   // ⚠ 2026-09-24 审核更正（原文写「空中由 FossenModel::computeAirCorrection 抵消」
@@ -3902,6 +3929,88 @@ bool ModelManager::UpdateCachedSDFInertia(const std::string &_name,
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 重建用 SDF 组装（纯函数，2026-10-25）
+///
+/// 为什么不放在 RebuildModelWithAllPlugins 里：那段代码是"有损重建"的高发区
+/// （按配置重拼插件，配置表达力 < SDF），必须能被**离线单测**直接覆盖。
+/// 本函数不触网络/文件/单例：给定输入即确定输出。
+///
+/// 不变量：产物必须保留 `_baseSdf` 里的**全部** `<plugin filename=...>`；
+/// 少一个就整段返回 `_baseSdf`（调用方配合 UpdateCachedSDFInertia 已改好 inertia）。
+std::string ModelManager::ComposeRebuiltSDF(
+    const std::string &_baseSdf, const std::string &_instanceName,
+    const std::string &_worldName,
+    bool hasSensor, const SensorConfig &sensorCfg,
+    bool hasThrust, const ThrusterConfig &tCfg,
+    bool hasHydro, const HydroConfig &hydroCfg,
+    bool haveBuoy, const BuoyancyConfig &bCfg)
+{
+  std::string base = _baseSdf;
+
+  /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
+
+  bool hasExternalForce = base.find("<external_force>") != std::string::npos
+                     || base.find("<variable_load>") != std::string::npos;
+  auto lpos = base.rfind("</link>");
+  if (lpos != std::string::npos) base = base.substr(0, lpos);
+
+  std::ostringstream sdf;
+  sdf << base;
+
+  if (hasSensor)
+    sdf << MakeSensorSDF(sensorCfg, _instanceName, _worldName);
+  sdf << "    </link>\n";
+
+  if (hasThrust)
+    sdf << MakeThrustPluginSDF(tCfg);
+
+  if (hasHydro)
+  {
+    sdf << MakeBuoyancyPluginSDF(bCfg, &hydroCfg);
+  }
+  else if (haveBuoy)
+  {
+    sdf << MakeBuoyancyPluginSDF(bCfg);
+  }
+
+  sdf << "    <plugin filename=\"libKSPlugin_VariableMass.so\""
+      << " name=\"keship::KSPlugin_VariableMass\">\n"
+      << "      <link_name>base_link</link_name>\n";
+  if (hasExternalForce)
+    sdf << "      <external_force>\n"
+        << "        <link_name>base_link</link_name>\n"
+        << "      </external_force>\n";
+  sdf << "    </plugin>\n  </model>\n</sdf>\n";
+
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+
+  /// ★ 2026-10-25 通用防护：**重建不得丢插件**
+  ///   重建按 BuoyancyConfig/SensorConfig 等**键值配置**重拼插件，
+  ///   而配置能表达的东西比 SDF 少（典型：数学船型的网格浮力体）。
+  ///   对比原缓存 SDF 与重建产物的 plugin 集合；少一个就整段重放 ——
+  ///   宁可放弃"按配置刷新"，也不让模型丢功能（2026-10-25 自由落体事故）。
+  std::string finalSdf = sdf.str();
+  {
+    const std::vector<std::string> before = PluginFileNamesInSdf(_baseSdf);
+    const std::vector<std::string> after = PluginFileNamesInSdf(finalSdf);
+    std::vector<std::string> missing;
+    for (const auto &pname : before)
+      if (std::find(after.begin(), after.end(), pname) == after.end())
+        missing.push_back(pname);
+    if (!missing.empty())
+    {
+      std::cerr << "RebuildModelWithAllPlugins: 重建会丢失插件";
+      for (const auto &mname : missing) std::cerr << " [" << mname << "]";
+      std::cerr << " —— 改用整段重放（缓存 SDF 已含更新后的 inertia）" << std::endl;
+      finalSdf = _baseSdf;   // 注意：base 已被截到 </link>，必须回到完整原文
+    }
+  }
+
+  return finalSdf;
+}
+
 bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
 {
   double savedPose[6] = {0, 0, 0, 0, 0, 0};
@@ -4008,75 +4117,19 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
     }
   }
 
-  /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
-
-  bool hasExternalForce = base.find("<external_force>") != std::string::npos
-                     || base.find("<variable_load>") != std::string::npos;
-  auto lpos = base.rfind("</link>");
-  if (lpos != std::string::npos) base = base.substr(0, lpos);
-
   SensorConfig sensorCfg;
-  bool hasSensor = GetCachedSensorConfig(_instanceName, sensorCfg);
-
-  std::ostringstream sdf;
-  sdf << base;
-
-  if (hasSensor)
-    sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
-  sdf << "    </link>\n";
-
-  HydroConfig hydroCfg;
-  bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
-
-  BuoyancyConfig bCfg;
-  bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
-
+  const bool hasSensor = GetCachedSensorConfig(_instanceName, sensorCfg);
   ThrusterConfig tCfg;
-  if (GetCachedThrusterConfig(_instanceName, tCfg) && !tCfg.bodies.empty())
-    sdf << MakeThrustPluginSDF(tCfg);
+  const bool hasThrust = GetCachedThrusterConfig(_instanceName, tCfg) && !tCfg.bodies.empty();
+  HydroConfig hydroCfg;
+  const bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
+  BuoyancyConfig bCfg;
+  const bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
 
-  if (hasHydro)
-  {
-    sdf << MakeBuoyancyPluginSDF(bCfg, &hydroCfg);
-  }
-  else if (haveBuoy)
-  {
-    sdf << MakeBuoyancyPluginSDF(bCfg);
-  }
-
-  sdf << "    <plugin filename=\"libKSPlugin_VariableMass.so\""
-      << " name=\"keship::KSPlugin_VariableMass\">\n"
-      << "      <link_name>base_link</link_name>\n";
-  if (hasExternalForce)
-    sdf << "      <external_force>\n"
-        << "        <link_name>base_link</link_name>\n"
-        << "      </external_force>\n";
-  sdf << "    </plugin>\n  </model>\n</sdf>\n";
-
-  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
-  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
-
-  /// ★ 2026-10-25 通用防护：**重建不得丢插件**
-  ///   重建按 BuoyancyConfig/SensorConfig 等**键值配置**重拼插件，
-  ///   而配置能表达的东西比 SDF 少（典型：数学船型的网格浮力体）。
-  ///   对比原缓存 SDF 与重建产物的 plugin 集合；少一个就整段重放 ——
-  ///   宁可放弃"按配置刷新"，也不让模型丢功能（2026-10-25 自由落体事故）。
-  std::string finalSdf = sdf.str();
-  {
-    const std::vector<std::string> before = PluginFileNamesInSdf(origBaseSdf);
-    const std::vector<std::string> after = PluginFileNamesInSdf(finalSdf);
-    std::vector<std::string> missing;
-    for (const auto &pname : before)
-      if (std::find(after.begin(), after.end(), pname) == after.end())
-        missing.push_back(pname);
-    if (!missing.empty())
-    {
-      std::cerr << "RebuildModelWithAllPlugins: 重建会丢失插件";
-      for (const auto &mname : missing) std::cerr << " [" << mname << "]";
-      std::cerr << " —— 改用整段重放（缓存 SDF 已含更新后的 inertia）" << std::endl;
-      finalSdf = base;
-    }
-  }
+  const std::string finalSdf = ComposeRebuiltSDF(
+      origBaseSdf, _instanceName, worldName,
+      hasSensor, sensorCfg, hasThrust, tCfg,
+      hasHydro, hydroCfg, haveBuoy, bCfg);
 
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;

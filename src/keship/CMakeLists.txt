@@ -386,6 +386,17 @@ if(KESHIP_BUILD_TESTS)
   target_link_libraries(mathhull_rebuild_probe gz-gui8::gz-gui8 keship_utils)
   ament_target_dependencies(mathhull_rebuild_probe rclcpp ament_index_cpp)
 
+  # ---- 甲-5：SDF 组装纯函数单测（2026-10-25）----
+  # 覆盖 MakeMathHullSDF / ComposeRebuiltSDF / MakeBuoyancyPluginSDF /
+  #      InjectFluidAddedMass / EstimateMathHullHydro
+  add_executable(sdf_assembly_test src_cpp/test/sdf_assembly_test.cc)
+  target_include_directories(sdf_assembly_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sdf_assembly_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(sdf_assembly_test rclcpp ament_index_cpp)
+  add_test(NAME sdf_assembly COMMAND sdf_assembly_test)
+
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
@@ -393,11 +404,11 @@ if(KESHIP_BUILD_TESTS)
                        PROPERTIES LABELS regression)
   # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
   set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
-                       sl02_hull_dialog
+                       sl02_hull_dialog sdf_assembly
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（9 个可执行 / 7 个 ctest 用例）")
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（10 个可执行 / 8 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############

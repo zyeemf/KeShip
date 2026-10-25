@@ -346,6 +346,13 @@ namespace keship
     /// 口径：c = 2ζ√(k·I)，ζ 垂荡 0.15 / 转动 0.10 —— 与 DisplacementVerifyDialog 一致
     static HydroConfig EstimateMathHullHydro(const ShipHullSpec &_spec, bool _full);
 
+    /// 数学船型 SDF 组装（纯函数，不写文件/不触 gz；供离线单测，2026-10-25）
+    static std::string MakeMathHullSDF(const std::string &_instanceName,
+                                       const ShipHullSpec &_spec,
+                                       const MathHullPluginOpts &_opts,
+                                       const std::string &_visPath,
+                                       const std::string &_buoyPath);
+
     /// @brief 从有效文件类型生成SDF字符串
     /// @param _instanceName 实例名称
     /// @param _filePath 文件路径
@@ -429,6 +436,15 @@ namespace keship
                                 const ThrusterConfig &_config);
 
     /// @brief 生成合并的浮力-水动力插件 SDF（BuoyancyConfig + 可选 HydroConfig）
+    /// 重建用 SDF 组装（纯函数，不触网络/文件；供离线单测，2026-10-25）
+    static std::string ComposeRebuiltSDF(
+        const std::string &_baseSdf, const std::string &_instanceName,
+        const std::string &_worldName,
+        bool _hasSensor, const SensorConfig &_sensor,
+        bool _hasThrust, const ThrusterConfig &_thrust,
+        bool _hasHydro, const HydroConfig &_hydro,
+        bool _haveBuoy, const BuoyancyConfig &_buoy);
+
     static std::string MakeBuoyancyPluginSDF(const BuoyancyConfig &_config,
         const HydroConfig *_hydro = nullptr);
 
