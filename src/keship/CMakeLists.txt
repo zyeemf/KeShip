@@ -397,6 +397,14 @@ if(KESHIP_BUILD_TESTS)
   ament_target_dependencies(sdf_assembly_test rclcpp ament_index_cpp)
   add_test(NAME sdf_assembly COMMAND sdf_assembly_test)
 
+  # ---- 甲-6：状态迁移探针（位姿/浮力体/水动力/推进器/传感器/碰撞；需要运行中的世界）
+  add_executable(state_transition_probe src_cpp/test/state_transition_probe.cc)
+  target_include_directories(state_transition_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(state_transition_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(state_transition_probe rclcpp ament_index_cpp)
+
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
@@ -408,7 +416,7 @@ if(KESHIP_BUILD_TESTS)
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（10 个可执行 / 8 个 ctest 用例）")
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（11 个可执行 / 8 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############
