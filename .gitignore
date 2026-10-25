@@ -43,6 +43,8 @@ models_all/robot_model/yanhu/*
 # 模型清单：只入库 ke0812_1.ksm
 models_all/ks_model/*
 !models_all/ks_model/ke0812_1.ksm
+# platform_3boat 引用未入库的 wamv/platform_zjy，2026-10-25 移除
+models_all/ks_world/platform_3boat.ksw/
 # ===== 运行时工作目录（整体不入库，可删除，程序自动重建）=====
 data/
 
