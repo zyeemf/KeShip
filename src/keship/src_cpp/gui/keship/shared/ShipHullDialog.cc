@@ -36,7 +36,7 @@ ShipHullDialog::ShipHullDialog(const QStringList &_instanceNames, QWidget *_pare
     : QDialog(_parent), instanceNames_(_instanceNames) {
   setWindowTitle("新建数学船型");
   setAttribute(Qt::WA_DeleteOnClose);
-  resize(720, 970);
+  resize(720, 760);
   /// 2026-10-25：防止被拖成 274×129 那种"压坏"的尺寸（原 minimumSizeHint 太小）
   setMinimumSize(560, 640);
   setupUI();
@@ -114,13 +114,24 @@ void ShipHullDialog::setupUI() {
   // ★ 2026-10-25 新增：生成设置（名称 + 位置 + 姿态）
   //   此前名称由船型名固定、位姿由 MenuPluginKeship 硬编码 {0, 0, D/2+0.1, 0, 0, 0}，
   //   用户无法指定 —— 与「载入模型」的 ModelSettingsDialog 口径对齐。
+  // ★ 2026-10-25 排版修正（张老师：控件之间间隔不好看）：
+  //   ① 名称原来跨 3 列，把第 2/4 列撑宽 ⇒ X: 与它的输入框之间空了 200+px；
+  //      改为名称单独一行（标签固定宽 + 输入框拉伸）。
+  //   ② 位姿用独立紧凑网格，列宽固定、多余宽度推到右侧（columnStretch(3,1)）。
   auto *genGroup = new QGroupBox("生成设置", content);
-  auto *genForm = new QGridLayout(genGroup);
+  auto *genLayout = new QVBoxLayout(genGroup);
+  genLayout->setSpacing(6);
 
   nameEdit_ = new QLineEdit(content);
   nameEdit_->setPlaceholderText("实例名称（建议字母/数字/下划线）");
-  genForm->addWidget(new QLabel("实例名称:", content), 0, 0);
-  genForm->addWidget(nameEdit_, 0, 1, 1, 3);
+  {
+    auto *nameRow = new QHBoxLayout();
+    auto *nameLabel = new QLabel("实例名称:", content);
+    nameLabel->setMinimumWidth(64);
+    nameRow->addWidget(nameLabel);
+    nameRow->addWidget(nameEdit_, 1);
+    genLayout->addLayout(nameRow);
+  }
 
   auto makePoseSpin = [content](double _min, double _max, double _value,
                                 const QString &_suffix, int _decimals) {
@@ -129,8 +140,8 @@ void ShipHullDialog::setupUI() {
     spin->setValue(_value);
     spin->setSuffix(_suffix);
     spin->setDecimals(_decimals);
-    /// 上限 150px：字号放大时不让三个 spin 把整行顶宽（滚动条来源）
-    spin->setMaximumWidth(150);
+    spin->setMinimumWidth(104);
+    spin->setMaximumWidth(120);   ///< 固定量级，避免字号放大时顶宽
     return spin;
   };
 
@@ -140,15 +151,27 @@ void ShipHullDialog::setupUI() {
   rollSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
   pitchSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
   yawSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
-  /// 位置/姿态两列两列排（2026-10-25 第二次调整：三列在 125% 字号下会横向溢出，
-  /// 排布审计实测"生成设置"组最小宽 751px > 视口 684px）
+
   const char *poseNames[6] = {"X:", "Y:", "Z:", "Roll:", "Pitch:", "Yaw:"};
   QDoubleSpinBox *poseSpins[6] = {posXSpin_, posYSpin_, posZSpin_,
                                   rollSpin_, pitchSpin_, yawSpin_};
-  for (int i = 0; i < 6; ++i)
   {
-    genForm->addWidget(new QLabel(poseNames[i], content), 1 + i / 2, (i % 2) * 2);
-    genForm->addWidget(poseSpins[i], 1 + i / 2, (i % 2) * 2 + 1);
+    auto *poseGrid = new QGridLayout();
+    poseGrid->setHorizontalSpacing(10);
+    poseGrid->setVerticalSpacing(6);
+    poseGrid->setColumnStretch(3, 1);   ///< 余量推到右侧，三列不被拉散
+    for (int i = 0; i < 6; ++i)
+    {
+      auto *lbl = new QLabel(poseNames[i], content);
+      lbl->setMinimumWidth(40);
+      lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+      auto *cell = new QHBoxLayout();
+      cell->setSpacing(6);
+      cell->addWidget(lbl);
+      cell->addWidget(poseSpins[i]);
+      poseGrid->addLayout(cell, i / 3, i % 3);
+    }
+    genLayout->addLayout(poseGrid);
   }
   mainLayout->addWidget(genGroup);
 
@@ -217,6 +240,7 @@ void ShipHullDialog::setupUI() {
   hydroNote->setWordWrap(true);
   hydroNote->setStyleSheet("color:#666;");
   mainLayout->addWidget(hydroGroup);
+  mainLayout->addStretch(1);
 
   scroll->setWidget(content);
   outer->addWidget(scroll, 1);

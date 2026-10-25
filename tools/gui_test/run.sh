@@ -93,18 +93,21 @@ export GALLIUM_DRIVER=llvmpipe
 mkdir -p "$KESHIP_DATA_DIR"
 
 # ── T2 产物新鲜度闸门（--no-build 不能静默跑旧二进制）──
-REF="$WS/install/lib/libKSPlugin_HydroBuoyancy.so"
-if [ ! -f "$REF" ]; then
-  fail "T2 缺少构建产物 $REF（请先正常编译一次）"
+# 基准取 install/lib 下**最新**的 .so：改 GUI 只重建 MenuPluginKeship，不动水动力插件，
+# 固定拿某一个 .so 当基准会误报（2026-10-25 实测踩到）。
+NEWEST_SO=$(find "$WS/install/lib" -name '*.so' -printf '%T@ %p\n' 2>/dev/null \
+  | sort -n | tail -1 | cut -d' ' -f2-)
+if [ -z "$NEWEST_SO" ]; then
+  fail "T2 install/lib 下没有 .so（请先正常编译一次）"
   exit 1
 fi
 NEWER=$(find "$WS/src/keship/src_cpp" "$WS/src/keship/src_py" "$WS/src/keship/include" \
   -type f \( -name '*.cc' -o -name '*.hh' -o -name '*.py' -o -name '*.qml' \) \
-  -newer "$REF" 2>/dev/null | wc -l)
+  -newer "$NEWEST_SO" 2>/dev/null | wc -l)
 if [ "$NEWER" -eq 0 ]; then
   pass "T2 二进制与源码同步（无更新的源文件）"
 else
-  fail "T2 有 $NEWER 个源文件比产物新 —— 拒绝用旧二进制测（请先 colcon build）"
+  fail "T2 有 $NEWER 个源文件比最新产物新 —— 拒绝用旧二进制测（请先 colcon build）"
   exit 1
 fi
 
