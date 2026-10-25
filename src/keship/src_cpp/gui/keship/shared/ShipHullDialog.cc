@@ -127,7 +127,7 @@ void ShipHullDialog::setupUI() {
   {
     auto *nameRow = new QHBoxLayout();
     auto *nameLabel = new QLabel("实例名称:", content);
-    nameLabel->setMinimumWidth(64);
+    nameLabel->setMinimumWidth(56);
     nameRow->addWidget(nameLabel);
     nameRow->addWidget(nameEdit_, 1);
     genLayout->addLayout(nameRow);
@@ -163,7 +163,7 @@ void ShipHullDialog::setupUI() {
     for (int i = 0; i < 6; ++i)
     {
       auto *lbl = new QLabel(poseNames[i], content);
-      lbl->setMinimumWidth(40);
+      lbl->setMinimumWidth(56);
       lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
       auto *cell = new QHBoxLayout();
       cell->setSpacing(6);
@@ -201,13 +201,19 @@ void ShipHullDialog::setupUI() {
   auto *linGrid = new QGridLayout();
   for (int i = 0; i < 8; ++i) {
     auto *cell = new QHBoxLayout();
-    cell->addWidget(new QLabel(QString(linNames[i]) + ":", content));
+    cell->setSpacing(6);
+    auto *lbl = new QLabel(QString(linNames[i]) + ":", content);
+    lbl->setMinimumWidth(44);
+    lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    cell->addWidget(lbl);
     auto *spin = new QDoubleSpinBox(content);
     spin->setRange(0.0, 1e7);
     spin->setDecimals(3);
-    spin->setMinimumWidth(96);
+    spin->setMinimumWidth(110);
+    spin->setMaximumWidth(130);
     linSpins_[i] = spin;
     cell->addWidget(spin);
+    cell->addStretch(1);   ///< 余量推到行尾，标签与控件不再被拉开
     linGrid->addLayout(cell, i / 3, i % 3);
     connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { hydroEdited_ = true; });
@@ -221,13 +227,19 @@ void ShipHullDialog::setupUI() {
   const char *quadNames[6] = {"Xu|u|", "Yv|v|", "Zw|w|", "Kp|p|", "Mq|q|", "Nr|r|"};
   for (int i = 0; i < 6; ++i) {
     auto *cell = new QHBoxLayout();
-    cell->addWidget(new QLabel(QString(quadNames[i]) + ":", content));
+    cell->setSpacing(6);
+    auto *lbl = new QLabel(QString(quadNames[i]) + ":", content);
+    lbl->setMinimumWidth(44);
+    lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    cell->addWidget(lbl);
     auto *spin = new QDoubleSpinBox(content);
     spin->setRange(0.0, 1e7);
     spin->setDecimals(2);
-    spin->setMinimumWidth(96);
+    spin->setMinimumWidth(110);
+    spin->setMaximumWidth(130);
     quadSpins_[i] = spin;
     cell->addWidget(spin);
+    cell->addStretch(1);
     quadGrid->addLayout(cell, i / 3, i % 3);
     connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { hydroEdited_ = true; });
