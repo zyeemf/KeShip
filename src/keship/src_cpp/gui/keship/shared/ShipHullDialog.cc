@@ -237,6 +237,27 @@ void ShipHullDialog::setupUI() {
   btnRow->addWidget(closeBtn_);
   outer->addLayout(btnRow);
 
+  /// ★ 2026-10-25：对象名 —— 离屏 GUI 回归按名取控件（不靠坐标/顺序猜），
+  /// 也让以后 AT-SPI / 自动化工具能稳定定位
+  nameEdit_->setObjectName("hullName");
+  hydroCheck_->setObjectName("hullHydroCheck");
+  hydroMode_->setObjectName("hullHydroMode");
+  quadWidget_->setObjectName("hullQuadBox");
+  restoreBtn->setObjectName("hullHydroRestore");
+  spawnBtn_->setObjectName("hullSpawnBtn");
+  {
+    const char *poseObj[6] = {"hullPoseX", "hullPoseY", "hullPoseZ",
+                              "hullPoseRoll", "hullPosePitch", "hullPoseYaw"};
+    QDoubleSpinBox *poseWidgets[6] = {posXSpin_, posYSpin_, posZSpin_,
+                                      rollSpin_, pitchSpin_, yawSpin_};
+    for (int i = 0; i < 6; ++i)
+      poseWidgets[i]->setObjectName(poseObj[i]);
+    for (int i = 0; i < 8; ++i)
+      linSpins_[i]->setObjectName(QString("hullLin%1").arg(i));
+    for (int i = 0; i < 6; ++i)
+      quadSpins_[i]->setObjectName(QString("hullQuad%1").arg(i));
+  }
+
   connect(typeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ShipHullDialog::onTypeChanged);
   connect(lengthSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),

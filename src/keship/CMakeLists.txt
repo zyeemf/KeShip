@@ -361,6 +361,22 @@ if(KESHIP_BUILD_TESTS)
   add_test(NAME ms06_p3_modal COMMAND ms06_p3_modal_test)
   add_test(NAME ms06_layout_shot COMMAND ms06_layout_shot)
 
+  # ---- 甲-3：SL-02 数学船型对话框（离屏 Qt，2026-10-25）----
+  # 只编译该对话框用到的 GUI 源（不链整插件），断言默认档位/系数/恢复默认/名称位姿/排布
+  add_executable(sl02_hull_dialog_test
+    src_cpp/test/sl02_hull_dialog_test.cc
+    src_cpp/gui/keship/shared/ShipHullDialog.cc
+    src_cpp/gui/keship/shared/LinesPlanDialog.cc
+    src_cpp/gui/keship/shared/UiTheme.cc)
+  target_include_directories(sl02_hull_dialog_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sl02_hull_dialog_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(sl02_hull_dialog_test rclcpp ament_index_cpp)
+  add_test(NAME sl02_hull_dialog COMMAND sl02_hull_dialog_test)
+
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
@@ -368,10 +384,11 @@ if(KESHIP_BUILD_TESTS)
                        PROPERTIES LABELS regression)
   # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
   set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
+                       sl02_hull_dialog
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（7 个可执行 / 6 个 ctest 用例）")
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（8 个可执行 / 7 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############
