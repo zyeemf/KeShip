@@ -428,6 +428,10 @@ namespace keship
     bool SetModelPoseByIDInGazebo(uint32_t _id, double _pose[6]);
 
     /// @brief 重建模型并应用浮力体配置（保存pose → 删除 → 生成新SDF → spawn → 恢复pose）
+    /// 用给定 SDF 原文重放模型（自包含插件模型的编辑重建用，2026-10-25）
+    bool RespawnSdf(const std::string &_name, const std::string &_sdf,
+                    const double _pose[6], const SensorConfig &_sc);
+
     bool RebuildModelWithBuoyancy(const std::string &_instanceName,
                                   const BuoyancyConfig &_config);
 
@@ -727,6 +731,9 @@ namespace keship
         double &_radius, double &_length, std::string &_meshPath) const;
 
     /// @brief 获取模型静态标记（优先查缓存，未命中则从 SDF 解析）
+    /// 切换 静止/动态（改缓存 SDF 后整段重放，保留全部插件；2026-10-25）
+    bool SetModelStatic(const std::string &_name, bool _isStatic);
+
     bool GetCachedModelStatic(const std::string &_name, bool &_isStatic) const;
 
     /// spawn 后调用，计算并缓存模型的 2D 局部包围盒

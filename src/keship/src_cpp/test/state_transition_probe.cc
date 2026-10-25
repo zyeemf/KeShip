@@ -151,6 +151,22 @@ int main()
     check(floats("StColl"), "碰撞方式修改：仍浮稳");
   }
 
+  // 7) 静止/动态
+  {
+    if (!spawnAt("StStatic", 60)) { std::printf("FAIL  静止/动态：生成失败\n"); return 1; }
+    std::this_thread::sleep_for(std::chrono::seconds(4));
+    bool ok = mm.SetModelStatic("StStatic", true);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    bool isStatic = false;
+    mm.GetCachedModelStatic("StStatic", isStatic);
+    check(ok && isStatic && inScene("StStatic"), "静止切换：已成静态且在场景");
+
+    bool back = mm.SetModelStatic("StStatic", false);
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    mm.GetCachedModelStatic("StStatic", isStatic);
+    check(back && !isStatic && inScene("StStatic"), "动态切换：已恢复且在场景");
+  }
+
   std::printf("RESULT fail=%d\n", g_fail);
   return g_fail == 0 ? 0 : 1;
 }

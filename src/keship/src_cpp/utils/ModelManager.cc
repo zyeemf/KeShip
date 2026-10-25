@@ -2808,6 +2808,60 @@ bool ModelManager::ParseStaticFromSDF(const std::string &_sdf, bool &_out)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 切换模型 静止/动态（2026-10-25）
+/// 做法：改缓存 SDF 的 <static> 后整段重放 —— 保留全部插件（含数学船型的网格浮力体），
+/// 避免"按配置重拼"丢掉 SDF-only 插件。
+bool ModelManager::SetModelStatic(const std::string &_name, bool _isStatic)
+{
+  auto it = sdfCache_.find(_name);
+  if (it == sdfCache_.end())
+  {
+    std::cerr << "SetModelStatic: 无 SDF 缓存（请先在本进程 spawn）: " << _name << std::endl;
+    return false;
+  }
+
+  double pose[6] = {0, 0, 0, 0, 0, 0};
+  {
+    auto idIt = modelList.find(_name);
+    if (idIt != modelList.end())
+      GetModelPoseByIDFromGazebo(idIt->second, pose);
+  }
+
+  std::string sdf = it->second;
+  const std::string want = _isStatic ? "true" : "false";
+  const std::string t = "<static>true</static>";
+  const std::string f = "<static>false</static>";
+  auto tp = sdf.find(t);
+  auto fp = sdf.find(f);
+  if (tp != std::string::npos)
+    sdf.replace(tp, t.size(), "<static>" + want + "</static>");
+  else if (fp != std::string::npos)
+    sdf.replace(fp, f.size(), "<static>" + want + "</static>");
+  else
+  {
+    auto mp = sdf.find("</model>");
+    if (mp != std::string::npos)
+      sdf.insert(mp, "    <static>" + want + "</static>\n");
+  }
+  it->second = sdf;
+
+  if (!DeleteModelInGazeboByName(_name, true)) return false;
+  { int retries = 20; uint32_t sid = 0;
+    while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (!GetModelIDByInstanceNameFromGazebo(_name, sid)) break; } }
+
+  SensorConfig sc;
+  GetCachedSensorConfig(_name, sc);
+  const bool ok = RespawnSdf(_name, sdf, pose, sc);
+  if (ok)
+  {
+    staticCache_[_name] = _isStatic;
+    CacheModelFootprint(_name);
+  }
+  return ok;
+}
+
 bool ModelManager::GetCachedModelStatic(const std::string &_name,
     bool &_isStatic) const
 {
@@ -3023,6 +3077,19 @@ bool ModelManager::RebuildModelWithThrust(
   auto cacheIt = this->sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型 → 在原文里插入推进器段后重放（不丢浮力）
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    auto m = patched.rfind("</model>");
+    if (m != std::string::npos)
+      patched = patched.substr(0, m) + MakeThrustPluginSDF(_config) + patched.substr(m);
+    SensorConfig sc; GetCachedSensorConfig(_instanceName, sc);
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, sc);
+    if (ok) thrusterConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -3609,6 +3676,36 @@ bool ModelManager::RebuildModelWithHydro(
   auto cacheIt = sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型（数学船型，网格浮力体）不能走"截断重拼"，
+  ///   否则浮力插件丢失。改为在原文上替换水动力标签后整段重放。
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    const std::string tags = BuildHydroSdfTags(_config);
+    auto p = patched.find("<linear_damping>");
+    auto q = patched.find("</linear_damping>");
+    if (p != std::string::npos && q != std::string::npos && q > p)
+      patched = patched.substr(0, p) + tags +
+                patched.substr(q + std::string("</linear_damping>").size());
+    else
+    {
+      auto fd = patched.find("<fluid_density>");
+      if (fd != std::string::npos) patched.insert(fd, tags);
+    }
+    const std::string off = "<enable_hydro>false</enable_hydro>";
+    const std::string on = "<enable_hydro>true</enable_hydro>";
+    auto e = patched.find(off);
+    if (e != std::string::npos) patched.replace(e, off.size(), on);
+    bool anyAm = false;
+    for (double v : _config.addedMass) if (v != 0.0) { anyAm = true; break; }
+    if (anyAm) InjectFluidAddedMass(patched, _config.addedMass.data());
+
+    SensorConfig sc; GetCachedSensorConfig(_instanceName, sc);
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, sc);
+    if (ok) hydroConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -3710,6 +3807,18 @@ bool ModelManager::RebuildModelWithSensors(
   auto cacheIt = sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型 → 在原文 <link> 内插入传感器段后重放（不丢浮力）
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    auto l = patched.rfind("</link>");
+    if (l != std::string::npos)
+      patched = patched.substr(0, l) + MakeSensorSDF(_config, _instanceName, worldName) + patched.substr(l);
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, _config);
+    if (ok) sensorConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -4009,6 +4118,47 @@ std::string ModelManager::ComposeRebuiltSDF(
   }
 
   return finalSdf;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 用给定 SDF 原文重放一个模型（保留原 pose），成功后登记并通知
+/// 供"自包含插件模型"的编辑重建使用（2026-10-25）
+bool ModelManager::RespawnSdf(const std::string &_name, const std::string &_sdf,
+                              const double _pose[6], const SensorConfig &_sc)
+{
+  std::string service = "/world/" + worldName + "/create/blocking";
+  gz::msgs::EntityFactory req;
+  gz::msgs::Boolean rep;
+  bool result = false;
+  req.set_name(_name);
+  req.set_allow_renaming(false);
+  req.set_sdf(_sdf);
+  auto *rp = req.mutable_pose();
+  rp->mutable_position()->set_x(_pose[0]);
+  rp->mutable_position()->set_y(_pose[1]);
+  rp->mutable_position()->set_z(_pose[2]);
+  gz::math::Quaterniond q(_pose[3], _pose[4], _pose[5]);
+  rp->mutable_orientation()->set_x(q.X());
+  rp->mutable_orientation()->set_y(q.Y());
+  rp->mutable_orientation()->set_z(q.Z());
+  rp->mutable_orientation()->set_w(q.W());
+  if (!CreateEntityViaService(req)) return false;
+
+  uint32_t id = 0;
+  bool found = GetModelIDByInstanceNameFromGazebo(_name, id);
+  uint32_t tries = 100;
+  while (!found && tries-- > 0)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    found = GetModelIDByInstanceNameFromGazebo(_name, id);
+  }
+  if (found)
+  {
+    modelList[_name] = id;
+    NotifyModelSpawned(_name, _sc);
+    return true;
+  }
+  return false;
 }
 
 bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
