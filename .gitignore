@@ -30,6 +30,19 @@ CTestTestfile.cmake
 # 模型子目录（keship3/wamv/yanhu/...）由用户自行创建并放入模型文件，见 README.md
 models_all/robot_model/*
 !models_all/robot_model/.gitkeep
+# keship3 / yanhu：源网格 + 贴图入库；normalized 缓存与 assxml 不入库
+!models_all/robot_model/keship3/
+!models_all/robot_model/yanhu/
+models_all/robot_model/keship3/*
+models_all/robot_model/yanhu/*
+!models_all/robot_model/keship3/*.dae
+!models_all/robot_model/keship3/*.png
+!models_all/robot_model/yanhu/*.dae
+!models_all/robot_model/yanhu/*.png
+
+# 模型清单：只入库 ke0812_1.ksm
+models_all/ks_model/*
+!models_all/ks_model/ke0812_1.ksm
 # ===== 运行时工作目录（整体不入库，可删除，程序自动重建）=====
 data/
 
