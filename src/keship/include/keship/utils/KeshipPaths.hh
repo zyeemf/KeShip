@@ -22,8 +22,13 @@ namespace keship
   }
 
   /// 统一运行时数据根目录
+  /// ★ 2026-10-25：支持 KESHIP_DATA_DIR 覆盖 —— 仅供 GUI 自动化测试使用独立数据目录，
+  ///   避免测试实例改写生产的水域 JSON / 数学船型 OBJ / 日志。未设该变量时行为与历史完全一致。
   inline std::string KeshipDataDir()
   {
+    const char *override_dir = std::getenv("KESHIP_DATA_DIR");
+    if (override_dir && *override_dir)
+      return override_dir;
     return KeshipHomeWsDir() + "/data";
   }
 

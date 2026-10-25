@@ -36,6 +36,7 @@ NO_BUILD=false
 HEADLESS=false
 NO_GPU_WARM=false
 NO_D3D12=false
+TEST_ISOLATED=false   # --test-isolated：隔离实例（不改任何步骤）
 EXTRA_GZ_ARGS=""
 GZ_VERBOSE=""   # gz 日志等级（空=用 launch 默认 4）
 
@@ -45,6 +46,7 @@ while [ $# -gt 0 ]; do
         --headless)     HEADLESS=true; shift ;;
         --no-gpu-warm)  NO_GPU_WARM=true; shift ;;
         --no-d3d12)     NO_D3D12=true; shift ;;
+        --test-isolated) TEST_ISOLATED=true; shift ;;
         --gz-verbose)   GZ_VERBOSE="$2"; shift 2 ;;
         --help|-h)
             echo "KeShip 启动脚本"
@@ -53,6 +55,7 @@ while [ $# -gt 0 ]; do
             echo "  --gz-verbose N gz 日志等级 0~4（默认 4；调低可减少刷屏）"
             echo "  --no-gpu-warm  跳过 GPU 预热"
             echo "  --no-d3d12     退回 Mesa 默认渲染（软件渲染），用于对比/回滚"
+            echo "  --test-isolated 测试隔离实例：独立锁 + 跳过全局 gz 检查 + 跳过文档自检"
             echo "  其余参数       转发为 Gazebo 的 extra_gz_args"
             echo "退出码: 0 正常 / 1 已有实例或启动失败 / 2 编译失败 / 3 环境缺失"
             exit 0
@@ -93,6 +96,9 @@ check_stale_build() {
 # ═══════════════════════════════════════════════════════════
 mkdir -p "$KSHIP_WS/data"
 LOCK_FILE="$KSHIP_WS/data/keship.lock"
+if [ "$TEST_ISOLATED" = true ]; then
+    LOCK_FILE="$KSHIP_WS/data/keship_test.lock"   # 不占用生产锁
+fi
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     echo ""
@@ -109,7 +115,7 @@ if ! flock -n 9; then
     exit 1
 fi
 
-if pgrep -f "[g]z sim -v 4" > /dev/null 2>&1; then
+if [ "$TEST_ISOLATED" != true ] && pgrep -f "[g]z sim -v 4" > /dev/null 2>&1; then
     echo ""
     echo "  [错误] 检测到 gz sim 进程已在运行，拒绝启动。"
     echo "         请先关闭现有实例，再重新启动。"
@@ -194,7 +200,9 @@ echo ""
 # Step 3: 代码变更自动检查（非阻塞）
 #   仅在编译成功之后执行 —— 编译失败时跑它没有意义
 # ═══════════════════════════════════════════════════════════
-if [ -f "$KSHIP_WS/tools/auto_check.sh" ]; then
+if [ "$TEST_ISOLATED" = true ]; then
+    echo "[文档] 测试模式跳过自动检查（避免污染 doc 工作区）"
+elif [ -f "$KSHIP_WS/tools/auto_check.sh" ]; then
     echo "[文档] 代码变更自动检查..."
     bash "$KSHIP_WS/tools/auto_check.sh" --quick || true
     echo ""
