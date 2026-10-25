@@ -395,22 +395,24 @@ Rectangle {
                         }
                     }
 
-                    /// "加载"下拉：六种载入/添加入口（保留"添加默认水域"仅无水域时可用的约束）
+                    /// "加载"下拉：2026-10-25 张老师定稿 —— 载入/生成分开，水域并入一组
                     StyledMenu {
                         id: loadMenu
-                        StyledMenuItem { text: "载入世界…"
+                        StyledMenuItem { text: "载入ksw世界文件"
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadWorld(); } }
-                        StyledMenuItem { text: "载入模型（文件）…"
-                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadModel(); } }
-                        StyledMenuItem { text: "数学船型…"
+                        StyledMenuItem { text: "载入ksm模型文件"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadKsmModel(); } }
+                        StyledMenuItem { text: "载入模型（stl\\dae等）"
+                            onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_LoadRawModel(); } }
+                        StyledMenuItem { text: "生成数学船型"
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_NewMathHull(); } }
-                        StyledMenuItem { text: "圆柱体（含浮力/水动力）…"
+                        StyledMenuItem { text: "生成圆柱体"
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_CylinderBuoyancyTest(); } }
                         StyledSeparator {}
                         StyledMenuItem { text: "添加默认水域"
                             enabled: MenuPluginKeship.customWaterAreaCount === 0
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddDefaultWaterArea(); } }
-                        StyledMenuItem { text: "添加自定义水域…"
+                        StyledMenuItem { text: "添加自定义水域"
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddWaterArea(); } }
                     }
 

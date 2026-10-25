@@ -17,10 +17,13 @@
 
 SelectKsmDialog::SelectKsmDialog(const QString &_dir,
                                  const QList<QUrl> &_browseUrls,
-                                 QWidget *parent)
-    : QDialog(parent), browseUrls_(_browseUrls), parentDir_(_dir)
+                                 QWidget *parent,
+                                 bool _ksmOnly)
+    : QDialog(parent), browseUrls_(_browseUrls), parentDir_(_dir),
+      ksmOnly_(_ksmOnly)
 {
-  setWindowTitle("选择模型");
+  // 只列 .ksm 的入口（2026-10-25 菜单拆分）不提供原始模型通道
+  setWindowTitle(ksmOnly_ ? "选择 .ksm 模型" : "选择模型");
   setMinimumWidth(420);
   resize(420, 480);
 
@@ -58,7 +61,10 @@ SelectKsmDialog::SelectKsmDialog(const QString &_dir,
   auto *cancelBtn = new QPushButton("取消", this);
   UiTheme::setButtonIcon(cancelBtn, UiTheme::Icon::kCancel);
   connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
-  btnRow->addWidget(rawBtn);
+  if (ksmOnly_)
+    rawBtn->hide();
+  else
+    btnRow->addWidget(rawBtn);
   btnRow->addStretch();
   btnRow->addWidget(okBtn_);
   btnRow->addWidget(cancelBtn);

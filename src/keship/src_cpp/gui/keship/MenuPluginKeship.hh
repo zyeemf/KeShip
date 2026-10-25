@@ -101,6 +101,10 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_WorldSettings();
   /// \brief Load model from file.
   protected slots: void OnBtn_LoadModel();
+  /// \brief 载入 .ksm 模型文件（2026-10-25 菜单拆分：只列 .ksm）
+  protected slots: void OnBtn_LoadKsmModel();
+  /// \brief 载入原始模型文件（stl/dae/obj/sdf/gltf/glb，直接选文件）
+  protected slots: void OnBtn_LoadRawModel();
   /// \brief Load shape from file.
   protected slots: void OnBtn_LoadShape(const QString &_shapeType);
   /// \brief Delete model.
@@ -206,6 +210,12 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: void NotifyModelListChanged();
   /// \brief 请求设置仿真暂停/继续，并同步 paused_ 与 PausedChanged 信号。
   ///        （所有暂停/恢复统一走此通道，保证按钮状态与真实状态一致）
+  /// \brief 文件名合法性检查（两个载入入口共用，勿复制第二份）
+  private: bool CheckModelFileName(const QString &_filePath);
+  /// \brief .ksm 载入流程（选定文件后调用；与无头入口共用 ModelManager 实现）
+  private: void LoadKsmModelFile(const QString &_filePath);
+  /// \brief 原始模型载入流程（选定文件后调用）
+  private: void LoadRawModelFile(const QString &_filePath);
   private: bool SetSimulationPaused(bool _pause);
 
   /// \brief 单例化获取编辑器对话框（key = 类型/模型名）。

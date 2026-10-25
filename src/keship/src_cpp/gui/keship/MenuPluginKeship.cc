@@ -968,7 +968,9 @@ bool MenuPluginKeship::SetSimulationPaused(bool _pause)
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_LoadModel()
 {
-  ///--- 第一步：选择模型文件（ks_model 列表 + 原始模型浏览双通道）
+  /// 兼容入口（2026-10-25：菜单已拆为「载入ksm模型文件」与「载入模型（stl\dae等）」两入口）。
+  /// 本函数保留原双通道行为；两条新入口复用下面的 LoadKsmModelFile / LoadRawModelFile，
+  /// 不要再在入口里复制一遍加载逻辑 —— 那正是本文件注释里警告过的"两份实现漂移"。
   SelectKsmDialog dlg(QString::fromStdString(keship::KeshipKsmDir()),
                       SidebarUrls());
   if (dlg.exec() != QDialog::Accepted)
@@ -976,25 +978,40 @@ void MenuPluginKeship::OnBtn_LoadModel()
     std::cout << "keship未选择模型文件" << std::endl;
     return;
   }
-  QString filePath;
   if (!dlg.selectedRawFile().isEmpty())
-    filePath = dlg.selectedRawFile();
-  else
-    filePath = dlg.selectedFile();
+  {
+    LoadRawModelFile(dlg.selectedRawFile());
+    return;
+  }
+  const QString filePath = dlg.selectedFile();
   if (filePath.isEmpty())
   {
     std::cout << "keship未选择模型文件" << std::endl;
     return;
   }
+  LoadKsmModelFile(filePath);
+}
+
+/// 文件名合法性检查（原 OnBtn_LoadModel 第一步）—— 两个载入入口共用，勿复制第二份
+bool MenuPluginKeship::CheckModelFileName(const QString &_filePath)
+{
   /// 检查模型文件名是否符合要求：文件名只能包含字母、数字、下划线
-  QFileInfo fileInfo(filePath);                   // 获取文件信息
-  QString fileNameBaseName = fileInfo.baseName(); // 提取文件名（不包含路径和后缀）
+  QFileInfo fileInfo(_filePath);                   // 获取文件信息
+  QString fileNameBaseName = fileInfo.baseName();  // 提取文件名（不包含路径和后缀）
   QRegExp regex("[a-zA-Z0-9_]+$");
   if (!regex.exactMatch(fileNameBaseName))
   {
     QMessageBox::warning(nullptr, "错误", "文件名只能包含字母、数字、下划线");
-    return;
+    return false;
   }
+  return true;
+}
+
+/// 载入 .ksm 模型文件（菜单「载入ksm模型文件」与兼容入口共用）
+void MenuPluginKeship::LoadKsmModelFile(const QString &filePath)
+{
+  if (!CheckModelFileName(filePath))
+    return;
 
   /// 检测是否为 .ksm 文件
   std::string fileExt = boost::to_lower_copy(filePath.toStdString().substr(filePath.toStdString().find_last_of(".") + 1));
@@ -1073,6 +1090,13 @@ void MenuPluginKeship::OnBtn_LoadModel()
     std::cout << "keship: 成功加载 .ksm 模型: " << instanceName << std::endl;
     return;
   }
+}
+
+/// 载入原始模型文件（菜单「载入模型（stl\dae等）」与兼容入口共用）
+void MenuPluginKeship::LoadRawModelFile(const QString &filePath)
+{
+  if (!CheckModelFileName(filePath))
+    return;
 
   ///
   std::cout << "keship选择的模型文件路径: " << filePath.toStdString() << std::endl;
@@ -1206,8 +1230,38 @@ void MenuPluginKeship::OnBtn_LoadModel()
     return;
   }
   
+}
 
+/// 只选 .ksm：列表对话框里不提供"从其他目录选择原始模型"通道
+void MenuPluginKeship::OnBtn_LoadKsmModel()
+{
+  SelectKsmDialog dlg(QString::fromStdString(keship::KeshipKsmDir()),
+                      SidebarUrls(), nullptr, /*_ksmOnly=*/true);
+  if (dlg.exec() != QDialog::Accepted)
+  {
+    std::cout << "keship未选择模型文件" << std::endl;
+    return;
+  }
+  const QString filePath = dlg.selectedFile();
+  if (filePath.isEmpty())
+  {
+    std::cout << "keship未选择模型文件" << std::endl;
+    return;
+  }
+  LoadKsmModelFile(filePath);
+}
 
+/// 直接选原始模型文件（stl/dae/obj/sdf/gltf/glb）
+void MenuPluginKeship::OnBtn_LoadRawModel()
+{
+  const QString filePath = QFileDialog::getOpenFileName(
+      nullptr, "选择模型文件", QString(),
+      "3D 模型 (*.dae *.sdf *.stl *.obj *.gltf *.glb);;"
+      "DAE (*.dae);;SDF (*.sdf);;STL (*.stl);;OBJ (*.obj);;"
+      "glTF (*.gltf *.glb);;All Files (*)");
+  if (filePath.isEmpty())
+    return;
+  LoadRawModelFile(filePath);
 }
 
 /////////////////////////////////////////////////
@@ -1789,20 +1843,24 @@ void MenuPluginKeship::OnBtn_Displacement()
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_NewMathHull()
 {
-  auto *dialog = new ShipHullDialog();
+  /// ★ 2026-10-25：实例名称与生成位姿改由对话框输入（此前名称取自船型名、
+  ///   位姿固定 {0, 0, D/2+0.1, 0, 0, 0}）—— HS-01 与本入口是同一个函数，改这里两处同时生效
+  auto *dialog = new ShipHullDialog(this->GetModelNames());
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   QObject::connect(dialog, &ShipHullDialog::spawnRequested, this,
-    [this](keship::ShipHullSpec spec, std::string name) {
-      // 去重
+    [this, dialog](keship::ShipHullSpec spec, std::string name) {
+      // 去重（对话框已做重名校验，这里只兜底：列表在对话框打开期间变动等情况）
       int suffix = 1;
       std::string finalName = name;
       for (const auto &m : modelManager->GetModelList())
         if (m.first == finalName) { finalName = name + "_" + std::to_string(++suffix); }
 
-      double pos[6] = {0, 0, spec.D / 2.0 + 0.1, 0, 0, 0};
+      double pos[6];
+      dialog->getPose(pos);   // 对话框的 X/Y/Z(m) + R/P/Y(°) → 弧度
       if (modelManager->SpawnMathHull(finalName, spec, pos)) {
         std::cout << "Phase B: 数学船型 " << finalName << " 已生成" << std::endl;
         mathHullNames_.insert(finalName);
+        dialog->setInstanceNames(GetModelNames());   // 连续生成时同步重名列表
         NotifyModelListChanged();
       } else
         std::cerr << "Phase B: 数学船型生成失败" << std::endl;

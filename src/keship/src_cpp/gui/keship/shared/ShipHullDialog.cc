@@ -5,7 +5,6 @@
 
 #include "ShipHullDialog.hh"
 #include "UiTheme.hh"
-#include "UiTheme.hh"
 #include "LinesPlanDialog.hh"
 
 #include <QVBoxLayout>
@@ -13,6 +12,8 @@
 #include <QGroupBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QMessageBox>
+#include <QtMath>
 
 using keship::ShipHullSpec;
 
@@ -28,11 +29,11 @@ static ShipHullSpec mapType(int _idx, double L, double B, double D, double rho) 
   }
 }
 
-ShipHullDialog::ShipHullDialog(QWidget *_parent)
-    : QDialog(_parent) {
+ShipHullDialog::ShipHullDialog(const QStringList &_instanceNames, QWidget *_parent)
+    : QDialog(_parent), instanceNames_(_instanceNames) {
   setWindowTitle("新建数学船型");
   setAttribute(Qt::WA_DeleteOnClose);
-  resize(420, 500);
+  resize(440, 720);
   setupUI();
   onTypeChanged();
 }
@@ -87,6 +88,40 @@ void ShipHullDialog::setupUI() {
   paramForm->addRow(hydroFrame);
   mainLayout->addWidget(paramGroup);
 
+  // ★ 2026-10-25 新增：生成设置（名称 + 位置 + 姿态）
+  //   此前名称由船型名固定、位姿由 MenuPluginKeship 硬编码 {0, 0, D/2+0.1, 0, 0, 0}，
+  //   用户无法指定 —— 与「载入模型」的 ModelSettingsDialog 口径对齐。
+  auto *genGroup = new QGroupBox("生成设置", this);
+  auto *genForm = new QFormLayout(genGroup);
+
+  nameEdit_ = new QLineEdit(this);
+  nameEdit_->setPlaceholderText("实例名称（建议字母/数字/下划线）");
+  genForm->addRow("实例名称:", nameEdit_);
+
+  auto makePoseSpin = [this](double _min, double _max, double _value,
+                             const QString &_suffix, int _decimals) {
+    auto *spin = new QDoubleSpinBox(this);
+    spin->setRange(_min, _max);
+    spin->setValue(_value);
+    spin->setSuffix(_suffix);
+    spin->setDecimals(_decimals);
+    return spin;
+  };
+
+  posXSpin_ = makePoseSpin(-1000.0, 1000.0, 0.0, " m", 3);
+  posYSpin_ = makePoseSpin(-1000.0, 1000.0, 0.0, " m", 3);
+  posZSpin_ = makePoseSpin(-1000.0, 1000.0, 0.6, " m", 3);
+  rollSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
+  pitchSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
+  yawSpin_ = makePoseSpin(-180.0, 180.0, 0.0, " °", 2);
+  genForm->addRow("X 位置:", posXSpin_);
+  genForm->addRow("Y 位置:", posYSpin_);
+  genForm->addRow("Z 位置:", posZSpin_);
+  genForm->addRow("Roll (绕X):", rollSpin_);
+  genForm->addRow("Pitch (绕Y):", pitchSpin_);
+  genForm->addRow("Yaw (绕Z):", yawSpin_);
+  mainLayout->addWidget(genGroup);
+
   // 按钮
   auto *btnRow = new QHBoxLayout();
   auto *linesBtn = new QPushButton("型线图", this);
@@ -112,18 +147,46 @@ void ShipHullDialog::setupUI() {
   connect(densitySpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
           this, &ShipHullDialog::onParamChanged);
 
+  // 名称：用户打字后不再随船型联动
+  connect(nameEdit_, &QLineEdit::textEdited, this,
+          [this]() { nameEdited_ = true; });
+  // Z：只有用户手动改过才停止跟随型深（程序自动改值会 blockSignals，不触发此槽）
+  connect(posZSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, [this](double) { zAuto_ = false; });
+
   connect(linesBtn, &QPushButton::clicked, this, &ShipHullDialog::onShowLinesPlan);
   connect(spawnBtn_, &QPushButton::clicked, this, &ShipHullDialog::onSpawn);
   connect(closeBtn_, &QPushButton::clicked, this, &QDialog::close);
 }
 
-void ShipHullDialog::onTypeChanged() { onParamChanged(); }
+void ShipHullDialog::onTypeChanged() {
+  onParamChanged();
+  if (!nameEdited_)
+    updateDefaultName();
+}
 
 void ShipHullDialog::onParamChanged() {
   double L = lengthSpin_->value(), B = breadthSpin_->value();
   double D = depthSpin_->value(), rho = densitySpin_->value();
   spec_ = mapType(typeCombo_->currentIndex(), L, B, D, rho);
+  if (zAuto_ && posZSpin_)
+  {
+    // 默认浮于水面附近（历史值 D/2 + 0.1 保持不变），D 变了跟着变
+    const bool blocked = posZSpin_->blockSignals(true);
+    posZSpin_->setValue(spec_.D / 2.0 + 0.1);
+    posZSpin_->blockSignals(blocked);
+  }
   updateHydroDisplay();
+}
+
+void ShipHullDialog::updateDefaultName() {
+  const QString base = QString::fromStdString(modelName());
+  QString name = base;
+  int idx = 2;
+  while (instanceNames_.contains(name))
+    name = base + "_" + QString::number(idx++);
+  nameEdit_->setText(name);
+  nameEdited_ = false;
 }
 
 void ShipHullDialog::updateHydroDisplay() {
@@ -143,8 +206,36 @@ void ShipHullDialog::updateHydroDisplay() {
                                                   : UiTheme::Status::kFail)));
 }
 
+void ShipHullDialog::getPose(double _pos[6]) const {
+  _pos[0] = posXSpin_->value();
+  _pos[1] = posYSpin_->value();
+  _pos[2] = posZSpin_->value();
+  _pos[3] = qDegreesToRadians(rollSpin_->value());
+  _pos[4] = qDegreesToRadians(pitchSpin_->value());
+  _pos[5] = qDegreesToRadians(yawSpin_->value());
+}
+
+void ShipHullDialog::setInstanceNames(const QStringList &_instanceNames) {
+  instanceNames_ = _instanceNames;
+  if (!nameEdited_)
+    updateDefaultName();
+}
+
 void ShipHullDialog::onSpawn() {
-  emit spawnRequested(spec_, modelName());
+  const QString name = nameEdit_->text().trimmed();
+  if (name.isEmpty())
+  {
+    QMessageBox::warning(this, "警告", "实例名称不能为空");
+    nameEdit_->setFocus();
+    return;
+  }
+  if (instanceNames_.contains(name))
+  {
+    QMessageBox::warning(this, "警告", "模型名称已存在，请换一个名称");
+    nameEdit_->setFocus();
+    return;
+  }
+  emit spawnRequested(spec_, name.toStdString());
 }
 
 void ShipHullDialog::onShowLinesPlan() {
