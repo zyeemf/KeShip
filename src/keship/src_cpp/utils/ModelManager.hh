@@ -272,6 +272,11 @@ namespace keship
     double damping[3] = {0, 0, 0};   ///< <linear_damping> 的 Zw / Kp / Mq（全 0 = 不写该段）
     bool hasDamping() const
     { return damping[0] > 0.0 || damping[1] > 0.0 || damping[2] > 0.0; }
+    /// ★ 2026-10-25：完整水动力配置（线性 8 项 + 可选二次项 + 附加质量）。
+    ///   非空时 SDF 走与圆柱体/网格模型**同一套**标签
+    ///   （`<damping>` / `<linear_damping>` / `<fluid_added_mass>`）；
+    ///   为空时退回上面的 3 项 `<linear_damping>`（`keship_ctl --damping` 行为不变）。
+    const HydroConfig *hydro = nullptr;
   };
 
   /////////////////////////////////////////////////
@@ -335,6 +340,11 @@ namespace keship
                        const ShipHullSpec &_spec,
                        double _pos[6],
                        const MathHullPluginOpts &_opts = MathHullPluginOpts{});
+
+    /// \brief 按船型与尺寸估算默认水动力系数（2026-10-25，GUI 与无头共用）
+    /// \param _full false=轻量（线性 8 项）；true=完整（+Morison 二次项 + 势流附加质量）
+    /// 口径：c = 2ζ√(k·I)，ζ 垂荡 0.15 / 转动 0.10 —— 与 DisplacementVerifyDialog 一致
+    static HydroConfig EstimateMathHullHydro(const ShipHullSpec &_spec, bool _full);
 
     /// @brief 从有效文件类型生成SDF字符串
     /// @param _instanceName 实例名称

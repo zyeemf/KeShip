@@ -1347,6 +1347,152 @@ bool ModelManager::SpawnCylinderInGazebo(
 }
 
 /////////////////////////////////////////////////
+
+namespace
+{
+/// 水动力标签的唯一生成处（2026-10-25）：SdfBuilder 与 SpawnMathHull 共用，
+/// 避免"同一套标签写两遍、改一处漏一处"。
+std::string BuildHydroSdfTags(const keship::HydroConfig &_hc)
+{
+  std::ostringstream hs;
+  if (_hc.dampingMode == "pose_based")
+  {
+    hs << "      <damping_mode>pose_based</damping_mode>\n";
+    return hs.str();
+  }
+  if (!_hc.dampingTerms.empty())
+  {
+    hs << "      <damping>\n";
+    for (const auto &t : _hc.dampingTerms)
+    {
+      hs << "        <term target=\"" << t.target
+         << "\" coefficient=\"" << t.coefficient << "\">\n";
+      for (const auto &f : t.factors)
+        hs << "          <factor dof=\"" << f.dof
+           << "\" order=\"" << f.order << "\"/>\n";
+      hs << "        </term>\n";
+    }
+    hs << "      </damping>\n";
+  }
+  const char *dNames[] = {"Xu","Yv","Zw","Kp","Mq","Nr","Yr","Nv"};
+  hs << "      <linear_damping>\n";
+  for (int i = 0; i < 8; i++)
+    hs << "        <" << dNames[i] << ">" << _hc.damping[i] << "</" << dNames[i] << ">\n";
+  hs << "      </linear_damping>\n";
+  return hs.str();
+}
+}  // namespace
+
+/////////////////////////////////////////////////
+/// 数学船型默认水动力系数（2026-10-25）
+///
+/// 轻量档（_full=false）只给线性 8 项：
+///   Zw/Kp/Mq 用**静水恢复刚度法** c = 2ζ√(k·I)：
+///     A_wp 取自本船型体积曲线 d∇/dT（与 DisplacementVerifyDialog 同源，非矩形粗估）
+///     垂荡 k = ρ·g·A_wp                     → Zw = 2·ζ_h·√(k·m)
+///     横摇 k = ρ·g·(A_wp·B²/12)，I = ixx    → Kp = 2·ζ_r·√(k·ixx)
+///     纵摇 k = ρ·g·(A_wp·L²/12)，I = iyy    → Mq = 2·ζ_r·√(k·iyy)
+///   ζ 取 0.15 / 0.10（与插件 pose_based 同值，全项目一致）
+///   Xu/Yv/Nr 用 m 的比例（与 CylinderTestDialog 的 0.05·m 同风格；无解析式，属工程近似）
+///
+/// 完整档（_full=true）追加：
+///   Morison 二次阻力 0.5·ρ·Cd·A（船体投影面积），以及势流附加质量 6×6 对角阵
+///   （附加质量按排水体积比例，量级参照细长体/圆柱理论，见每行注释）
+///
+/// 所有线性系数下限 1e-3：插件在 enable_hydro=true 而 fossen 无效时会**整体 return**
+/// （连浮力都不施加），退化参数不能把浮力一起弄没。
+HydroConfig ModelManager::EstimateMathHullHydro(const ShipHullSpec &_spec, bool _full)
+{
+  const double rho = 1000.0;
+  const double g = 9.81;
+
+  ShipHullGenerator hull(_spec);
+  const auto &hp = hull.hydroProps();
+
+  const double L = _spec.L, B = _spec.B, D = _spec.D;
+  /// 质量口径与 SpawnMathHull 的 <mass> 一致（rho × 均质船体体积）
+  const double m = _spec.rho * hp.volume;
+  const double ixx = m / 12.0 * (B * B + D * D);
+  const double iyy = m / 12.0 * (L * L + D * D);
+  const double izz = m / 12.0 * (L * L + B * B);
+
+  /// 水线面面积：优先用体积曲线的中央差分（= d∇/dT，与船型自洽）
+  double Awp = (hp.AwD > 1e-9) ? hp.AwD : L * B * 0.8;
+  {
+    const auto &dc = hp.draftCurve;
+    const auto &vc = hp.volumeCurve;
+    if (dc.size() >= 2 && vc.size() == dc.size())
+    {
+      const size_t k = dc.size() / 2;
+      double a = 0.0;
+      if (k > 0 && k + 1 < dc.size() && (dc[k + 1] - dc[k - 1]) > 1e-12)
+        a = (vc[k + 1] - vc[k - 1]) / (dc[k + 1] - dc[k - 1]);
+      else if ((dc[1] - dc[0]) > 1e-12)
+        a = (vc[1] - vc[0]) / (dc[1] - dc[0]);
+      if (a > 1e-6)
+        Awp = a;
+    }
+  }
+
+  const double zetaHeave = 0.15;
+  const double zetaRot = 0.10;
+
+  HydroConfig cfg;
+  cfg.dampingMode = "fossen";
+  cfg.damping[0] = std::max(1e-3, 0.05 * m);                 // Xu：漂移线性摩擦（近似）
+  cfg.damping[1] = std::max(1e-3, 0.05 * m);                 // Yv：同上
+  cfg.damping[2] = std::max(1e-3, 2.0 * zetaHeave *
+      std::sqrt(rho * g * Awp * m));                         // Zw：垂荡
+  cfg.damping[3] = std::max(1e-3, 2.0 * zetaRot *
+      std::sqrt(rho * g * (Awp * B * B / 12.0) * ixx));      // Kp：横摇
+  cfg.damping[4] = std::max(1e-3, 2.0 * zetaRot *
+      std::sqrt(rho * g * (Awp * L * L / 12.0) * iyy));      // Mq：纵摇
+  cfg.damping[5] = std::max(1e-3, 0.05 * izz);               // Nr：首摇（近似）
+  cfg.damping[6] = 0.0;                                      // Yr：耦合项不给
+  cfg.damping[7] = 0.0;                                      // Nv：耦合项不给
+
+  if (_full)
+  {
+    const double T = (hp.draft > 1e-6) ? hp.draft : 0.5 * D;
+    const double A_surge = B * T;   ///< 迎流投影（船体横剖面）
+    const double A_sway = L * T;    ///< 侧向投影（船体侧面）
+
+    auto addQuad = [&cfg](int _dof, double _coeff) {
+      if (_coeff <= 0.0)
+        return;
+      DampingTerm t;
+      t.target = _dof;
+      t.coefficient = _coeff;
+      DampingFactor f;
+      f.dof = _dof;
+      f.order = 2;
+      t.factors.push_back(f);
+      cfg.dampingTerms.push_back(t);
+    };
+
+    /// Morison 型二次阻力：0.5·ρ·Cd·A（Cd 取钝体经验值）
+    addQuad(0, 0.5 * rho * 0.80 * A_surge);                 // 纵荡：V 形首尾，Cd≈0.8
+    addQuad(1, 0.5 * rho * 1.00 * A_sway);                  // 横荡：侧面平板，Cd≈1.0
+    addQuad(2, 0.5 * rho * 1.00 * Awp);                     // 垂荡：水线面，Cd≈1.0
+    /// 转动项按"力 × 力臂²"估：横摇力臂 B/2 的等效矩 ≈ A_side·B²/12
+    addQuad(3, 0.5 * rho * 1.00 * A_sway * (B * B / 12.0)); // 横摇
+    addQuad(4, 0.5 * rho * 1.00 * Awp * (L * L / 12.0));    // 纵摇
+    addQuad(5, 0.5 * rho * 1.00 * A_sway * (L * L / 12.0)); // 首摇
+
+    /// 附加质量（势流，6×6 对角；量级参照细长体/圆柱理论）
+    const double rhoV = rho * hp.volume;
+    cfg.addedMass[0 * 6 + 0] = 0.10 * rhoV;                   // 纵荡：细长体轴向小
+    cfg.addedMass[1 * 6 + 1] = 0.90 * rhoV;                   // 横荡：二维绕流 C_a≈1
+    cfg.addedMass[2 * 6 + 2] = 0.90 * rhoV;                   // 垂荡：同上
+    cfg.addedMass[3 * 6 + 3] = 0.20 * rhoV * (B * B / 12.0);  // 横摇
+    cfg.addedMass[4 * 6 + 4] = 0.25 * rhoV * (L * L / 12.0);  // 纵摇
+    cfg.addedMass[5 * 6 + 5] = 0.25 * rhoV * (L * L / 12.0);  // 首摇
+  }
+
+  return cfg;
+}
+
+/////////////////////////////////////////////////
 bool ModelManager::SpawnMathHull(
     const std::string &_instanceName,
     const ShipHullSpec &_spec,
@@ -1377,6 +1523,22 @@ bool ModelManager::SpawnMathHull(
   double ixx = m / 12.0 * (B * B + D * D);
   double iyy = m / 12.0 * (L * L + D * D);
   double izz = m / 12.0 * (L * L + B * B);
+
+  /// 水动力标签（2026-10-25）：优先用完整 HydroConfig（与圆柱体/网格模型同一套标签），
+  /// 否则退回旧的 3 项 <linear_damping>（keship_ctl --damping 兼容路径）
+  std::string hydroTags;
+  if (_opts.hydro)
+    hydroTags = BuildHydroSdfTags(*_opts.hydro);
+  else if (_opts.hasDamping())
+  {
+    std::ostringstream hs;
+    hs << "      <linear_damping>\n"
+       << "        <Zw>" << _opts.damping[0] << "</Zw>\n"
+       << "        <Kp>" << _opts.damping[1] << "</Kp>\n"
+       << "        <Mq>" << _opts.damping[2] << "</Mq>\n"
+       << "      </linear_damping>\n";
+    hydroTags = hs.str();
+  }
 
   // SDF (对齐 MakeSDFStringFromValidFileType 和 HullStabilityDialog)
   std::ostringstream sdf;
@@ -1413,13 +1575,7 @@ bool ModelManager::SpawnMathHull(
             : std::string())
       /// 线性阻尼（fossen 路径）：网格船体走不了 pose_based（需 hasCylinderGeometry_），
       /// 不给系数就是零阻尼 → 长时间垂荡
-      << (_opts.hasDamping()
-            ? std::string("      <linear_damping>\n")
-              + "        <Zw>" + std::to_string(_opts.damping[0]) + "</Zw>\n"
-              + "        <Kp>" + std::to_string(_opts.damping[1]) + "</Kp>\n"
-              + "        <Mq>" + std::to_string(_opts.damping[2]) + "</Mq>\n"
-              + "      </linear_damping>\n"
-            : std::string())
+      << hydroTags
       << "      <fluid_density>1000</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n"
       << "      <buoyancy name=\"hull\">\n"
@@ -1444,7 +1600,17 @@ bool ModelManager::SpawnMathHull(
   pose->mutable_orientation()->set_y(q.Y());
   pose->mutable_orientation()->set_z(q.Z());
   pose->mutable_orientation()->set_w(q.W());
-  req.set_sdf(sdf.str());
+  std::string sdfStr = sdf.str();
+  /// ★ 2026-10-25：完整档把 6×6 附加质量注入 <fluid_added_mass>（DART 隐式积分）
+  if (_opts.hydro)
+  {
+    bool anyAm = false;
+    for (double v : _opts.hydro->addedMass)
+      if (v != 0.0) { anyAm = true; break; }
+    if (anyAm)
+      this->InjectFluidAddedMass(sdfStr, _opts.hydro->addedMass.data());
+  }
+  req.set_sdf(sdfStr);
 
   gz::msgs::Boolean rep;
   bool result = false;
@@ -1907,34 +2073,7 @@ std::string ModelManager::MakeBuoyancyPluginSDF(
   }
 
     if (hasHydro)
-  {
-    if (_hydro->dampingMode == "pose_based")
-    {
-      sdf << "      <damping_mode>pose_based</damping_mode>\n";
-    }
-    else
-    {
-      if (!_hydro->dampingTerms.empty())
-      {
-        sdf << "      <damping>\n";
-        for (const auto &t : _hydro->dampingTerms)
-        {
-          sdf << "        <term target=\"" << t.target
-              << "\" coefficient=\"" << t.coefficient << "\">\n";
-          for (const auto &f : t.factors)
-            sdf << "          <factor dof=\"" << f.dof
-                << "\" order=\"" << f.order << "\"/>\n";
-          sdf << "        </term>\n";
-        }
-        sdf << "      </damping>\n";
-      }
-      sdf << "      <linear_damping>\n";
-      const char *dNames[] = {"Xu","Yv","Zw","Kp","Mq","Nr","Yr","Nv"};
-      for (int i = 0; i < 8; i++)
-        sdf << "        <" << dNames[i] << ">" << _hydro->damping[i] << "</" << dNames[i] << ">\n";
-      sdf << "      </linear_damping>\n";
-    }
-  }
+      sdf << BuildHydroSdfTags(*_hydro);
 
   sdf << "    </plugin>\n";
   return sdf.str();

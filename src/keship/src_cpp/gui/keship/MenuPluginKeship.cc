@@ -1857,7 +1857,17 @@ void MenuPluginKeship::OnBtn_NewMathHull()
 
       double pos[6];
       dialog->getPose(pos);   // 对话框的 X/Y/Z(m) + R/P/Y(°) → 弧度
-      if (modelManager->SpawnMathHull(finalName, spec, pos)) {
+
+      /// 水动力默认系数（2026-10-25）：对话框勾选时按船型/尺寸估算并写入 SDF
+      keship::MathHullPluginOpts opts;
+      keship::HydroConfig hydroCfg;
+      if (dialog->isHydroEnabled())
+      {
+        hydroCfg = dialog->hydroConfig();
+        opts.enableHydro = true;
+        opts.hydro = &hydroCfg;
+      }
+      if (modelManager->SpawnMathHull(finalName, spec, pos, opts)) {
         std::cout << "Phase B: 数学船型 " << finalName << " 已生成" << std::endl;
         mathHullNames_.insert(finalName);
         dialog->setInstanceNames(GetModelNames());   // 连续生成时同步重名列表

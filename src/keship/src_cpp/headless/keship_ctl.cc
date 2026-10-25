@@ -496,7 +496,8 @@ keship::ShipHullSpec SpecFromArgs(const Args &_a) {
 int CmdModelSpawnHull(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.empty())
     Fail("用法：model spawn-hull <name> [--type ...] [--L --B --D --rho] [--pos x y z r p y]\n"
-         "        可选插件参数：--hydro --publish-subvol --damping <Zw,Kp,Mq>");
+         "        可选插件参数：--hydro --publish-subvol --damping <Zw,Kp,Mq>\n"
+         "        水动力估算（2026-10-25）：--hydro-estimate（轻量）/ --hydro-full（完整）");
   const std::string name = _a.pos[0];
   keship::ShipHullSpec spec = SpecFromArgs(_a);
   double pos[6]; PoseFromArgs(_a, spec.D, pos);
@@ -513,6 +514,16 @@ int CmdModelSpawnHull(keship::ModelManager &_mm, const Args &_a) {
       catch (...) { Fail("--damping 需为逗号分隔的三个数字：Zw,Kp,Mq"); }
     }
     if (i != 3) Fail("--damping 需要 3 个逗号分隔的数字：Zw,Kp,Mq");
+  }
+
+  /// 2026-10-25：按船型/尺寸估算默认水动力（与 GUI「生成数学船型」同一实现，
+  /// 保证无头验证验的就是 GUI 走的那条路）
+  keship::HydroConfig estHydro;
+  if (_a.Has("hydro-estimate") || _a.Has("hydro-full"))
+  {
+    estHydro = keship::ModelManager::EstimateMathHullHydro(spec, _a.Has("hydro-full"));
+    opts.enableHydro = true;
+    opts.hydro = &estHydro;
   }
   /// 守卫：插件 KSPlugin_HydroBuoyancy.cc:427 是 `if (inWater && enableHydro_)` ——
   /// enable_hydro=false 时阻尼整段跳过。不给这条守卫就会「写了阻尼却毫无效果」，
