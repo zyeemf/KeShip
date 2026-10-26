@@ -187,9 +187,11 @@ void WaterAreaVisualManager::SpawnAll(
     }
 
     bool allGone = false;
-    for (int retry = 0; retry < 20; ++retry)
+    /// 2026-10-26：原来固定 20 次 × 500 ms 步进，实测在 GUI 线程上阻塞约 523 ms。
+    /// 改为 500 次 × 20 ms —— 等待上限仍是 10 s，但旧水面一消失就立即返回。
+    for (int retry = 0; retry < 500; ++retry)
     {
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
       gz::msgs::Empty req;
       gz::msgs::Scene rep;

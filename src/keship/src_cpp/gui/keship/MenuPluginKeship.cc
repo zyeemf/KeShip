@@ -24,6 +24,7 @@
 
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QApplication>
 #include <QUrl>
 #include <QTimer>
 #include <QDir>
@@ -2351,6 +2352,8 @@ void MenuPluginKeship::OnBtn_ShowWaterEnv(int _index)
   if (_index < 0 || _index >= (int)areas.size())
     return;
 
+  // 2026-10-26：回滚「挂主窗口」的改动 —— 项目内其余 20 个对话框都不挂父窗口，
+  // 混入 transient 关系反而加重窗口层级竞争。
   EnvironmentParamsDialog dlg(areas[_index]);
   if (dlg.exec() != QDialog::Accepted) return;
   auto updated = dlg.getWaterArea();
@@ -2360,15 +2363,21 @@ void MenuPluginKeship::OnBtn_ShowWaterEnv(int _index)
   for (auto &ca : customWaterAreas_)
     if (ca.name == victim) ca = updated;
 
-  {
-    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
-    auto all = waterAreaMgr_.Areas();
-    waterAreaMgr_.Clear();
-    for (auto &a : all)
-      waterAreaMgr_.AddArea(a.name == victim ? updated : a);
-    RebuildWaterAreas();
-  }
-  PublishWaveParams(updated.waveParams, updated.name);
+  /// 2026-10-26：先让对话框真正关闭、主窗口完成一次重绘，再重建水面。
+  /// 旧实现在这里同步调用 RebuildWaterAreas()：其中 SpawnAll 会做阻塞式 transport
+  /// 请求并轮询等待旧水面消失，实测在 GUI 线程上堵 523 ms ⇒ 3D 画面（独立渲染线程）
+  /// 先变化、对话框区域后消失。改为延迟到下一拍事件循环执行。
+  QTimer::singleShot(0, this, [this, updated]() {
+    {
+      std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+      auto all = waterAreaMgr_.Areas();
+      waterAreaMgr_.Clear();
+      for (auto &a : all)
+        waterAreaMgr_.AddArea(a.name == updated.name ? updated : a);
+      RebuildWaterAreas();
+    }
+    PublishWaveParams(updated.waveParams, updated.name);
+  });
 }
 
 void MenuPluginKeship::OnBtn_EditWaterArea(int _index)
