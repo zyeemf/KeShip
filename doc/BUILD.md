@@ -3,17 +3,16 @@
 > 本文件**随仓库分发**（仓库根 `doc/BUILD.md`，clone 后即可看到）。
 
 > 供 `git clone` 后从零配置环境并完成编译。**实测环境**：Ubuntu 24.04.3 LTS + ROS 2 Jazzy + Gazebo Harmonic。
-> 按本文 `apt install gz-harmonic` 装到的是 Harmonic **当前最新补丁版**（2026-10 为 8.15.0）；
-> 若你的 gz-sim 已打过 KeShip 的 S2 补丁，功能会多一项（见 §5.1）。
 >
-> **版本口径（2026-10-27 修正）**：`gz-harmonic` 不锁补丁版，apt 装的永远是 Harmonic 系列**当前最新补丁版**——
-> 2026-10 实测为 **8.15.0**（`apt-cache policy libgz-sim8` 可见）。同属 8.x，插件 ABI 兼容，
-> **按本文安装即可，不必把版本压回 8.10.0**。唯一差别是 §5 末尾的「S2 能力探测」。
+> **版本口径（2026-10-27 修正）**：`gz-harmonic` 不锁补丁版——apt 装的永远是 Harmonic 系列
+> **当前最新补丁版**（2026-10 实测 **8.15.0**，`apt-cache policy libgz-sim8` 可见）。同属 8.x、插件 ABI 兼容，
+> **按本文安装即可，不必把版本压回 8.10.0**；唯一差别是 §5.1 的能力探测（官方版自动降级）。
+> 若你的 gz-sim 已打过 KeShip 的 S2 补丁，则会多出「完全出水取消 M_A」这一项。
 
 ## 1. 系统要求
 - Ubuntu 24.04 LTS（Noble）
 - ROS 2 Jazzy Jalisco（`/opt/ros/jazzy`）
-- Gazebo Harmonic（gz-sim8）
+- Gazebo Harmonic（gz-sim8），**任意 8.x 补丁版均可**
 
 ## 2. 安装 ROS 2 Jazzy（未安装时）
 ```bash
@@ -65,6 +64,9 @@ sudo apt install -y \
   `CMakeLists.txt` 的 `find_package` 清单逐项核对，无遗漏。
 
 ## 5. 编译
+
+以下假定仓库已克隆到 `~/keship_ws`（克隆命令见仓库根 `README.md`「构建」一节）。
+
 ```bash
 cd ~/keship_ws
 source /opt/ros/jazzy/setup.bash
@@ -73,7 +75,7 @@ source install/setup.bash
 ```
 注意：Gazebo Harmonic 通过 apt 安装后**无需** `source /usr/share/gz/setup.sh`（该文件不存在），其 CMake 配置与库位于标准路径。
 
-### 5.1 看两行输出，判断你的环境属于哪一种
+### 5.1 看 configure 的那行输出，判断你的环境属于哪一种
 
 `colcon build` 的 configure 阶段必定打印下面**之一**：
 
@@ -114,4 +116,4 @@ ros2 launch keship keship.launch.py
   **范围**：语法编译，未做完整 colcon 链接与运行；GUI 源文件未纳入（依赖 AUTOMOC 生成物，需完整 build 目录）。
 - 2026-10-27 修正（用户反馈）：apt 源里 `libgz-sim8` 候选已是 **8.15.0**，而文档原先写的 8.10.0 已过时；
   原文「实测环境 8.10.0」会被读成「必须 8.10.0」。已改为「任意 8.x 补丁版均可」＋新增 §5.1 能力探测说明
-  （上游无 `SetFluidAddedMass`，官方 gz 走自动降级）。。
+  （上游无 `SetFluidAddedMass`，官方 gz 走自动降级）。

@@ -20,7 +20,9 @@ ROS 2 Jazzy + Gazebo Harmonic（gz-sim8）+ Qt5，MIT 许可。
 ## 构建
 
 ```bash
-cd ~/keship_ws/src && git clone https://gitee.com/zyeemf/keship.git   # 或 GitHub: zyeemf/KeShip
+# 仓库根就是工作区（内含 src/keship），因此直接克隆成 ~/keship_ws；
+# 目标目录须为空或不存在，否则 git 会拒绝。
+git clone https://gitee.com/zyeemf/keship.git ~/keship_ws   # 或 GitHub: zyeemf/KeShip
 cd ~/keship_ws
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select keship --merge-install
@@ -52,13 +54,13 @@ keship_ws/
 ├── src/keship/              # 程序源码（ROS2 功能包）
 │   └── models/              # 部分源模型（大模型不入库，本地保留）
 ├── models_all/              # 统一模型资源根目录
-│   ├── ks_model/            # 模型清单库（.ksm 散文件，入库）
-│   ├── ks_world/            # 世界清单目录（.ksw 目录 + .kswf 清单，入库）
+│   ├── ks_model/            # 模型清单（当前仅 ke0812_1.ksm 入库）
+│   ├── ks_world/            # 世界清单目录（.ksw 目录，当前未随仓库分发）
 │   └── robot_model/         # 原始模型（.dae/.stl，部分入库，见下）
-├── data/                    # 运行时数据（部分入库）
-│   ├── models/              # 缓存模型 obj（小文件，入库）
-│   ├── models_normalized/   # 网格规范化缓存（自动生成，不入库）
-│   └── experiments/         # 实验临时目录（不入库）
+├── data/                    # 运行时数据（整体不入库，程序自动生成）
+│   ├── models/              # 缓存模型 obj
+│   ├── models_normalized/   # 网格规范化缓存
+│   └── experiments/         # 实验临时目录
 ├── task/                    # 实验任务（.toml，入库）
 ├── doc/                     # 文档（环境安装 BUILD / 实验指南 experiments）
 └── scripts/                 # 运维脚本（含目录迁移脚本）
@@ -74,8 +76,8 @@ keship_ws/
 | `yanhu/` | **随仓库分发** | yanhu.dae（约 21 MB）+ dirt.png |
 | `wamv/`、`oil_platform/`、`platform_zjy/` | **不入库**，需自行放置 | 见各模型来源说明 |
 
-需要别的模型时，在 `models_all/robot_model/` 下新建子目录放入即可；**单文件几十 MB 的不要提交**，
-大模型请走仓库外的分发渠道。
+需要别的模型时，在 `models_all/robot_model/` 下新建子目录放入即可。**更大型的模型（几十 MB 以上）
+请走仓库外分发，不要新增提交**——`keship3`、`yanhu` 是早期遗留，不再作为先例。
 
 `data/models_normalized/` 是网格规范化缓存，由程序自动生成（删掉会重建），无需手动放置。
 
@@ -85,7 +87,7 @@ keship_ws/
 |---|---|---|
 | `dev` | **现行开发分支**，Gitee 默认分支，clone 后即在此 | 最新 |
 | `main` | 稳定版 | 停在 v0.1.0（2026-10-12），落后 `dev` 87 个提交 |
-| `master` / `legacy` | 旧历史存档（2026-08-13 之前的提交），仅查阅，勿修改 | 冻结 |
+| `master` / `legacy` | 旧历史存档（均指向 2026-08-13 的同一旧提交），仅查阅，勿修改 | 冻结 |
 
 日常开发在 `dev`；要用稳定版：`git checkout main`。
 
