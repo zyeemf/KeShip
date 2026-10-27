@@ -66,7 +66,7 @@ keship_ws/
 │   └── models/              # 部分源模型（大模型不入库，本地保留）
 ├── models_all/              # 统一模型资源根目录
 │   ├── ks_model/            # 模型清单（当前仅 ke0812_1.ksm 入库）
-│   ├── ks_world/            # 世界清单目录（.ksw 目录，当前未随仓库分发）
+│   ├── ks_world/            # 世界清单目录（.ksw 目录；含示例场景 indoor_lab）
 │   └── robot_model/         # 原始模型（.dae/.stl，部分入库，见下）
 ├── data/                    # 运行时数据（整体不入库，程序自动生成）
 │   ├── models/              # 缓存模型 obj
@@ -76,6 +76,10 @@ keship_ws/
 ├── doc/                     # 文档（环境安装 BUILD / 实验指南 experiments）
 └── scripts/                 # 运维脚本（含目录迁移脚本）
 ```
+
+`models_all/ks_world/indoor_lab.ksw` 是随仓库分发的示例场景：**24 × 16 m 大厅**（墙高 4 m、南墙留 3 m 门洞、
+4 根方柱、5 组障碍）+ 一台四轮差速小车。全部用几何原语搭建，**不引用任何外部网格**，
+在 GUI 的「载入世界」里可直接选中。
 
 ## 模型文件放置
 
