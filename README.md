@@ -54,7 +54,7 @@ keship_ws/
 ├── models_all/              # 统一模型资源根目录
 │   ├── ks_model/            # 模型清单库（.ksm 散文件，入库）
 │   ├── ks_world/            # 世界清单目录（.ksw 目录 + .kswf 清单，入库）
-│   └── robot_model/         # 原始模型（.dae/.stl，不入库，见下）
+│   └── robot_model/         # 原始模型（.dae/.stl，部分入库，见下）
 ├── data/                    # 运行时数据（部分入库）
 │   ├── models/              # 缓存模型 obj（小文件，入库）
 │   ├── models_normalized/   # 网格规范化缓存（自动生成，不入库）
@@ -64,25 +64,30 @@ keship_ws/
 └── scripts/                 # 运维脚本（含目录迁移脚本）
 ```
 
-## 大模型放置指引
+## 模型文件放置
 
-`models_all/robot_model/` 仅入库一层目录占位（.gitkeep），**模型子目录与文件均不入库**，需自行创建并放入：
+`models_all/robot_model/` 下各目录状态不同（以 `git ls-files` 为准）：
 
-- `models_all/robot_model/keship3/`：keship3.dae + ship.png + keship3.assxml
-- `models_all/robot_model/wamv/`：wamv.dae
-- `models_all/robot_model/yanhu/`：yanhu.dae + dirt.png
-- 其他模型：按需在 `models_all/robot_model/` 下新建子目录
+| 目录 | 状态 | 内容 |
+|---|---|---|
+| `keship3/` | **随仓库分发** | keship3.dae（约 13 MB）+ ship.png |
+| `yanhu/` | **随仓库分发** | yanhu.dae（约 21 MB）+ dirt.png |
+| `wamv/`、`oil_platform/`、`platform_zjy/` | **不入库**，需自行放置 | 见各模型来源说明 |
 
-`data/models_normalized/` 为网格规范化缓存，由程序自动生成，**无需手动放置**（删除后会自动重建）。
+需要别的模型时，在 `models_all/robot_model/` 下新建子目录放入即可；**单文件几十 MB 的不要提交**，
+大模型请走仓库外的分发渠道。
+
+`data/models_normalized/` 是网格规范化缓存，由程序自动生成（删掉会重建），无需手动放置。
 
 ## 分支
 
-| 分支 | 用途 |
-|---|---|
-| `main` | 现行新历史，日常在此操作 |
-| `master` / `legacy` | 旧历史存档，仅查阅，勿修改 |
+| 分支 | 用途 | 状态（2026-10-27） |
+|---|---|---|
+| `dev` | **现行开发分支**，Gitee 默认分支，clone 后即在此 | 最新 |
+| `main` | 稳定版 | 停在 v0.1.0（2026-10-12），落后 `dev` 87 个提交 |
+| `master` / `legacy` | 旧历史存档（2026-08-13 之前的提交），仅查阅，勿修改 | 冻结 |
 
-克隆时若远端默认分支不是 `main`，显式指定：`git clone -b main <url>`。
+日常开发在 `dev`；要用稳定版：`git checkout main`。
 
 ## 许可
 

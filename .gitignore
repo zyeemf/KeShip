@@ -26,8 +26,8 @@ __pycache__/
 compile_commands.json
 CTestTestfile.cmake
 
-# ===== 大模型二进制：仅入库 robot_model 一层（.gitkeep），模型子目录与文件均不入库 =====
-# 模型子目录（keship3/wamv/yanhu/...）由用户自行创建并放入模型文件，见 README.md
+# ===== 大模型二进制：keship3 / yanhu 例外（历史上已入库，见 README「模型文件放置」）=====
+# 其余子目录（wamv/oil_platform/platform_zjy 等）由用户自行创建并放入，不入库；见 README.md
 models_all/robot_model/*
 !models_all/robot_model/.gitkeep
 # keship3 / yanhu：源网格 + 贴图入库；normalized 缓存与 assxml 不入库
