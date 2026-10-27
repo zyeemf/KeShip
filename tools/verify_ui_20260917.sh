@@ -47,12 +47,14 @@ check "删除全部模型确认（2026-09-25 delete-all 新语义后文案为「
 check "删除水域确认" 1 "$(grep -c '确定删除水域「' "$CC")"
 check "删除子世界确认（原有，未改动）" 1 "$(grep -c '将删除其下' "$CC")"
 check "确认框总数（原有3 + 新增4）" 7 "$(grep -c 'QMessageBox::question' "$CC")"
-check "QML「加载」下拉入口项" 6 "$(awk '/id: loadMenu/,/^                    \}/' "$QML" | grep -c 'MenuItem {')"
+# 2026-10-25 `6cbc9bf` 把「载入模型」拆成 ksm / 原始模型两个入口 ⇒ 下拉 6→7 项；
+# 改动加载菜单时，本行与下一处 StyledMenuItem 总数必须同步。
+check "QML「加载」下拉入口项" 7 "$(awk '/id: loadMenu/,/^                    \}/' "$QML" | grep -c 'MenuItem {')"
 check "QML Tab 新名称（自由任务+教学实验）" 2 "$(grep -cE 'qsTr\("(自由任务|教学实验)"\)' "$QML")"
 check "QML 行内菜单拆分（模型/水域/子世界）" 3 "$(grep -cE 'id: (modelRowMenu|waterRowMenu|subRowMenu)' "$QML")"
 check "StyledMenu 统一样式组件" 1 "$(grep -c 'component StyledMenu:' "$QML")"
 check "StyledMenuItem 条目组件" 1 "$(grep -c 'component StyledMenuItem:' "$QML")"
-check "菜单项全部使用 StyledMenuItem" 24 "$(grep -c '^ *StyledMenuItem {' "$QML")"
+check "菜单项全部使用 StyledMenuItem" 25 "$(grep -c '^ *StyledMenuItem {' "$QML")"
 check "旧 rowMenu 已移除" 0 "$(grep -c 'id: rowMenu' "$QML")"
 # 崩溃红线：Qt 5.15 下 Menu 覆盖 delegate 会导致 QML 创建期 segfault（2026-09-17 实测）
 check "Menu 未覆盖 delegate（红线，必须 0）" 0 "$(grep -c 'delegate: MenuItem' "$QML")"
