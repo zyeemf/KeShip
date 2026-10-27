@@ -160,6 +160,8 @@ private:
   void addRound(const std::vector<keship::WaveSample> &_trail, double _period,
                 double _waveAmp, bool _mooring, double _refRao);
   void onStudentRaoReady(double _rao);
+  /// 学生代码运行失败（编译/超时）→ 本轮结果行转红
+  void onStudentRunFailed(const QString &_msg);
   void updateCurve();
   void resetStudentState();
   void onSubmitValidation();

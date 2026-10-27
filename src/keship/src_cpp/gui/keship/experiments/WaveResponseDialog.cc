@@ -408,6 +408,8 @@ WaveResponseDialog::WaveResponseDialog(gz::transport::Node &_transportNode,
       raoCurve_->setObjectName("raoCurve");
       connect(algoPanel_, &StudentAlgorithmPanel::studentRaoReady, this,
               &WaveResponseDialog::onStudentRaoReady);
+      connect(algoPanel_, &StudentAlgorithmPanel::runFailed, this,
+              &WaveResponseDialog::onStudentRunFailed);
       connect(submitValidationBtn_, &QPushButton::clicked, this,
               &WaveResponseDialog::onSubmitValidation);
       connect(exportValidationBtn_, &QPushButton::clicked, this,
@@ -911,11 +913,13 @@ void WaveResponseDialog::addRound(const std::vector<keship::WaveSample> &_trail,
                                .arg(static_cast<int>(rounds_.size()))
                                .arg(_period, 0, 'f', 2)
                                .arg(_refRao, 0, 'f', 2));
-  if (roundResultLabel_)
+  if (roundResultLabel_) {
+    roundResultLabel_->setStyleSheet("font-family: monospace; color:#333;");
     roundResultLabel_->setText(
         QString("第 %1 轮已就绪（T = %2 s）：运行学生代码后显示学生/内置对比")
             .arg(static_cast<int>(rounds_.size()))
             .arg(_period, 0, 'f', 2));
+  }
   updateCurve();
   std::cout << "MS-06: 已收集第 " << rounds_.size() << " 轮（周期 " << _period
             << " s）" << std::endl;
@@ -927,6 +931,12 @@ void WaveResponseDialog::AddRoundForTest(const std::vector<keship::WaveSample> &
   addRound(_trail, _period, _waveAmp, false, m.rollRAO);
 }
 
+void WaveResponseDialog::onStudentRunFailed(const QString &_msg) {
+  if (!roundResultLabel_) return;
+  roundResultLabel_->setStyleSheet("font-family: monospace; color:#c62828;");
+  roundResultLabel_->setText("运行失败：" + _msg.left(200));
+}
+
 void WaveResponseDialog::onStudentRaoReady(double _rao) {
   if (rounds_.empty()) return;
   const size_t idx = rounds_.size() - 1;
@@ -935,7 +945,11 @@ void WaveResponseDialog::onStudentRaoReady(double _rao) {
   const double err = keship::StudentCodeRunner::ErrorPct(_rao, ref);
   const int v = keship::StudentCodeRunner::Verdict(_rao, ref);
   const QString verdict = (v == 0) ? "通过" : (v == 1 ? "接近" : "不通过");
-  if (roundResultLabel_)
+  if (roundResultLabel_) {
+    // 2026-10-27 张老师定：通过绿 / 接近橙 / 不通过红
+    const QString color = (v == 0) ? "#1b8a3a" : (v == 1 ? "#b26a00" : "#c62828");
+    roundResultLabel_->setStyleSheet(
+        QString("font-family: monospace; color:%1;").arg(color));
     roundResultLabel_->setText(
         QString("第 %1 轮：学生 RAO = %2 °/m ｜ 内置 RAO = %3 °/m ｜ 误差 %4% ｜ %5")
             .arg(static_cast<int>(idx + 1))
@@ -943,6 +957,7 @@ void WaveResponseDialog::onStudentRaoReady(double _rao) {
             .arg(ref, 0, 'f', 4)
             .arg(err, 0, 'f', 2)
             .arg(verdict));
+  }
   updateCurve();
 }
 
@@ -968,8 +983,10 @@ void WaveResponseDialog::resetStudentState() {
     validationTable_->setVisible(false);  ///< 回到未提交状态
   }
   if (validationStatusLabel_) validationStatusLabel_->clear();
-  if (roundResultLabel_)
+  if (roundResultLabel_) {
+    roundResultLabel_->setStyleSheet("font-family: monospace; color:#333;");
     roundResultLabel_->setText("本轮：运行学生代码后显示（内置值运行前不显示）");
+  }
   if (raoCurve_) raoCurve_->Clear();
 }
 

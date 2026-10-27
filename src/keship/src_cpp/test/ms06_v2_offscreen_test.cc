@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QTableWidget>
 #include <QThread>
 #include <iostream>
@@ -41,6 +42,11 @@ int main(int argc, char **argv) {
   QApplication app(argc, argv);
   gz::transport::Node node;
   WaveResponseDialog dlg(node, "keship_world", QStringList{}, "ms06");
+
+  auto *cRadio = dlg.findChild<QRadioButton *>("algoCRadio");
+  auto *pyRadio = dlg.findChild<QRadioButton *>("algoPythonRadio");
+  check(cRadio && cRadio->isChecked(), "默认语言为 C（2026-10-27 张老师定）");
+  pyRadio->setChecked(true);  ///< 本用例走 Python 模板（C 模板由 extra 用例覆盖）
 
   auto *edit = dlg.findChild<QPlainTextEdit *>("algoCodeEdit");
   auto *runBtn = dlg.findChild<QPushButton *>("algoRunBtn");

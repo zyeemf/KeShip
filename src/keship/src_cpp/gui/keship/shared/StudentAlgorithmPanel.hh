@@ -43,7 +43,9 @@ class StudentAlgorithmPanel : public QWidget {
   void onShowHint();
 
  private:
-  QString buildTemplate() const;
+  QString buildTemplate(bool _python) const;
+  /// 未记录轮次时的占位提示（按语言给注释符）
+  QString noRoundHint(bool _python) const;
 
   QRadioButton *pythonRadio_ = nullptr;
   QRadioButton *cRadio_ = nullptr;
@@ -57,6 +59,9 @@ class StudentAlgorithmPanel : public QWidget {
   double waveAmp_ = 0.5;
   double period_ = 5.0;
   bool hasRound_ = false;
+  QString pythonCode_;  ///< Python 缓冲区（切换语言时保存，避免丢代码）
+  QString cCode_;       ///< C 缓冲区
+  bool lastPython_ = false;
 };
 
 #endif

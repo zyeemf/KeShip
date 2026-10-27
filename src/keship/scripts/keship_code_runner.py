@@ -36,7 +36,8 @@ def run_c(code: str, timeout: int = 15) -> dict:
 
     try:
         cr = subprocess.run(
-            ['gcc', '-o', bin_path, src_path, '-lm', '-Wall', '-Werror'],
+            # -Werror 于 2026-10-27 去掉（学生代码有警告不应阻断运行）
+            ['gcc', '-o', bin_path, src_path, '-lm', '-Wall'],
             capture_output=True, text=True, timeout=10)
     except FileNotFoundError:
         return {'ok': False, 'stderr': '系统未安装 gcc'}

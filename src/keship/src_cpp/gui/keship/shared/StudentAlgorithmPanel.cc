@@ -31,7 +31,7 @@ StudentAlgorithmPanel::StudentAlgorithmPanel(QWidget *_parent) : QWidget(_parent
   langRow->addWidget(new QLabel("语言:", this));
   cRadio_ = new QRadioButton("C", this);
   pythonRadio_ = new QRadioButton("Python", this);
-  pythonRadio_->setChecked(true);
+  cRadio_->setChecked(true);  // 2026-10-27 张老师定：默认 C 语言
   langRow->addWidget(cRadio_);
   langRow->addWidget(pythonRadio_);
   langRow->addStretch();
@@ -66,6 +66,8 @@ StudentAlgorithmPanel::StudentAlgorithmPanel(QWidget *_parent) : QWidget(_parent
   connect(resetBtn_, &QPushButton::clicked, this, &StudentAlgorithmPanel::ResetTemplate);
   connect(pythonRadio_, &QRadioButton::toggled, this,
           &StudentAlgorithmPanel::onLanguageChanged);
+  connect(cRadio_, &QRadioButton::toggled, this,
+          &StudentAlgorithmPanel::onLanguageChanged);
 
   codeEdit_->setObjectName("algoCodeEdit");
   runBtn_->setObjectName("algoRunBtn");
@@ -84,20 +86,25 @@ void StudentAlgorithmPanel::SetRound(const std::vector<keship::WaveSample> &_tra
   hasRound_ = true;
   // 把本轮数据写入固定路径，学生代码从该文件读取（同一份代码可跑隐藏数据）
   keship::WriteRoundDataCsv(trail_, waveAmp_, keship::kRoundDataPath);
+  statusLabel_->setStyleSheet("color:#444;");
   statusLabel_->setText(
       QString("本轮已载入 %1 点（T = %2 s，波幅 %3 m），数据文件 %4")
           .arg(static_cast<int>(trail_.size()))
           .arg(fmt(period_, 2))
           .arg(fmt(waveAmp_, 2))
           .arg(QString::fromUtf8(keship::kRoundDataPath)));
-  ResetTemplate();
+  // 2026-10-27 张老师反馈：记录新一轮不得清空学生已写代码，
+  // 只有编辑器仍停在「请先记录一轮」占位时才补模板。
+  const QString cur = codeEdit_->toPlainText();
+  if (cur.trimmed().isEmpty() || cur == noRoundHint(true) || cur == noRoundHint(false))
+    ResetTemplate();
 }
 
 QString StudentAlgorithmPanel::CurrentCode() const { return codeEdit_->toPlainText(); }
 bool StudentAlgorithmPanel::IsPython() const { return pythonRadio_->isChecked(); }
 
-QString StudentAlgorithmPanel::buildTemplate() const {
-  if (pythonRadio_->isChecked()) {
+QString StudentAlgorithmPanel::buildTemplate(bool _python) const {
+  if (_python) {
     return QString(
         "# ── MS-06：本轮横摇时程由平台写入数据文件 ──\n"
         "# 文件格式：首行 \"wave_amp=<波幅 m>\"，其后每行 \"t_s,roll_deg\"\n"
@@ -152,6 +159,7 @@ QString StudentAlgorithmPanel::buildTemplate() const {
       "    }\n"
       "  }\n"
       "  fclose(f);\n"
+      "  (void)t_s; (void)roll_deg;  /* 模板占位：未填 TODO 也能编译，填好后可删 */\n"
       "  /* TODO:\n"
       "     1) 稳态段 = 仿真时间后半段（t >= (t首 + t尾)/2）\n"
       "     2) 幅值 = 该段 (max - min) / 2\n"
@@ -163,15 +171,33 @@ QString StudentAlgorithmPanel::buildTemplate() const {
       .arg(QString::fromUtf8(keship::kRoundDataPath));
 }
 
-void StudentAlgorithmPanel::ResetTemplate() {
-  if (!hasRound_) {
-    codeEdit_->setPlainText("# 请先记录一轮数据（开始记录 → 停止 → 记录本次结果）\n");
-    return;
-  }
-  codeEdit_->setPlainText(buildTemplate());
+QString StudentAlgorithmPanel::noRoundHint(bool _python) const {
+  return _python
+      ? QString("# 请先记录一轮数据（开始记录 → 停止 → 记录本次结果）\n")
+      : QString("// 请先记录一轮数据（开始记录 → 停止 → 记录本次结果）\n");
 }
 
-void StudentAlgorithmPanel::onLanguageChanged() { ResetTemplate(); }
+void StudentAlgorithmPanel::ResetTemplate() {
+  const bool py = pythonRadio_->isChecked();
+  const QString text = hasRound_ ? buildTemplate(py) : noRoundHint(py);
+  codeEdit_->setPlainText(text);
+  (py ? pythonCode_ : cCode_) = text;
+}
+
+void StudentAlgorithmPanel::onLanguageChanged() {
+  const bool py = pythonRadio_->isChecked();
+  if (py == lastPython_) return;  // 一次切换会触发两个 radio 的 toggled，忽略重复
+  // 保存离开语言下的代码（学生已补充的内容不能丢）
+  if (lastPython_)
+    pythonCode_ = codeEdit_->toPlainText();
+  else
+    cCode_ = codeEdit_->toPlainText();
+  lastPython_ = py;
+  QString text = py ? pythonCode_ : cCode_;
+  if (text.trimmed().isEmpty()) text = hasRound_ ? buildTemplate(py) : noRoundHint(py);
+  codeEdit_->setPlainText(text);
+  (py ? pythonCode_ : cCode_) = text;
+}
 
 void StudentAlgorithmPanel::onRun() {
   if (!hasRound_) {
@@ -187,12 +213,14 @@ void StudentAlgorithmPanel::onRun() {
       this, lang, code, [this](const keship::StudentRunResult &_r) {
         runBtn_->setEnabled(true);
         if (!_r.ok || !_r.valueOk) {
+          statusLabel_->setStyleSheet("color:#c62828;");
           statusLabel_->setText(
               _r.ok ? "无法解析输出数值（约定 print 一个数）"
                     : ("运行出错：" + _r.stderrText.left(200)));
           emit runFailed(_r.stderrText);
           return;
         }
+        statusLabel_->setStyleSheet("color:#444;");
         statusLabel_->setText(QString("本轮学生 RAO = %1 °/m").arg(fmt(_r.value, 4)));
         emit studentRaoReady(_r.value);
       });
