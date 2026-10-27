@@ -1,6 +1,49 @@
 # KeShip
 
-KeShip 船舶运动仿真系统（ROS2 Jazzy + Gazebo Harmonic + Qt5.15）。
+**船舶与海洋工程虚拟仿真实验平台**——在电脑里造一条船，给它水域、海况、任务，看它怎么动。
+ROS 2 Jazzy + Gazebo Harmonic（gz-sim8）+ Qt5，MIT 许可。
+
+> 本仓库只讲**从源码构建与二次开发**。只做实验 / 上课的使用者请用预装环境，
+> 安装与使用说明随发布渠道提供，不在本仓库范围内。
+
+## 环境要求
+
+| 项 | 要求 |
+|---|---|
+| 系统 | Ubuntu 24.04 LTS（Noble） |
+| ROS 2 | Jazzy（`/opt/ros/jazzy`） |
+| Gazebo | Harmonic（gz-sim8），**任意 8.x 补丁版均可** |
+| 其他 | Qt 5.15、Eigen3、assimp、中文字体（`fonts-noto-cjk`） |
+
+依赖逐项清单、Gazebo apt 源配置、常见报错，见 **[doc/BUILD.md](doc/BUILD.md)**。
+
+## 构建
+
+```bash
+cd ~/keship_ws/src && git clone https://gitee.com/zyeemf/keship.git   # 或 GitHub: zyeemf/KeShip
+cd ~/keship_ws
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select keship --merge-install
+source install/setup.bash
+```
+
+## 运行
+
+```bash
+./start_keship.sh                    # 一键启动
+# 或
+ros2 launch keship keship.launch.py
+```
+
+## 版本能力差异
+
+`colcon build` 的 configure 阶段会打印一行判定——gz-sim 是否具备 `SetFluidAddedMass`：
+
+- **具备** ⇒「船体完全出水时取消附加质量 M_A」(S2) 生效；
+- **不具备**（官方 apt 版即如此）⇒ 自动降级，其余功能不变，**仅完全出水工况的数值偏保守**。
+
+`SetFluidAddedMass` 不是上游 API，需给 gz-sim 打补丁才有。原因、影响范围与判定方法见
+[doc/BUILD.md §5.1](doc/BUILD.md)。
 
 ## 目录结构
 
@@ -32,34 +75,15 @@ keship_ws/
 
 `data/models_normalized/` 为网格规范化缓存，由程序自动生成，**无需手动放置**（删除后会自动重建）。
 
-## 构建与运行
+## 分支
 
-完整环境安装见 [doc/BUILD.md](doc/BUILD.md)。
+| 分支 | 用途 |
+|---|---|
+| `main` | 现行新历史，日常在此操作 |
+| `master` / `legacy` | 旧历史存档，仅查阅，勿修改 |
 
-```bash
-source /opt/ros/jazzy/setup.bash
-colcon build --packages-select keship --merge-install
-```
+克隆时若远端默认分支不是 `main`，显式指定：`git clone -b main <url>`。
 
-运行入口见 `start_keship.sh`（GUI 插件加载于 Gazebo）。
+## 许可
 
-## Git 使用指引
-
-### 分支结构
-- `main`：现行新历史（日常操作此分支）
-- `master` / `legacy`：旧历史存档（仅查阅，勿修改）
-
-### 日常操作
-```bash
-git pull                       # 更新
-git status / git diff          # 查看改动
-git add <文件> && git commit -m "描述"
-git push                       # 推送（凭据已配置，无需手动输入）
-git log --oneline -5           # 查看历史
-```
-
-### 注意事项
-- 凭据自动认证已配置，推送/拉取无需输入账号密码
-- 大模型目录（`models_all/robot_model/` 等）已被 .gitignore 忽略，模型文件放入不会误提交
-- 仓库含中文文件名（如"新世界"目录），如需显示中文可执行 `git config --global core.quotepath false`
-- 克隆时若远端默认分支未切换，需显式 `-b main`
+MIT License。模型与第三方资源各自的许可见 `models_all/` 下各目录说明。
