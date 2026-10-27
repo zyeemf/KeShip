@@ -4,10 +4,11 @@
 
 > 供 `git clone` 后从零配置环境并完成编译。**实测环境**：Ubuntu 24.04.3 LTS + ROS 2 Jazzy + Gazebo Harmonic。
 >
-> **版本口径（2026-10-27 修正）**：`gz-harmonic` 不锁补丁版——apt 装的永远是 Harmonic 系列
-> **当前最新补丁版**（2026-10 实测 **8.15.0**，`apt-cache policy libgz-sim8` 可见）。同属 8.x、插件 ABI 兼容，
-> **按本文安装即可，不必把版本压回 8.10.0**；唯一差别是 §5.1 的能力探测（官方版自动降级）。
-> 若你的 gz-sim 已打过 KeShip 的 S2 补丁，则会多出「完全出水取消 M_A」这一项。
+> **版本口径（2026-10-27 修正）**：编译**实际用哪一份 gz-sim，取决于 CMake 搜索顺序**。
+> 装了 `ros-jazzy-ros-gz-sim` 就会带进 `/opt/ros/jazzy/opt/gz_sim_vendor`（当前 **8.11.0**），
+> 它排在 `CMAKE_PREFIX_PATH` 最前，通常**优先于** apt 装的 `gz-harmonic`（2026-10 为 **8.15.0**）。
+> 两者都属 8.x、插件 ABI 兼容，**按本文安装即可，不必压版本**；实际用了哪份、能不能用 S2，
+> 以 §5.1 的判定行为准（2026-10-27 干净克隆实测：CMake 找到的是 vendor 的 8.11.0）。
 
 ## 1. 系统要求
 - Ubuntu 24.04 LTS（Noble）
@@ -77,7 +78,7 @@ source install/setup.bash
 
 ### 5.1 看 configure 的那行输出，判断你的环境属于哪一种
 
-`colcon build` 的 configure 阶段必定打印下面**之一**：
+`colcon build` 的 configure 阶段必定打印下面**之一**（**colcon 默认不显示**，取值方法见本节末）：
 
 ```
 KeShip: gz-sim 具备 SetFluidAddedMass ⇒ 启用「完全出水取消 M_A」(S2)
@@ -89,11 +90,20 @@ KeShip: gz-sim **不具备** SetFluidAddedMass ⇒ 跳过 S2（自动降级，�
 
 | 你的环境 | 输出 | 后果 |
 |---|---|---|
-| **官方 apt 版 gz-harmonic**（任何 8.x 补丁版；**8.15.0 已实测**，见 §7） | 第二行 | **编译通过、自动降级**；只是「船完全出水后取消附加质量 M_A」不做，**仅完全出水工况**的数值偏保守 |
+| **ROS 随附的 `gz_sim_vendor`**（装了 `ros-jazzy-ros-gz-sim` 就有，当前 8.11.0） | 第二行 | **编译通过、自动降级**（干净克隆实测，见 §7）；仅完全出水工况数值偏保守 |
+| **官方 apt 版 gz-harmonic**（任何 8.x 补丁版；**8.15.0 已实测**，见 §7） | 第二行 | 同上 |
 | **已打 S2 补丁的 gz-sim**（自行打补丁后编译） | 第一行 | S2 生效 |
 
 不做这类工况，官方版即可，差异仅限那一段。需要 S2 的，得给上游 gz-sim 打补丁后再编译——
 **该补丁与安装流程暂未随仓库分发，需要请联系维护者**；补丁基线是 8.11.0，换到别的补丁版需重做补丁上下文。
+
+**怎么看这行判定**（colcon 默认把 configure 输出收进日志，不往终端打）：
+
+```bash
+grep "gz-sim" log/latest_build/keship/stdout_stderr.log
+# 想直接看全过程：
+colcon build --packages-select keship --merge-install --event-handlers console_direct+
+```
 
 ## 6. 运行
 ```bash
@@ -117,3 +127,10 @@ ros2 launch keship keship.launch.py
 - 2026-10-27 修正（用户反馈）：apt 源里 `libgz-sim8` 候选已是 **8.15.0**，而文档原先写的 8.10.0 已过时；
   原文「实测环境 8.10.0」会被读成「必须 8.10.0」。已改为「任意 8.x 补丁版均可」＋新增 §5.1 能力探测说明
   （上游无 `SetFluidAddedMass`，官方 gz 走自动降级）。
+- 2026-10-27 干净克隆演练（照 README 原样执行）：`git clone https://gitee.com/zyeemf/keship.git ~/keship_ws`
+  耗时 **8 s**，目录层级正确（`src/keship/package.xml`、`doc/`、`start_keship.sh` 均在根）；
+  `colcon build --packages-select keship --merge-install` **返回码 0、58 s**，产出 **6 个插件库**
+  （HydroBuoyancy / Thrust / VariableMass / WavesModel / WaveVisual / MenuPluginKeship）。
+  日志显示 CMake 实际找到 **gz-sim 8.11.0（ROS 的 `gz_sim_vendor`）**、判定为「不具备 ⇒ 自动降级」——
+  说明 §5.1 表格第一行适用于当前默认环境。**未覆盖**：apt 全新安装依赖（本机已装，只能用
+  `apt-cache policy` 证明包名可解析）。

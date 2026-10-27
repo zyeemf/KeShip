@@ -39,13 +39,24 @@ ros2 launch keship keship.launch.py
 
 ## 版本能力差异
 
-`colcon build` 的 configure 阶段会打印一行判定——gz-sim 是否具备 `SetFluidAddedMass`：
+**实际编进去的是 CMake 先找到的那一份 gz-sim**。装了 `ros-jazzy-ros-gz-sim` 时，
+ROS 自带的 `/opt/ros/jazzy/opt/gz_sim_vendor`（当前 8.11.0）排在 `CMAKE_PREFIX_PATH` 最前，
+通常优先于 apt 装的 `gz-harmonic`（2026-10 为 8.15.0）。两者都属 8.x、插件 ABI 兼容，按需安装即可。
 
-- **具备** ⇒「船体完全出水时取消附加质量 M_A」(S2) 生效；
-- **不具备**（官方 apt 版即如此）⇒ 自动降级，其余功能不变，**仅完全出水工况的数值偏保守**。
+两套都**不带** KeShip 的 S2 补丁，行为一致，configure 会打印一行判定：
 
-`SetFluidAddedMass` 不是上游 API，需给 gz-sim 打补丁才有。原因、影响范围与判定方法见
-[doc/BUILD.md §5.1](doc/BUILD.md)。
+- **具备** `SetFluidAddedMass` ⇒「船体完全出水时取消附加质量 M_A」(S2) 生效（需自行打补丁）；
+- **不具备** ⇒ 自动降级，其余功能不变，**仅完全出水工况的数值偏保守**。
+
+**colcon 默认不显示 configure 的输出**，要看这行得自己取：
+
+```bash
+grep "gz-sim" log/latest_build/keship/stdout_stderr.log
+# 或编译时直接放行所有输出：
+# colcon build --packages-select keship --merge-install --event-handlers console_direct+
+```
+
+`SetFluidAddedMass` 不是上游 API。原因、影响与补丁说明见 [doc/BUILD.md §5.1](doc/BUILD.md)。
 
 ## 目录结构
 
