@@ -19,6 +19,18 @@ namespace keship {
 
 // ═══════════════════════════════════════════════════════════
 // ShipHullSpec 工厂方法
+//
+// ★ 指数口径（2026-10-28 张老师拍板：**以界面为准**）
+//   本组默认值必须与 ParametricHullDialog::onFamilyChanged（GUI 选族时重置的
+//   名义值）**逐项相同**。原先两者 5 族中有 4 族不一致，导致
+//   「GUI 选平底生成的船」与「keship_ctl spawn-hull --type wigley-flat」不是同一条船。
+//
+//   约束（改动前务必看）：
+//   ① GUI 路径 refresh() 会用 spin 值**覆盖** spec 指数，故本处默认值对 GUI 无影响，
+//      只影响无头路径（keship_ctl.cc:486-491）与 HS-09 的船型下拉；
+//   ② 改这里必须同步改 onFamilyChanged 的 case 分支，反之亦然——两处是同一个口径；
+//   ③ Lewis U/V 走 secType 分支（sectionShape 第 72-78 行），**不读 secExponent**，
+//      故界面给这两族显示的 sec 指数实际不参与计算（见 doc/SL-03/复核/06_全面复查 §6.5）。
 // ═══════════════════════════════════════════════════════════
 
 ShipHullSpec ShipHullSpec::WigleyClassic(double L, double B, double D, double rho) {
@@ -29,19 +41,19 @@ ShipHullSpec ShipHullSpec::WigleyClassic(double L, double B, double D, double rh
 }
 ShipHullSpec ShipHullSpec::WigleyFlat(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
-  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
-  s.secType=SectionType::PARABOLIC; s.secExponent=4.0;
+  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=3.0;
+  s.secType=SectionType::PARABOLIC; s.secExponent=2.0;
   return s;
 }
 ShipHullSpec ShipHullSpec::WigleySharp(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
   s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
-  s.secType=SectionType::PARABOLIC; s.secExponent=1.5;
+  s.secType=SectionType::PARABOLIC; s.secExponent=1.0;
   return s;
 }
 ShipHullSpec ShipHullSpec::WigleyFine(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
-  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=3.0;
+  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=1.2;
   s.secType=SectionType::PARABOLIC; s.secExponent=2.0;
   return s;
 }
