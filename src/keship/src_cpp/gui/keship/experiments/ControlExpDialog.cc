@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <iostream>
 
@@ -1012,8 +1013,15 @@ void ControlExpDialog::refreshMetrics() {
   const auto &m = runs_.back().m;
   QString txt = QStringLiteral("指标（%1）：").arg(runs_.back().label);
   for (const auto &f : kMetricFields) {
+    const double v = m.*(f.member);
+    /// -1 是本模块约定的「未定义」：overshootPct（跨度太小）、settlingTimeS（结束仍在带外）、
+    /// arrivalRate（无航路点）。直接打印会显示 "-1.00"，学生会当成真值。
+    const bool na = (v < 0.0) &&
+                    (std::strcmp(f.key, "overshootPct") == 0 ||
+                     std::strcmp(f.key, "settlingTimeS") == 0 ||
+                     std::strcmp(f.key, "arrivalRate") == 0);
     txt += QStringLiteral("\n  %1 = %2").arg(QString::fromUtf8(f.cn))
-               .arg(Fmt(m.*(f.member), f.dec));
+               .arg(na ? QStringLiteral("—") : Fmt(v, f.dec));
   }
   metricsLabel_->setText(txt);
 

@@ -200,6 +200,44 @@ void TestMetricsRms() {
               m2.settlingTimeS, m2.overshootPct, m2.headingSteadyErrDeg);
   Check(Near(m2.settlingTimeS, 13.0), "⑤f 调节时间 = 最后一次出带后的下一采样点 t=13 s");
   Check(std::abs(m2.overshootPct - 10.0) < 1e-9, "⑤g 超调 = (33−30)/30 = 10.000%");
+
+  // ⑤g2：跨度小于下限 ⇒ N/A（-1），不得给出 10^3 量级的假超调
+  {
+    std::vector<keship::ControlSample> tiny;
+    for (int i = 0; i <= 20; ++i) {
+      keship::ControlSample s;
+      s.t = static_cast<double>(i);
+      s.yawDeg = 0.5;                       ///< 初始已在 0.5°，目标 0° ⇒ 跨度 0.5°
+      if (i == 12) s.yawDeg = -0.5;         ///< 越过 0.5°（若按旧口径 = 200%）
+      s.headingErrDeg = 0.0 - s.yawDeg;
+      s.speedMs = 1.0;
+      tiny.push_back(s);
+    }
+    keship::MetricContext c3 = ctx;
+    c3.targetHeadingDeg = 0.0;
+    const auto m3 = keship::ComputeMetrics(tiny, c3);
+    Check(m3.overshootPct < 0.0,
+          "⑤g2 跨度 0.5° < 2° ⇒ 超调判 N/A（-1），不给病态百分比");
+  }
+
+  // ⑤g3：反向阶跃（30° → 0°）也要算对：越过到 −3° ⇒ 超调 10%
+  {
+    std::vector<keship::ControlSample> down;
+    for (int i = 0; i <= 20; ++i) {
+      keship::ControlSample s;
+      s.t = static_cast<double>(i);
+      s.yawDeg = (i < 5) ? 30.0 : 0.0;
+      if (i == 12) s.yawDeg = -3.0;
+      s.headingErrDeg = 0.0 - s.yawDeg;
+      s.speedMs = 1.0;
+      down.push_back(s);
+    }
+    keship::MetricContext c4 = ctx;
+    c4.targetHeadingDeg = 0.0;
+    const auto m4 = keship::ComputeMetrics(down, c4);
+    Check(std::abs(m4.overshootPct - 10.0) < 1e-9,
+          "⑤g3 反向阶跃 (30→0，越过到 −3) ⇒ 超调 10.000%（方向符号不参与）");
+  }
   Check(std::abs(m2.headingSteadyErrDeg) < 1e-9, "⑤h 末 20% 稳态误差 = 0°");
 
   // 数据不足 ⇒ invalid（不许把 2 个点算成指标）

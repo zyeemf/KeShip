@@ -325,12 +325,17 @@ inline double ColregsHeadingBiasDeg(double _relBearingDeg, double _rangeM,
 ///   headingRmseDeg     = sqrt(mean(headingErr²))（全段，不扣均值）
 ///   headingSteadyErr   = 末 20% 的 mean(|headingErr|)
 ///   settlingTimeS      = 「最后一次出带」之后一点的 t；带 = max(2%·|目标航向|, 0.5°)
-///   overshootPct       = (越过目标的峰值) / |目标−初始| × 100
+///   overshootPct       = (越过目标的峰值) / |目标−初始| × 100；跨度 < kMinOvershootSpanDeg 时为 -1（N/A）
 ///   lateralRmsM        = sqrt(mean(lateral²))；maxLateralM = max|lateral|
 ///   dpHoldErrM         = 末 20% 到目标点（DP/编队目标）的平均距离
 ///   arrivalRate        = 已到达航路点 / 总航路点（无航路点 = −1）
 ///   minDcpaM           = 逐帧按当时速度外推的 DCPA 最小值（障碍静止）
 ///   formationErrM      = 末 20% 到编队目标点的平均距离
+/// 超调百分比的最小可分辨跨度（度）。
+/// 低于它时「越过量/跨度」会病态放大：船本来就在目标航向上，1° 的抖动就能算出 1000%+。
+/// 这不是超调，是分母趋零。故一律判 N/A（-1），界面显示「—」。
+constexpr double kMinOvershootSpanDeg = 2.0;
+
 inline ControlMetrics ComputeMetrics(const std::vector<ControlSample> &_trail,
                                       const MetricContext &_ctx) {
   ControlMetrics m;
@@ -383,8 +388,8 @@ inline ControlMetrics ComputeMetrics(const std::vector<ControlSample> &_trail,
     const double tgt = _ctx.targetHeadingDeg;
     const double y0 = _trail.front().yawDeg;
     const double span = std::abs(tgt - y0);
-    if (span < 1e-6) {
-      m.overshootPct = 0.0;
+    if (span < kMinOvershootSpanDeg) {
+      m.overshootPct = -1.0;   ///< N/A：跨度太小，百分比无物理意义
     } else {
       const double dir = (tgt >= y0) ? 1.0 : -1.0;
       double peak = 0.0;
