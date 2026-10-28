@@ -44,6 +44,10 @@ public:
   /// 当前达成的方形系数（体积口径，供测试与下游读取）
   double achievedCb() const { return cbAchieved_; }
 
+  /// 无交互导出（离屏测试用，不弹 QFileDialog）。成功返回 true。
+  /// 与 onExport() 共用同一段组装代码，测试因此覆盖真实导出分支。
+  bool exportTo(const QString &_path, std::string *_err);
+
 private slots:
   void onFamilyChanged(int _idx);
   void onRegenerate();

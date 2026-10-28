@@ -379,16 +379,16 @@ void ParametricHullDialog::onSolveCb()
 }
 
 //-----------------------------------------------------------------------------
-void ParametricHullDialog::onExport()
+bool ParametricHullDialog::exportTo(const QString &_path, std::string *_err)
 {
   if (!hull_) {
-    QMessageBox::warning(this, "导出型线数据", "尚未生成型线，请先点「重新生成型线」。");
-    return;
+    if (_err) *_err = "尚未生成型线，请先点「重新生成型线」";
+    return false;
   }
-
-  const QString path = QFileDialog::getSaveFileName(
-      this, "导出 SD-08 型线数据", "sd08_lines.json", "JSON (*.json)");
-  if (path.isEmpty()) return;
+  if (_path.isEmpty()) {
+    if (_err) *_err = "导出路径为空";
+    return false;
+  }
 
   const auto &hp = hull_->hydroProps();
   const auto &ld = hull_->lines();
@@ -438,7 +438,28 @@ void ParametricHullDialog::onExport()
   d.extra["halfBreadths"] = halfBreadths;
 
   std::string err;
-  if (!keship::WriteExpDeliverable(path.toStdString(), d, &err)) {
+  if (!keship::WriteExpDeliverable(_path.toStdString(), d, &err)) {
+    if (_err) *_err = err;
+    return false;
+  }
+  std::cout << "SD-08: 已导出交付物 " << _path.toStdString() << std::endl;
+  return true;
+}
+
+//-----------------------------------------------------------------------------
+void ParametricHullDialog::onExport()
+{
+  if (!hull_) {
+    QMessageBox::warning(this, "导出型线数据", "尚未生成型线，请先点「重新生成型线」。");
+    return;
+  }
+
+  const QString path = QFileDialog::getSaveFileName(
+      this, "导出 SD-08 型线数据", "sd08_lines.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+
+  std::string err;
+  if (!exportTo(path, &err)) {
     QMessageBox::warning(this, "导出型线数据",
         QString::fromStdString("导出失败：" + err));
     return;
@@ -447,5 +468,4 @@ void ParametricHullDialog::onExport()
   QMessageBox::information(this, "导出型线数据",
       QString("已导出：%1\n\n该文件是 HS-05 / HS-09 的输入（判据 B：机器交付物贯通）。")
           .arg(path));
-  std::cout << "SD-08: 已导出交付物 " << path.toStdString() << std::endl;
 }

@@ -38,6 +38,9 @@ class ProxyGeometryDialog : public QDialog
 
 public:
   explicit ProxyGeometryDialog(QWidget *_parent = nullptr);
+
+  /// 无交互加载网格（离屏测试用，不弹 QFileDialog）。
+  void loadMeshFileForTest(const std::string &_path) { loadMeshFile(_path); }
   ~ProxyGeometryDialog() override;
 
   /// 对比表的指标行数（顶点/面数/体积/质量/浮力/Ixx/Iyy/Izz/体积偏差）

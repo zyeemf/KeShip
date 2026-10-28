@@ -195,6 +195,62 @@ void PrintResults(QDialog *_dlg)
   std::fflush(stdout);
 }
 
+/// 无交互导入（D1）：直调各对话框已有的 public 入口，不经过 QFileDialog。
+/// 第二个参数用于「一个实验要导两份上游」的情形（HS-08: HS-07 + SD-08；SD-07: SD-04 + HS-08）。
+bool TryImport(QDialog *_dlg, const QString &_p1, const QString &_p2)
+{
+  if (_p1.isEmpty()) return false;
+  if (auto *x = qobject_cast<MidshipSectionDialog *>(_dlg)) {
+    std::string err; return x->importFrom(_p1, &err);
+  }
+  if (auto *x = qobject_cast<LongitudinalStrengthDialog *>(_dlg)) {
+    std::string err; return x->importFrom(_p1, &err);
+  }
+  if (auto *x = qobject_cast<LinesReadingDialog *>(_dlg)) {
+    return x->importSd08(_p1);
+  }
+  if (auto *x = qobject_cast<BuoyancyLayoutDialog *>(_dlg)) {
+    return x->importSd04(_p1);
+  }
+  if (auto *x = qobject_cast<GzStabilityDialog *>(_dlg)) {
+    bool ok = x->importHs07(_p1);                       ///< 取 KG
+    if (!_p2.isEmpty()) ok = x->importSd08(_p2) && ok;  ///< 再切站表
+    return ok;
+  }
+  if (auto *x = qobject_cast<DamageStabilityDialog *>(_dlg)) {
+    bool ok = x->importSd04(_p1);                       ///< 舱室
+    if (!_p2.isEmpty()) ok = x->importHs08(_p2) && ok;  ///< 完整船 GM
+    return ok;
+  }
+  if (auto *x = qobject_cast<InertiaCalculatorDialog *>(_dlg)) {
+    x->loadMeshFileForTest(_p1.toStdString()); return true;
+  }
+  if (auto *x = qobject_cast<ProxyGeometryDialog *>(_dlg)) {
+    x->loadMeshFileForTest(_p1.toStdString()); return true;
+  }
+  return false;
+}
+
+/// 无交互导出（D1）：同上。带 err 的与不带 err 的两组签名分别处理。
+bool TryExport(QDialog *_dlg, const QString &_p)
+{
+  if (_p.isEmpty()) return false;
+  std::string err;
+  if (auto *x = qobject_cast<MidshipSectionDialog *>(_dlg))        return x->exportTo(_p, &err);
+  if (auto *x = qobject_cast<LongitudinalStrengthDialog *>(_dlg))  return x->exportTo(_p, &err);
+  if (auto *x = qobject_cast<StructureCognitionDialog *>(_dlg))    return x->exportTo(_p, &err);
+  if (auto *x = qobject_cast<ParametricHullDialog *>(_dlg))        return x->exportTo(_p, &err);
+  if (auto *x = qobject_cast<LinesReadingDialog *>(_dlg))          return x->exportTo(_p);
+  if (auto *x = qobject_cast<BuoyancyLayoutDialog *>(_dlg))        return x->exportTo(_p);
+  if (auto *x = qobject_cast<GzStabilityDialog *>(_dlg))           return x->exportTo(_p);
+  if (auto *x = qobject_cast<DamageStabilityDialog *>(_dlg))       return x->exportTo(_p);
+  if (auto *x = qobject_cast<CompartmentDialog *>(_dlg))           return x->exportTo(_p);
+  if (auto *x = qobject_cast<ResistanceDialog *>(_dlg))            return x->exportTo(_p);
+  if (auto *x = qobject_cast<PropellerDialog *>(_dlg))             return x->exportTo(_p);
+  if (auto *x = qobject_cast<LargeAngleStabilityDialog *>(_dlg))   return x->exportTo(_p);
+  return false;
+}
+
 }  // namespace
 
 int main(int _argc, char **_argv)
@@ -209,6 +265,9 @@ int main(int _argc, char **_argv)
   std::vector<std::pair<int, double>> spins;
   std::vector<std::pair<int, std::string>> combos;
   QString injectFile;
+  QString importPath;    ///< --import：直调 importFrom/importSd04/...（不弹文件框）
+  QString importPath2;   ///< --import2：第二个上游（HS-08 / SD-07 用）
+  QString exportPath;    ///< --export：直调 exportTo（不弹文件框）
 
   for (int i = 1; i < _argc; ++i) {
     const char *a = _argv[i];
@@ -220,6 +279,12 @@ int main(int _argc, char **_argv)
       result = true;
     } else if (std::strcmp(a, "--file") == 0 && i + 1 < _argc) {
       injectFile = QString::fromLocal8Bit(_argv[++i]);
+    } else if (std::strcmp(a, "--import") == 0 && i + 1 < _argc) {
+      importPath = QString::fromLocal8Bit(_argv[++i]);
+    } else if (std::strcmp(a, "--import2") == 0 && i + 1 < _argc) {
+      importPath2 = QString::fromLocal8Bit(_argv[++i]);
+    } else if (std::strcmp(a, "--export") == 0 && i + 1 < _argc) {
+      exportPath = QString::fromLocal8Bit(_argv[++i]);
     } else if (std::strcmp(a, "--click") == 0 && i + 1 < _argc) {
       clicks.push_back(_argv[++i]);
     } else if (std::strcmp(a, "--wait") == 0 && i + 1 < _argc) {
@@ -242,7 +307,8 @@ int main(int _argc, char **_argv)
   if (exp.empty()) {
     std::printf(
         "usage: exp_smoke_test --exp <EXP-ID> [--dump] [--result] "
-        "[--spin i v]... [--combo i text]... [--click text]... [--wait ms]\n");
+        "[--spin i v]... [--combo i text]... [--click text]... [--wait ms] "
+        "[--file p] [--import p] [--import2 p] [--export p]\n");
     return 2;
   }
 
@@ -259,34 +325,42 @@ int main(int _argc, char **_argv)
   dlg->show();
   app.processEvents();
 
-  /// 文件注入：多数实验的「浏览/导入」会弹 QFileDialog::getOpenFileName（模态阻塞），
-  /// 驱动没法在点击返回后补操作。这里用 200 ms 轮询把顶层 QFileDialog 找出来、填路径并 accept，
-  /// 从而把「必须人工选文件」的实验也纳入自动演练（--file <path>）。
-  QTimer *injectTimer = nullptr;
-  if (!injectFile.isEmpty()) {
-    injectTimer = new QTimer(&app);
-    QObject::connect(injectTimer, &QTimer::timeout, [&injectFile, injectTimer]() {
-      for (auto *w : QApplication::topLevelWidgets()) {
-        auto *fd = qobject_cast<QFileDialog *>(w);
-        if (fd && fd->isVisible()) {
-          const QFileInfo fi(injectFile);
-          /// 先切目录再选文件名：只给绝对路径时，离屏对话框的列表还没刷新到该目录，
-          /// accept 会因"文件不存在于当前视图"而拒绝关闭（2026-10-28 实测）。
-          fd->setDirectory(fi.absolutePath());
-          fd->selectFile(fi.fileName());
-          QMetaObject::invokeMethod(fd, "accept", Qt::DirectConnection);
-          continue;
-        }
-        /// 载入失败常常弹 QMessageBox（模态），不处理会把驱动卡死在这里。
-        auto *mb = qobject_cast<QMessageBox *>(w);
-        if (mb && mb->isVisible()) {
-          std::fprintf(stderr, "MSGBOX %s\n", mb->text().toUtf8().constData());
+  /// 模态框兜底：定时器**无条件**创建（2026-10-28 D2）。
+  /// ① 给了 --file 时：把顶层 QFileDialog 找出来、填路径并 accept（原逻辑）；
+  /// ② 无论有没有 --file：自动 accept 顶层 QMessageBox，并把文字打到 stderr。
+  ///    缺了 ② 时，「未勾软系泊」「未设目标 Cb」「导入失败」这类提示框会把驱动
+  ///    永久阻塞 —— 实测 MS-02/03/06、SD-08 反解全部卡到 exit=124。
+  QTimer *injectTimer = new QTimer(&app);
+  QObject::connect(injectTimer, &QTimer::timeout, [&injectFile]() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+      auto *fd = qobject_cast<QFileDialog *>(w);
+      if (fd && fd->isVisible()) {
+        if (injectFile.isEmpty()) continue;   ///< 没给 --file 就不去动文件框
+        const QFileInfo fi(injectFile);
+        /// 先切目录再选文件名：只给绝对路径时，离屏对话框的列表还没刷新到该目录，
+        /// accept 会因"文件不存在于当前视图"而拒绝关闭（2026-10-28 实测）。
+        fd->setDirectory(fi.absolutePath());
+        fd->selectFile(fi.fileName());
+        QMetaObject::invokeMethod(fd, "accept", Qt::DirectConnection);
+        continue;
+      }
+      auto *mb = qobject_cast<QMessageBox *>(w);
+      if (mb && mb->isVisible()) {
+        std::fprintf(stderr, "MSGBOX %s\n", mb->text().toUtf8().constData());
+        /// 有「是」就点「是」：测试要的是「继续」路径。直接 accept() 会激活默认按钮，
+        /// 而 QMessageBox::question(Yes|No, 默认 No) 的默认按钮是 No —— 实测 MS-03
+        /// 会因此静默 return，记录不启动（幅值全「—」）。
+        if (QAbstractButton *yes = mb->button(QMessageBox::Yes)) {
+          std::fprintf(stderr, "MSGBOX->Yes\n");
+          yes->click();
+        } else {
+          std::fprintf(stderr, "MSGBOX->accept\n");
           mb->accept();
         }
       }
-    });
-    injectTimer->start(200);
-  }
+    }
+  });
+  injectTimer->start(200);
 
   const int widgets = static_cast<int>(dlg->findChildren<QWidget *>().size());
   const int buttons = static_cast<int>(dlg->findChildren<QPushButton *>().size());
@@ -294,6 +368,15 @@ int main(int _argc, char **_argv)
               dlg->windowTitle().toUtf8().constData(), widgets, buttons,
               dlg->width(), dlg->height());
   std::fflush(stdout);
+
+  // ---- 无交互导入（D1）：不弹 QFileDialog，直调对话框的 public 入口 ----
+  if (!importPath.isEmpty()) {
+    const bool ok = TryImport(dlg, importPath, importPath2);
+    std::printf("IMPORT\t%s\t%s\n", ok ? "OK" : "FAIL",
+                importPath.toUtf8().constData());
+    std::fflush(stdout);
+    Pump(app, 300);
+  }
 
   // ---- 设参数（按 dump 的索引顺序）----
   const auto spinList = dlg->findChildren<QDoubleSpinBox *>();
@@ -345,6 +428,14 @@ int main(int _argc, char **_argv)
     hit->click();
     Pump(app, waitMs);
     std::printf("CLICKED\t%s\n", c.c_str());
+    std::fflush(stdout);
+  }
+
+  // ---- 无交互导出（D1）：不弹 QFileDialog ----
+  if (!exportPath.isEmpty()) {
+    const bool ok = TryExport(dlg, exportPath);
+    std::printf("EXPORT\t%s\t%s\n", ok ? "OK" : "FAIL",
+                exportPath.toUtf8().constData());
     std::fflush(stdout);
   }
 
