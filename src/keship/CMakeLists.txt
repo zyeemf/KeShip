@@ -481,6 +481,16 @@ if(KESHIP_BUILD_TESTS)
   target_link_libraries(state_transition_probe gz-gui8::gz-gui8 keship_utils)
   ament_target_dependencies(state_transition_probe rclcpp ament_index_cpp)
 
+  # ---- 甲-13：42 项教学实验统一离屏冒烟（2026-10-28）
+  # 一进程一实验（--exp <id>），崩溃只影响该项；不进 ctest 回归，由 tools/exp_drill 驱动。
+  add_executable(exp_smoke_test src_cpp/test/exp_smoke_test.cc)
+  target_include_directories(exp_smoke_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(exp_smoke_test MenuPluginKeship gz-gui8::gz-gui8 Qt5::Widgets)
+  ament_target_dependencies(exp_smoke_test rclcpp ament_index_cpp)
+
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。

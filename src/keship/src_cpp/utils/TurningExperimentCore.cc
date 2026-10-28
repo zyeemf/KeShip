@@ -261,6 +261,21 @@ bool TurningExperimentCore::advanceSimulationTime(double _simTimeSec) {
     if (currentStage_ == measurementStartStage_) pendingMeasurementStart_ = true;
   }
   elapsed_ = std::max(0.0, elapsedSim);
+
+  /// 末段有确定时长 ⇒ 到点自动结束。
+  /// 为什么必须在这里做（2026-10-28 实测缺陷）：本类原先只有 stop()/clear() 会把
+  /// running_ 置 false，阶段跑完不置位；而 MS-05 这类"跑完即结算"的实验在
+  /// onTick() 里靠 `!running()` 触发结算 ⇒ 计划跑完永不结算、结果表不出行。
+  /// 末段时长填 0 的语义是"持续到手动停止"（MS-01 的默认用法），不受影响。
+  if (!stages_.empty() && stages_.back().durationSec > 0.0) {
+    double totalSec = 0.0;
+    for (const auto &st : stages_) totalSec += st.durationSec;
+    if (elapsedSim + 1e-9 >= totalSec) {
+      running_ = false;
+      sendThrust(0.0, 0.0);
+    }
+  }
+
   return changed;
 }
 
