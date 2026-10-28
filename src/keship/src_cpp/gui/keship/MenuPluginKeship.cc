@@ -69,6 +69,20 @@
 #include "editors/EnvironmentParamsDialog.hh"
 #include "editors/InertiaCalculatorDialog.hh"
 #include "editors/ProxyGeometryDialog.hh"
+#include "experiments/ParametricHullDialog.hh"
+#include "experiments/OperabilityDialog.hh"
+#include "experiments/ResistanceDialog.hh"
+#include "experiments/PropellerDialog.hh"
+#include "experiments/CompartmentDialog.hh"
+#include "experiments/BuoyancyLayoutDialog.hh"
+#include "experiments/GzStabilityDialog.hh"
+#include "experiments/DamageStabilityDialog.hh"
+#include "experiments/ControlExpDialog.hh"
+#include "experiments/LargeAngleStabilityDialog.hh"
+#include "experiments/LinesReadingDialog.hh"
+#include "experiments/StructureCognitionDialog.hh"
+#include "experiments/MidshipSectionDialog.hh"
+#include "experiments/LongitudinalStrengthDialog.hh"
 #include "editors/LoadWorldDialog.hh"
 #include "editors/SaveWorldDialog.hh"
 #include "editors/SelectWorldDialog.hh"
@@ -3220,6 +3234,100 @@ void MenuPluginKeship::OnBtn_SD06_ProxyGeometry()
   dlg->setAttribute(Qt::WA_DeleteOnClose);
   dlg->show();
   std::cout << "SD-06: 代理几何体建模与简化对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+/// L6/L7：11 个控制实验共用一个对话框，按 expId 切换默认参数与界面组合。
+/// 用「一个带参数的槽」而不是 11 个几乎相同的槽，避免 11 份代码各自漂移。
+void MenuPluginKeship::OnBtn_SC_ControlExp(const QString &_expId)
+{
+  auto *dlg = new ControlExpDialog(modelManager->GetNode(), "keship_world",
+                                   GetModelNames(), _expId);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << _expId.toStdString() << ": 控制实验对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_HS06_LargeAngleStability()
+{ auto *d = new LargeAngleStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-06: 大倾角稳性对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD02_LinesReading()
+{ auto *d = new LinesReadingDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-02: 型线图识读对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD01_StructureCognition()
+{ auto *d = new StructureCognitionDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-01: 船体结构认知对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD03_MidshipSection()
+{ auto *d = new MidshipSectionDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-03: 横剖面结构对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD09_LongitudinalStrength()
+{ auto *d = new LongitudinalStrengthDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-09: 综合结构设计对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_RP01_Resistance()
+{ auto *d = new ResistanceDialog(nullptr, "RP-01"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-01: 阻力成分分解对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP02_ResistanceCurve()
+{ auto *d = new ResistanceDialog(nullptr, "RP-02"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-02: 阻力曲线测定对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP05_HullOptimization()
+{ auto *d = new ResistanceDialog(nullptr, "RP-05"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-05: 船型阻力优化对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP06_Extrapolation()
+{ auto *d = new ResistanceDialog(nullptr, "RP-06"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-06: 尺度换算与实船阻力外推对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP03_OpenWater()
+{ auto *d = new PropellerDialog(nullptr, "RP-03"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-03: 螺旋桨敞水特性对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP04_Matching()
+{ auto *d = new PropellerDialog(nullptr, "RP-04"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-04: 推进性能匹配对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD04_Compartment()
+{ auto *d = new CompartmentDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-04: 舱室划分对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_HS07_BuoyancyLayout()
+{ auto *d = new BuoyancyLayoutDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-07: 浮体布局设计对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_HS08_GzStability()
+{ auto *d = new GzStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-08: 完整稳性综合校核对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD07_DamageStability()
+{ auto *d = new DamageStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-07: 破舱稳性仿真对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_MS05_Operability()
+{
+  auto *dlg = new OperabilityDialog(modelManager->GetNode(), "keship_world",
+                                    GetModelNames());
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "MS-05: 海况操限评估对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD08_ParametricHull()
+{
+  auto *dlg = new ParametricHullDialog(nullptr);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "SD-08: 参数化型线设计对话框已打开" << std::endl;
 }
 
 //-----------------------------------------------------------------------------

@@ -162,6 +162,21 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/shared/RaoCurveWidget.cc
   src_cpp/gui/keship/shared/StudentCodeRunner.cc
   src_cpp/gui/keship/experiments/SensorEstimationDialog.cc
+  src_cpp/gui/keship/experiments/ParametricHullDialog.cc
+  src_cpp/gui/keship/experiments/OperabilityDialog.cc
+  src_cpp/gui/keship/experiments/ResistanceDialog.cc
+  src_cpp/gui/keship/experiments/PropellerDialog.cc
+  src_cpp/gui/keship/experiments/CompartmentDialog.cc
+  src_cpp/gui/keship/experiments/BuoyancyLayoutDialog.cc
+  src_cpp/gui/keship/experiments/GzStabilityDialog.cc
+  src_cpp/gui/keship/experiments/DamageStabilityDialog.cc
+  src_cpp/gui/keship/experiments/ControlExpDialog.cc
+  src_cpp/gui/keship/experiments/LargeAngleStabilityDialog.cc
+  src_cpp/gui/keship/experiments/LinesReadingDialog.cc
+  src_cpp/gui/keship/experiments/StructureCognitionDialog.cc
+  src_cpp/gui/keship/experiments/MidshipSectionDialog.cc
+  src_cpp/gui/keship/experiments/LongitudinalStrengthDialog.cc
+  src_cpp/gui/keship/shared/ExpDeliverable.cc
   src_cpp/gui/keship/tasks/TaskMonitorDialog.cc
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
   src_cpp/gui/keship/editors/EnvironmentParamsDialog.cc
@@ -203,6 +218,12 @@ install(FILES
 ############### 物理插件 - 批量进行编译/链接/安装 ###############
 # 工具类静态库（只编译一次，链接到所有物理插件）
 add_library(keship_utils STATIC
+  src_cpp/utils/ResistanceCore.cc
+  src_cpp/utils/PropellerCore.cc
+  src_cpp/utils/StabilityGzCore.cc
+  src_cpp/utils/DamageStabilityCore.cc
+  src_cpp/utils/ControlExpCore.cc
+  src_cpp/utils/MidshipSectionCore.cc
   src_cpp/utils/Buoyancy.cc
   src_cpp/utils/MeshUtils.cc
   src_cpp/utils/Tetrahedron.cc
@@ -397,6 +418,61 @@ if(KESHIP_BUILD_TESTS)
   ament_target_dependencies(sdf_assembly_test rclcpp ament_index_cpp)
   add_test(NAME sdf_assembly COMMAND sdf_assembly_test)
 
+  # ---- 甲-7：SD-08 参数化型线设计（2026-10-27）
+  # 覆盖：Cb 口径自洽 / 静水力恒等式 / Cb 对 p 单调（反解前提）/ 型值表自洽 /
+  #       交付物写→读→校验往返 + 串号负例
+  add_executable(sd08_lines_test src_cpp/test/sd08_lines_test.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(sd08_lines_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd08_lines_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(sd08_lines_test rclcpp ament_index_cpp)
+  add_test(NAME sd08_lines COMMAND sd08_lines_test)
+
+  # ---- 甲-8：L8 阻力/推进计算内核（2026-10-27）
+  add_executable(rp_core_test src_cpp/test/rp_core_test.cc
+    src_cpp/utils/ResistanceCore.cc src_cpp/utils/PropellerCore.cc)
+  target_include_directories(rp_core_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME rp_core COMMAND rp_core_test)
+
+  # ---- 甲-9：L2 稳性计算内核（2026-10-27）
+  add_executable(l2_stability_test src_cpp/test/l2_stability_test.cc
+    src_cpp/utils/StabilityGzCore.cc src_cpp/utils/DamageStabilityCore.cc)
+  target_include_directories(l2_stability_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME l2_stability COMMAND l2_stability_test)
+
+  # ---- 甲-10：L6/L7 控制链纯算法（2026-10-27）
+  add_executable(control_core_test src_cpp/test/control_core_test.cc)
+  target_include_directories(control_core_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME control_core COMMAND control_core_test)
+
+  # ---- 甲-12：HS-06 大倾角稳性 + SD-02 型线图识读（2026-10-28）
+  add_executable(hs06_sd02_test
+    src_cpp/test/hs06_sd02_test.cc
+    src_cpp/gui/keship/experiments/LargeAngleStabilityDialog.cc
+    src_cpp/gui/keship/experiments/LinesReadingDialog.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(hs06_sd02_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(hs06_sd02_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(hs06_sd02_test rclcpp ament_index_cpp)
+  add_test(NAME hs06_sd02 COMMAND hs06_sd02_test)
+
+  # ---- 甲-13：结构设计链 SD-01 → SD-03 → SD-09（2026-10-28）
+  add_executable(structure_chain_test
+    src_cpp/test/structure_chain_test.cc
+    src_cpp/utils/MidshipSectionCore.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(structure_chain_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship)
+  target_compile_definitions(structure_chain_test PRIVATE KESHIP_CHAIN_QT)
+  target_link_libraries(structure_chain_test keship_utils Qt5::Core)
+  add_test(NAME structure_chain COMMAND structure_chain_test)
+
   # ---- 甲-6：状态迁移探针（位姿/浮力体/水动力/推进器/传感器/碰撞；需要运行中的世界）
   add_executable(state_transition_probe src_cpp/test/state_transition_probe.cc)
   target_include_directories(state_transition_probe PRIVATE
@@ -408,11 +484,12 @@ if(KESHIP_BUILD_TESTS)
   # 回归判据：ctest -L regression
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
-  set_tests_properties(hidden_cases f3_enable_buoy
+  set_tests_properties(hidden_cases f3_enable_buoy rp_core l2_stability control_core
+                       hs06_sd02 structure_chain
                        PROPERTIES LABELS regression)
   # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
   set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
-                       sl02_hull_dialog sdf_assembly
+                       sl02_hull_dialog sdf_assembly sd08_lines
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

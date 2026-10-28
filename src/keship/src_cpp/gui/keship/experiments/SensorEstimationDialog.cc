@@ -4,6 +4,11 @@
 /* SC-08 传感器感知与位姿估计 — 对话框实现（薄壳） */
 
 #include "SensorEstimationDialog.hh"
+#include "../shared/ExpDeliverable.hh"
+#include <QJsonArray>
+#include <QRegularExpression>
+#include <algorithm>
+#include <cmath>
 
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -219,6 +224,59 @@ void SensorEstimationDialog::onExport() {
   QString path = QFileDialog::getSaveFileName(this, "导出估计对比 CSV",
       "sc08_estimation.csv", "CSV (*.csv)");
   if (path.isEmpty()) return;
-  if (!core_->exportCsv(path.toStdString()))
+  if (!core_->exportCsv(path.toStdString())) {
     QMessageBox::warning(this, "导出", "无法写入文件。");
+    return;
+  }
+
+  /// ★ 2026-10-27（L7 链）：同时写一份**机器可读交付物** sc08_pose.json。
+  /// 为什么必须加：L7「感知→控制」的判据是下游 SC-06 必须真的读入本实验的产出；
+  /// 此前只导出 CSV，SC-06 只能靠猜列名，链实际是断的。
+  /// 只放姿态（本实验不产位置）—— 下游据此只把**航向**换成估计值，位置仍用真值，
+  /// 这个边界写进 extra.note，避免下游误以为位置也是估计的。
+  QString jsonPath = path;
+  jsonPath.replace(QRegularExpression("\\.csv$"), ".json");
+  if (jsonPath == path) jsonPath += ".json";
+
+  const auto &tr = core_->trail();
+  double sumSq = 0.0, maxAbs = 0.0;
+  QJsonArray samples;
+  for (const auto &p : tr) {
+    QJsonObject o;
+    o["t"] = p.t;
+    o["est_yaw"] = p.estYaw;
+    o["ref_yaw"] = p.refYaw;
+    o["est_roll"] = p.estRoll;
+    o["est_pitch"] = p.estPitch;
+    samples.append(o);
+    double d = p.estYaw - p.refYaw;
+    while (d > 180.0) d -= 360.0;
+    while (d < -180.0) d += 360.0;
+    sumSq += d * d;
+    maxAbs = std::max(maxAbs, std::abs(d));
+  }
+
+  keship::ExpDeliverable d;
+  d.expId = "SC-08";
+  d.createdAt = keship::NowIso8601();
+  d.object["type"] = "ksm";
+  d.object["name"] = modelCombo_->currentText();
+  d.params["imuTopic"] = imuTopicEdit_->text();
+  d.params["samplePeriodS"] = periodSpin_->value();
+  d.metrics["samples"] = static_cast<int>(tr.size());
+  d.metrics["rmseYawDeg"] = tr.empty() ? 0.0 : std::sqrt(sumSq / tr.size());
+  d.metrics["maxAbsYawErrDeg"] = maxAbs;
+  d.extra["samples"] = samples;
+  d.extra["columns"] = "t / est_yaw / ref_yaw（度）";
+  d.extra["note"] = "本交付物只含姿态角，不含位置；下游位置必须用真值";
+
+  std::string err;
+  if (!keship::WriteExpDeliverable(jsonPath.toStdString(), d, &err)) {
+    QMessageBox::warning(this, "导出 SC-08 交付物",
+        QString::fromStdString("CSV 已写出，但 JSON 交付物写入失败：" + err));
+    return;
+  }
+  QMessageBox::information(this, "导出",
+      QString("已导出：\n%1（CSV）\n%2（SC-08 交付物，供 SC-06 读入）").arg(path, jsonPath));
+  std::cout << "SC-08: 已导出交付物 " << jsonPath.toStdString() << std::endl;
 }

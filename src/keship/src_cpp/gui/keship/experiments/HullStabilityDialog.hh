@@ -80,6 +80,8 @@ private slots:
   void onClearAll();
   void onUpdatePose();
   void onHullTypeChanged();
+  /// ★ 2026-10-27（L1 链）：导入 SD-08 型线交付物 —— 链判据要求下游真的读上游产出
+  void onImportSd08();
 
 private:
   void setupUI();
@@ -110,6 +112,15 @@ private:
 
   QComboBox *hullTypeCombo_;
   QDoubleSpinBox *lengthSpin_, *breadthSpin_, *depthSpin_;
+
+  /// ★ 2026-10-27（L1 链）：SD-08 交付物导入状态。
+  /// 存在的意义：SD-08 的船型由「船型族 + 两个形状指数 + 密度」共同决定，
+  /// 只拷 L/B/D 会生成**另一条船**（指数不同 ⇒ 型线不同 ⇒ GM 不同），链就断在"看起来读进去了"。
+  bool sd08Imported_ = false;
+  int sd08FamilyIndex_ = 0;
+  double sd08WlExp_ = 2.0, sd08SecExp_ = 2.0, sd08Density_ = 500.0;
+  QLabel *sd08Label_ = nullptr;
+  QPushButton *importSd08Btn_ = nullptr;
 
   QLabel *awLabel_, *cwpLabel_, *ciLabel_;
   QLabel *volLabel_, *kbLabel_, *bmLabel_, *gmLabel_;

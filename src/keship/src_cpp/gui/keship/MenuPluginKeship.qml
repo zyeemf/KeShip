@@ -266,43 +266,43 @@ Rectangle {
         ListElement { expId: "HS-03";  name: "漂浮圆柱体初稳性";        course: "船舶静力学";            tier: "观察类"; enabled: true }
         ListElement { expId: "HS-04";  name: "初稳性倾斜实验";          course: "船舶静力学";            tier: "操作类"; enabled: true }
         ListElement { expId: "HS-05";  name: "数学船型稳性对比";        course: "船舶静力学";            tier: "操作类"; enabled: true }
-        ListElement { expId: "HS-06";  name: "大倾角稳性";              course: "船舶静力学";            tier: "操作类"; enabled: false }
-        ListElement { expId: "HS-07";  name: "浮体布局设计";            course: "船舶静力学";            tier: "设计类"; enabled: false }
-        ListElement { expId: "HS-08";  name: "完整稳性综合校核";        course: "船舶静力学";            tier: "设计类"; enabled: false }
+        ListElement { expId: "HS-06";  name: "大倾角稳性";              course: "船舶静力学";            tier: "操作类"; enabled: true }
+        ListElement { expId: "HS-07";  name: "浮体布局设计";            course: "船舶静力学";            tier: "设计类"; enabled: true }
+        ListElement { expId: "HS-08";  name: "完整稳性综合校核";        course: "船舶静力学";            tier: "设计类"; enabled: true }
         ListElement { expId: "HS-09";  name: "编程计算排水量";          course: "船舶静力学";            tier: "设计类"; enabled: true }
-        ListElement { expId: "RP-01";  name: "阻力成分分解";            course: "船舶阻力与推进";        tier: "观察类"; enabled: false }
-        ListElement { expId: "RP-02";  name: "阻力曲线测定";            course: "船舶阻力与推进";        tier: "操作类"; enabled: false }
-        ListElement { expId: "RP-03";  name: "螺旋桨敞水特性";          course: "船舶阻力与推进";        tier: "操作类"; enabled: false }
-        ListElement { expId: "RP-04";  name: "推进性能匹配";            course: "船舶阻力与推进";        tier: "操作类"; enabled: false }
-        ListElement { expId: "RP-05";  name: "船型阻力优化";            course: "船舶阻力与推进";        tier: "设计类"; enabled: false }
-        ListElement { expId: "RP-06";  name: "尺度换算与实船阻力外推";  course: "船舶阻力与推进";        tier: "设计类"; enabled: false }
+        ListElement { expId: "RP-01";  name: "阻力成分分解";            course: "船舶阻力与推进";        tier: "观察类"; enabled: true }
+        ListElement { expId: "RP-02";  name: "阻力曲线测定";            course: "船舶阻力与推进";        tier: "操作类"; enabled: true }
+        ListElement { expId: "RP-03";  name: "螺旋桨敞水特性";          course: "船舶阻力与推进";        tier: "操作类"; enabled: true }
+        ListElement { expId: "RP-04";  name: "推进性能匹配";            course: "船舶阻力与推进";        tier: "操作类"; enabled: true }
+        ListElement { expId: "RP-05";  name: "船型阻力优化";            course: "船舶阻力与推进";        tier: "设计类"; enabled: true }
+        ListElement { expId: "RP-06";  name: "尺度换算与实船阻力外推";  course: "船舶阻力与推进";        tier: "设计类"; enabled: true }
         ListElement { expId: "MS-01";  name: "回转性观测";              course: "船舶操纵性与耐波性";    tier: "观察类"; enabled: true }
         ListElement { expId: "MS-02";  name: "升沉与纵摇响应";          course: "船舶操纵性与耐波性";    tier: "观察类"; enabled: true }
         ListElement { expId: "MS-03";  name: "横摇RAO测量";             course: "船舶操纵性与耐波性";    tier: "操作类"; enabled: true }
         ListElement { expId: "MS-04";  name: "方向稳定性与Z形试验";     course: "船舶操纵性与耐波性";    tier: "操作类"; enabled: true }
-        ListElement { expId: "MS-05";  name: "海况等级下的操限评估";    course: "船舶操纵性与耐波性";    tier: "设计类"; enabled: false }
+        ListElement { expId: "MS-05";  name: "海况等级下的操限评估";    course: "船舶操纵性与耐波性";    tier: "设计类"; enabled: true }
         ListElement { expId: "MS-06";  name: "RAO编程计算实践";         course: "船舶操纵性与耐波性";    tier: "设计类"; enabled: true }
-        ListElement { expId: "SC-01";  name: "开环与闭环响应对比";      course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
-        ListElement { expId: "SC-02";  name: "PID参数效应";             course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
-        ListElement { expId: "SC-03";  name: "环境扰动影响";            course: "船舶智能控制系统";      tier: "观察类"; enabled: false }
-        ListElement { expId: "SC-04";  name: "航向控制";                course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
-        ListElement { expId: "SC-05";  name: "航速控制";                course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
-        ListElement { expId: "SC-06";  name: "LOS循迹跟踪";             course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
-        ListElement { expId: "SC-07";  name: "动力定位";                course: "船舶智能控制系统";      tier: "操作类"; enabled: false }
+        ListElement { expId: "SC-01";  name: "开环与闭环响应对比";      course: "船舶智能控制系统";      tier: "观察类"; enabled: true }
+        ListElement { expId: "SC-02";  name: "PID参数效应";             course: "船舶智能控制系统";      tier: "观察类"; enabled: true }
+        ListElement { expId: "SC-03";  name: "环境扰动影响";            course: "船舶智能控制系统";      tier: "观察类"; enabled: true }
+        ListElement { expId: "SC-04";  name: "航向控制";                course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
+        ListElement { expId: "SC-05";  name: "航速控制";                course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
+        ListElement { expId: "SC-06";  name: "LOS循迹跟踪";             course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
+        ListElement { expId: "SC-07";  name: "动力定位";                course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
         ListElement { expId: "SC-08";  name: "传感器感知与位姿估计";    course: "船舶智能控制系统";      tier: "操作类"; enabled: true }
-        ListElement { expId: "SC-09";  name: "PID自整定";               course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
-        ListElement { expId: "SC-10";  name: "航路点路径跟随";          course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
-        ListElement { expId: "SC-11";  name: "COLREGs避碰";             course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
-        ListElement { expId: "SC-12";  name: "多船协同与编队";          course: "船舶智能控制系统";      tier: "设计类"; enabled: false }
-        ListElement { expId: "SD-01";  name: "船体结构认知";            course: "船体结构与制图";        tier: "观察类"; enabled: false }
-        ListElement { expId: "SD-02";  name: "型线图识读";              course: "船体结构与制图";        tier: "观察类"; enabled: false }
-        ListElement { expId: "SD-03";  name: "横剖面结构";              course: "船体结构与制图";        tier: "观察类"; enabled: false }
-        ListElement { expId: "SD-04";  name: "舱室划分";                course: "船体结构与制图";        tier: "操作类"; enabled: false }
+        ListElement { expId: "SC-09";  name: "PID自整定";               course: "船舶智能控制系统";      tier: "设计类"; enabled: true }
+        ListElement { expId: "SC-10";  name: "航路点路径跟随";          course: "船舶智能控制系统";      tier: "设计类"; enabled: true }
+        ListElement { expId: "SC-11";  name: "COLREGs避碰";             course: "船舶智能控制系统";      tier: "设计类"; enabled: true }
+        ListElement { expId: "SC-12";  name: "多船协同与编队";          course: "船舶智能控制系统";      tier: "设计类"; enabled: true }
+        ListElement { expId: "SD-01";  name: "船体结构认知";            course: "船体结构与制图";        tier: "观察类"; enabled: true }
+        ListElement { expId: "SD-02";  name: "型线图识读";              course: "船体结构与制图";        tier: "观察类"; enabled: true }
+        ListElement { expId: "SD-03";  name: "横剖面结构";              course: "船体结构与制图";        tier: "观察类"; enabled: true }
+        ListElement { expId: "SD-04";  name: "舱室划分";                course: "船体结构与制图";        tier: "操作类"; enabled: true }
         ListElement { expId: "SD-05";  name: "惯量与剖面特性计算";      course: "船体结构与制图";        tier: "操作类"; enabled: true }
         ListElement { expId: "SD-06";  name: "代理几何体建模与简化";    course: "船体结构与制图";        tier: "操作类"; enabled: true }
-        ListElement { expId: "SD-07";  name: "破舱稳性仿真";            course: "船体结构与制图";        tier: "操作类"; enabled: false }
-        ListElement { expId: "SD-08";  name: "参数化型线设计";          course: "船体结构与制图";        tier: "设计类"; enabled: false }
-        ListElement { expId: "SD-09";  name: "综合结构设计";            course: "船体结构与制图";        tier: "设计类"; enabled: false }
+        ListElement { expId: "SD-07";  name: "破舱稳性仿真";            course: "船体结构与制图";        tier: "操作类"; enabled: true }
+        ListElement { expId: "SD-08";  name: "参数化型线设计";          course: "船体结构与制图";        tier: "设计类"; enabled: true }
+        ListElement { expId: "SD-09";  name: "综合结构设计";            course: "船体结构与制图";        tier: "设计类"; enabled: true }
     }
 
     Column {
@@ -1038,9 +1038,65 @@ Rectangle {
                                     MenuPluginKeship.OnBtn_NewMathHull();
                                 } else if (expId === "SD-05") {
                                     MenuPluginKeship.OnBtn_InertiaCalculator();
-                                } else if (expId === "SD-06") {
-                                    MenuPluginKeship.OnBtn_SD06_ProxyGeometry();
-                                }
+    } else if (expId === "SD-06") {
+        MenuPluginKeship.OnBtn_SD06_ProxyGeometry();
+    } else if (expId === "SD-08") {
+        MenuPluginKeship.OnBtn_SD08_ParametricHull();
+    } else if (expId === "SD-01") {
+        MenuPluginKeship.OnBtn_SD01_StructureCognition();
+    } else if (expId === "SD-03") {
+        MenuPluginKeship.OnBtn_SD03_MidshipSection();
+    } else if (expId === "SD-09") {
+        MenuPluginKeship.OnBtn_SD09_LongitudinalStrength();
+    } else if (expId === "MS-05") {
+        MenuPluginKeship.OnBtn_MS05_Operability();
+    } else if (expId === "RP-01") {
+        MenuPluginKeship.OnBtn_RP01_Resistance();
+    } else if (expId === "RP-02") {
+        MenuPluginKeship.OnBtn_RP02_ResistanceCurve();
+    } else if (expId === "RP-03") {
+        MenuPluginKeship.OnBtn_RP03_OpenWater();
+    } else if (expId === "RP-04") {
+        MenuPluginKeship.OnBtn_RP04_Matching();
+    } else if (expId === "RP-05") {
+        MenuPluginKeship.OnBtn_RP05_HullOptimization();
+    } else if (expId === "RP-06") {
+        MenuPluginKeship.OnBtn_RP06_Extrapolation();
+    } else if (expId === "SD-04") {
+        MenuPluginKeship.OnBtn_SD04_Compartment();
+    } else if (expId === "HS-07") {
+        MenuPluginKeship.OnBtn_HS07_BuoyancyLayout();
+    } else if (expId === "HS-08") {
+        MenuPluginKeship.OnBtn_HS08_GzStability();
+    } else if (expId === "HS-06") {
+        MenuPluginKeship.OnBtn_HS06_LargeAngleStability();
+    } else if (expId === "SD-02") {
+        MenuPluginKeship.OnBtn_SD02_LinesReading();
+    } else if (expId === "SD-07") {
+        MenuPluginKeship.OnBtn_SD07_DamageStability();
+    } else if (expId === "SC-01") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-01");
+    } else if (expId === "SC-02") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-02");
+    } else if (expId === "SC-03") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-03");
+    } else if (expId === "SC-04") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-04");
+    } else if (expId === "SC-05") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-05");
+    } else if (expId === "SC-06") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-06");
+    } else if (expId === "SC-07") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-07");
+    } else if (expId === "SC-09") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-09");
+    } else if (expId === "SC-10") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-10");
+    } else if (expId === "SC-11") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-11");
+    } else if (expId === "SC-12") {
+        MenuPluginKeship.OnBtn_SC_ControlExp("SC-12");
+    }
                                 // 后续实验在此添加分支
                             }
                         }

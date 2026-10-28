@@ -10,8 +10,10 @@
 #include "keship/utils/LinearDamping.hh"
 #include "MeshUtils.hh"   // 与 ShipHullGenerator.hh 同目录（src_cpp/utils），非 include/keship/utils
 #include "../shared/UiTheme.hh"
+#include "../shared/ExpDeliverable.hh"
 
 #include <QVBoxLayout>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QFormLayout>
@@ -220,6 +222,15 @@ void HullStabilityDialog::setupUI() {
   hydroForm->addRow("GM(th):", gmLabel_);
   paramForm->addRow(hydroFrame);
 
+  /// ★ 2026-10-27（L1 链）：导入 SD-08 交付物。
+  /// 放在生成按钮**之前**——先导入再生成，学生看到的是同一条船。
+  importSd08Btn_ = new QPushButton("导入 SD-08 型线数据…", this);
+  paramForm->addRow(importSd08Btn_);
+  sd08Label_ = new QLabel("（未导入 SD-08；当前用本页手填的船型族与主尺度）", this);
+  sd08Label_->setWordWrap(true);
+  sd08Label_->setStyleSheet("color:#555;");
+  paramForm->addRow(sd08Label_);
+
   spawnBtn_ = new QPushButton("生成船型 + 压载块", this);
   spawnBtn_->setMinimumHeight(30); paramForm->addRow(spawnBtn_);
   topRow->addWidget(paramGroup);
@@ -282,6 +293,7 @@ void HullStabilityDialog::setupUI() {
   dataTable_->setMinimumHeight(100); mainLayout->addWidget(dataTable_, 1);
   chartWidget_ = new HullChartWidget(this); mainLayout->addWidget(chartWidget_, 2);
 
+  connect(importSd08Btn_, &QPushButton::clicked, this, &HullStabilityDialog::onImportSd08);
   connect(spawnBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onSpawn);
   connect(weightSlider_, &QSlider::valueChanged, this, &HullStabilityDialog::onSliderChanged);
   connect(recordBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onRecord);
@@ -325,9 +337,89 @@ void HullStabilityDialog::initPoseSubscription() {
       }));
 }
 
+//-----------------------------------------------------------------------------
+/// ★ 2026-10-27（L1 链）：读入 SD-08 型线交付物，并**在本页复现同一条船**。
+/// 链判据（B）：下游必须真的消费上游产出，且上游改一个量下游结果必须跟着动。
+/// 故这里不仅拷 L/B/D，还拷船型族、两个形状指数与密度 —— 少拷任何一个都会变成"另一条船"。
+void HullStabilityDialog::onImportSd08()
+{
+  const QString path = QFileDialog::getOpenFileName(
+      this, "导入 SD-08 型线交付物", "sd08_lines.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+
+  keship::ExpDeliverable d;
+  std::string err;
+  if (!keship::ReadExpDeliverable(path.toStdString(), d, &err) ||
+      !keship::ValidExpDeliverable(d, "SD-08", &err)) {
+    QMessageBox::warning(this, "导入 SD-08 型线",
+        QString::fromStdString("无法使用该文件：\n" + err));
+    return;
+  }
+
+  sd08FamilyIndex_ = d.object["familyIndex"].toInt(0);
+  sd08WlExp_       = d.params["wlExponent"].toDouble(2.0);
+  sd08SecExp_      = d.params["secExponent"].toDouble(2.0);
+  sd08Density_     = d.object["densityKgM3"].toDouble(500.0);
+  sd08Imported_    = true;
+
+  // 本页控件的量程窄于 SD-08（L 2~20 vs 2~30 等），越界会被 clamp ⇒ 必须提示，否则复现失败却看不出来
+  const double wantL = d.object["lengthM"].toDouble(6.0);
+  const double wantB = d.object["breadthM"].toDouble(1.5);
+  const double wantD = d.object["depthM"].toDouble(1.0);
+  bool clamped = false;
+  if (wantL < lengthSpin_->minimum() || wantL > lengthSpin_->maximum()) clamped = true;
+  if (wantB < breadthSpin_->minimum() || wantB > breadthSpin_->maximum()) clamped = true;
+  if (wantD < depthSpin_->minimum() || wantD > depthSpin_->maximum()) clamped = true;
+
+  hullTypeCombo_->setCurrentIndex(sd08FamilyIndex_);
+  lengthSpin_->setValue(wantL);
+  breadthSpin_->setValue(wantB);
+  depthSpin_->setValue(wantD);
+  onHullTypeChanged();
+
+  const double wantGm  = d.metrics["GMd"].toDouble();
+  const double wantVol = d.metrics["volumeD"].toDouble();
+  const double gotGm   = hydro_.GMd;
+  const double gotVol  = hydro_.volumeD;
+  const double relGm = (std::abs(wantGm) > 1e-9)
+                           ? std::abs(gotGm - wantGm) / std::abs(wantGm) : 0.0;
+
+  sd08Label_->setText(QString(
+      "已导入 SD-08：%1　p=%2　q=%3　ρ=%4 kg/m³\n"
+      "SD-08 交付：∇=%5 m³　GM=%6 m　→　本页复现：∇=%7 m³　GM=%8 m（GM 相对偏差 %9）%10")
+      .arg(d.object["family"].toString())
+      .arg(sd08WlExp_, 0, 'f', 3)
+      .arg(sd08SecExp_, 0, 'f', 3)
+      .arg(sd08Density_, 0, 'f', 1)
+      .arg(wantVol, 0, 'f', 5)
+      .arg(wantGm, 0, 'f', 5)
+      .arg(gotVol, 0, 'f', 5)
+      .arg(gotGm, 0, 'f', 5)
+      .arg(relGm * 100.0, 0, 'f', 2)
+      .arg(clamped ? "\n⚠ 主尺度超出本页量程，已被截断——复现结果不可比" : ""));
+  sd08Label_->setStyleSheet(relGm > 0.02 ? "color:#b00;" : "color:#338833;");
+
+  std::cout << "HS-05: 已导入 SD-08 交付物（GM 交付 " << wantGm
+            << " vs 复现 " << gotGm << "）" << std::endl;
+
+  if (relGm > 0.02 && !clamped) {
+    QMessageBox::warning(this, "导入 SD-08 型线",
+        QString("复现偏差超过 2%%（GM：交付 %1 m / 复现 %2 m）。\n"
+                "说明上下游船型口径仍不一致，请把该文件与本次结果一并留证。")
+            .arg(wantGm, 0, 'f', 5).arg(gotGm, 0, 'f', 5));
+  }
+}
+
 void HullStabilityDialog::onHullTypeChanged() {
   double L = lengthSpin_->value(), B = breadthSpin_->value(), D = depthSpin_->value();
   params_ = mapHullSpec(hullTypeCombo_->currentIndex(), L, B, D);
+  /// ★ 2026-10-27（L1 链）：若已导入 SD-08，则**连形状指数与密度一起复现**。
+  /// 只复现 L/B/D 会让下游算出另一条船的 GM —— 那是"假贯通"，链判据（B）不认。
+  if (sd08Imported_) {
+    params_.wlExponent = sd08WlExp_;
+    params_.secExponent = sd08SecExp_;
+    params_.rho = sd08Density_;
+  }
   keship::ShipHullGenerator hull(params_);
   hydro_ = hull.hydroProps();
   updateHydroDisplay();

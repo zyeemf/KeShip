@@ -155,6 +155,10 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_MS06_RaoPractice();
   /// \brief SC-08 传感器感知与位姿估计
   protected slots: void OnBtn_SC08_SensorEstimation();
+
+  /// \brief SC-01~SC-12 控制设计链（L6）+ SC-08→SC-06 感知→控制链（L7）
+  ///        一个对话框按 expId 提供 11 个实验（ControlExpDialog）
+  protected slots: void OnBtn_SC_ControlExp(const QString &_expId);
   /// \brief 任务设定 (Phase 13)
   protected slots: void OnBtn_TaskSet();
   /// \brief 任务监控 (Phase 13)
@@ -192,6 +196,35 @@ class MenuPluginKeship : public gz::gui::Plugin
 
   /// \brief SD-06 代理几何体建模与简化（三档对比：Mesh/ConvexHull/None）
   protected slots: void OnBtn_SD06_ProxyGeometry();
+
+  /// \brief SD-08 参数化型线设计（主尺度/形状指数 → 型值表 + Cb 反解 + 型线交付物）
+  protected slots: void OnBtn_SD08_ParametricHull();
+
+  /// \brief 非链实验：HS-06 大倾角稳性（wall-sided vs 数值）、SD-02 型线图识读
+  protected slots: void OnBtn_HS06_LargeAngleStability();
+  protected slots: void OnBtn_SD02_LinesReading();
+
+  /// \brief 结构子链 SD-01 → SD-03 → SD-09（交付物逐级贯通）
+  protected slots: void OnBtn_SD01_StructureCognition();
+  protected slots: void OnBtn_SD03_MidshipSection();
+  protected slots: void OnBtn_SD09_LongitudinalStrength();
+
+  /// \brief MS-05 海况等级下的操限评估（多海况累积成表 + 操限交付物）
+  protected slots: void OnBtn_MS05_Operability();
+
+  /// \brief RP-01~06 阻力与推进链（L8）：四项共用 ResistanceDialog，两项共用 PropellerDialog
+  protected slots: void OnBtn_RP01_Resistance();
+  protected slots: void OnBtn_RP02_ResistanceCurve();
+  protected slots: void OnBtn_RP03_OpenWater();
+  protected slots: void OnBtn_RP04_Matching();
+  protected slots: void OnBtn_RP05_HullOptimization();
+  protected slots: void OnBtn_RP06_Extrapolation();
+
+  /// \brief L2 结构建模→稳性链：SD-04 → HS-07 → HS-08 → SD-07（交付物逐级贯通）
+  protected slots: void OnBtn_SD04_Compartment();
+  protected slots: void OnBtn_HS07_BuoyancyLayout();
+  protected slots: void OnBtn_HS08_GzStability();
+  protected slots: void OnBtn_SD07_DamageStability();
 
   /// \brief 清理未被 ksm 引用的网格规范化缓存（models_normalized）
   protected slots: void OnBtn_CleanMeshCache();
