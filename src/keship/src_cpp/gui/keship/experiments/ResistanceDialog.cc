@@ -410,8 +410,11 @@ void ResistanceDialog::buildUi()
   auto *mainLayout = new QVBoxLayout(this);
 
   auto *intro = new QLabel(
-      "<b>实验目的：</b>把总阻力拆成「黏性 R<sub>f</sub> / 兴波 R<sub>r</sub> / 空气 "
+      "<b>实验目的：</b>把总阻力拆成「黏性 R<sub>v</sub> / 兴波 R<sub>r</sub> / 空气 "
       "R<sub>wind</sub>」三项，观察它们随航速、方形系数与尺度的变化。<br>"
+      "<span style='color:#666;'>术语对照：本平台黏性项含形状因子 (1+k)，按 ITTC 术语应记作"
+      "<b>黏性阻力 R<sub>v</sub></b>；教科书 ITTC-57 的平板摩擦阻力 R<sub>f</sub> 不含 (1+k)，"
+      "二者数值不同，对照时请勿混用。</span><br>"
       "顶部下拉切换：<b>RP-01</b> 单点分解 → <b>RP-02</b> R–V 曲线 → "
       "<b>RP-05</b> C<sub>b</sub> 寻优 → <b>RP-06</b> 模型→实船外推。"
       "四项共用同一船体输入与同一个内核（<code>ResistanceCore</code>）。<br>"
@@ -815,7 +818,7 @@ void ResistanceDialog::computeRp01()
   QJsonObject formulas;
   formulas["cf"] = "ITTC-57: Cf = 0.075/(lgRe-2)^2";
   formulas["onePlusK"] = "Holtrop-Mennen 1982 形状因子";
-  formulas["rf"] = "Rf = 0.5*rho*V^2*S*(1+k)*Cf*(1+k2)";
+  formulas["rf"] = "Rv = 0.5*rho*V^2*S*(1+k)*Cf*(1+k2)";  ///< 显示用；交付物字段名仍为 rf/Rf
   formulas["rr"] = "Rr = 0.5*rho*V^2*S*Cr(Fn,Cb)，Cr 锚点 Fn=0.30 取 1.50e-3";
   formulas["rwind"] = "Rwind = 0.5*rho_air*Cd*A*Vwind^2，Cd=1.0";
   lastExtra_["formulas"] = formulas;
@@ -843,7 +846,7 @@ void ResistanceDialog::computeRp01()
   SetCell(table_, r, 3, "m²"); SetCell(table_, r, 4, "—", Qt::AlignCenter);
   ++r;
   SetCell(table_, r, 0, "黏性阻力（含 1+k）", Qt::AlignLeft | Qt::AlignVCenter);
-  SetCell(table_, r, 1, "Rf"); SetCell(table_, r, 2, Num(b.Rf, 3));
+  SetCell(table_, r, 1, "Rv"); SetCell(table_, r, 2, Num(b.Rf, 3));
   SetCell(table_, r, 3, "N"); SetCell(table_, r, 4, Num(sRf, 2) + "%", Qt::AlignCenter);
   ++r;
   SetCell(table_, r, 0, "兴波（剩余）阻力", Qt::AlignLeft | Qt::AlignVCenter);
@@ -865,15 +868,15 @@ void ResistanceDialog::computeRp01()
   chart_->Clear();
   chart_->SetAxes(QString("阻力成分占比 @ V = %1 m/s").arg(Num(v, 2)),
                   "", "");
-  chart_->SetBars({"黏性 Rf", "兴波 Rr", "空气 Rwind"}, {b.Rf, b.Rr, b.Rwind}, "N");
+  chart_->SetBars({"黏性 Rv", "兴波 Rr", "空气 Rwind"}, {b.Rf, b.Rr, b.Rwind}, "N");
 
   const QString dominant = (sRf >= sRr && sRf >= sWind)
-                               ? "黏性阻力（摩擦）主导"
+                               ? "黏性阻力主导"
                                : (sRr >= sWind ? "兴波阻力主导" : "空气阻力主导");
   showSummary(QString(
                   "V = <b>%1</b> m/s（Fn = %2）　总阻力 R<sub>total</sub> = <b>%3</b> N　"
                   "C<sub>t</sub> = %4　(1+k) = %5<br>"
-                  "R<sub>f</sub> = %6 N（%7%）· R<sub>r</sub> = %8 N（%9%）· "
+                  "R<sub>v</sub> = %6 N（%7%）· R<sub>r</sub> = %8 N（%9%）· "
                   "R<sub>wind</sub> = %10 N（%11%）⇒ <b>%12</b>")
                   .arg(Num(v, 2)).arg(Num(b.Fn, 4)).arg(Num(b.Rtotal, 2))
                   .arg(Sci(b.Ct, 3)).arg(Num(b.onePlusK, 3))
@@ -959,7 +962,7 @@ void ResistanceDialog::computeRp02()
 
   setTableShape(static_cast<int>(curve.size()), 10,
                 {"V (m/s)", "V (kn)", "Fn", "Re", "Cf",
-                 "Rf (N)", "Rr (N)", "Rwind (N)", "Rtotal (N)", "Ct"});
+                 "Rv (N)", "Rr (N)", "Rwind (N)", "Rtotal (N)", "Ct"});
   for (int i = 0; i < static_cast<int>(curve.size()); ++i) {
     const auto &p = curve[i];
     SetCell(table_, i, 0, Num(p.speedMs, 3));
@@ -975,7 +978,7 @@ void ResistanceDialog::computeRp02()
   }
 
   ResistanceChartWidget::Series sRf, sRr, sRw, sRt;
-  sRf.name = "Rf 黏性";  sRf.color = QColor("#1f6feb");
+  sRf.name = "Rv 黏性";  sRf.color = QColor("#1f6feb");
   sRr.name = "Rr 兴波";  sRr.color = QColor("#c0392b");
   sRw.name = "Rwind 空气"; sRw.color = QColor("#7f8c8d"); sRw.dashed = true;
   sRt.name = "Rtotal 总阻力"; sRt.color = QColor("#2c3e50");
@@ -1124,7 +1127,7 @@ void ResistanceDialog::computeRp05()
   lastExtra_["volumeRule"] = "volumeD = Cb * Lwl * B * T";
 
   setTableShape(static_cast<int>(rows.size()), 8,
-                {"Cb", "∇ (m³)", "S (m²)", "1+k", "Rf (N)", "Rr (N)",
+                {"Cb", "∇ (m³)", "S (m²)", "1+k", "Rv (N)", "Rr (N)",
                  "Rtotal @V (N)", "平均 Rtotal (N)"});
   for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
     const auto &r = rows[i];
