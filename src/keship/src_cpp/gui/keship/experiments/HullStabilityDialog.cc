@@ -237,9 +237,12 @@ void HullStabilityDialog::setupUI() {
 
   auto *ctlGroup = new QGroupBox("压载控制", this);
   auto *ctlForm = new QFormLayout(ctlGroup);
-  weightSlider_ = new QSlider(Qt::Horizontal, this);
-  weightSlider_->setRange(0, 500); weightSlider_->setValue(250);
-  sliderValueLabel_ = new QLabel("0.000 m", this); sliderValueLabel_->setStyleSheet("font-weight:bold;");
+  /// ★ 2026-10-29（D5）：滑条改数值框（同 HS-04：滑条无程序化写入口、拖拽难精确定位）。
+  weightSpin_ = new QDoubleSpinBox(this);
+  weightSpin_->setRange(-0.25, 0.25); weightSpin_->setValue(0.0);
+  weightSpin_->setDecimals(3); weightSpin_->setSingleStep(0.005);
+  weightSpin_->setSuffix(" m");
+  weightSpin_->setToolTip("压载横向位置（m），范围 −0.25 ~ 0.25；步进 0.005 m，停 0.3 s 后移动压载");
   /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（与 HS-04 同一处改造）。
   /// 原因：QDoubleSpinBox 自动格式化成固定小数位（decimals=3 → "0.000"），
   /// "在小数点后插入一个 1" → "0.1000" 被判非法 → **按键被吞**（HS-04 实测同现象）。
@@ -255,13 +258,13 @@ void HullStabilityDialog::setupUI() {
   applyBtn_->setToolTip("把压载移动到左侧输入框指定的位置（只有点这里才会真正移动）");
 
   auto *wRow = new QHBoxLayout();
-  wRow->addWidget(weightSlider_, 3);
+  wRow->addWidget(weightSpin_, 3);
   wRow->addWidget(weightEdit_, 1);
   wRow->addWidget(new QLabel("m", this));
   wRow->addWidget(applyBtn_);
-  ctlForm->addRow("压载 y:", sliderValueLabel_); ctlForm->addRow(wRow);
+  ctlForm->addRow(wRow);
 
-  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可直接拖动滑条（松手 0.3 s 后移动）", this);
+  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可用数值框步进（停 0.3 s 后移动）", this);
   applyHint->setStyleSheet("color:#666; font-size:11px;"); applyHint->setWordWrap(true);
   ctlForm->addRow(applyHint);
 
@@ -295,7 +298,8 @@ void HullStabilityDialog::setupUI() {
 
   connect(importSd08Btn_, &QPushButton::clicked, this, &HullStabilityDialog::onImportSd08);
   connect(spawnBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onSpawn);
-  connect(weightSlider_, &QSlider::valueChanged, this, &HullStabilityDialog::onSliderChanged);
+  connect(weightSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &HullStabilityDialog::onBallastSpinChanged);
   connect(recordBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onRecord);
   connect(resetBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onResetWeight);
   connect(clearBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onClearAll);
@@ -660,20 +664,19 @@ bool HullStabilityDialog::doSpawnAll() {
   spawnedHydro_ = hydro_;
   weightY_ = 0;
   if (moveDebounce_) moveDebounce_->stop();
-  weightSlider_->blockSignals(true); weightSlider_->setValue(250); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(0.0); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText("0"); weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText("0.000 m"); quiescent_ = false; settleCounter_ = 0; spawned_ = true;
+  quiescent_ = false; settleCounter_ = 0; spawned_ = true;
   std::cout << "HS-05: 船型+压载块已生成" << std::endl;
   return true;
 }
 
 void HullStabilityDialog::onSpawn() { if (!doSpawnAll()) QMessageBox::warning(this,"错误","生成失败"); updateHydroDisplay(); updateStatusDisplay(); }
-void HullStabilityDialog::onSliderChanged(int v) {
-  double y = (v/500.0-0.5)*0.5;
-  /// 纯 UI 更新：输入框与读数立即跟随（不下发 RPC）
+void HullStabilityDialog::onBallastSpinChanged(double _value) {
+  const double y = _value;
+  /// 纯 UI 更新：输入框立即跟随（不下发 RPC；数值框自身即读数）
   weightY_ = y;
   weightEdit_->blockSignals(true); weightEdit_->setText(QString::number(y,'f',3)); weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText(QString::number(y,'f',3)+" m");
   if (spawned_) {
     /// ★ 先置"未稳定"：防抖窗口内若点了"记录"，此时压载尚未移动 → 让 onRecord 拒绝
     quiescent_ = false; settleCounter_ = 0; pendingY_ = y;
@@ -685,7 +688,7 @@ void HullStabilityDialog::onSliderChanged(int v) {
 /// ★ 2026-09-21 新增：移动压载的统一入口（与 HS-04 同一套写法）
 void HullStabilityDialog::commitMove(double _y) {
   weightY_ = _y;
-  sliderValueLabel_->setText(QString::number(_y,'f',3)+" m");
+  weightSpin_->blockSignals(true); weightSpin_->setValue(_y); weightSpin_->blockSignals(false);
   if (spawned_) { quiescent_ = false; settleCounter_ = 0; moveWeight(_y); }
   updateStatusDisplay();
 }
@@ -707,10 +710,9 @@ void HullStabilityDialog::onApplyWeight() {
     QMessageBox::information(this, "超出量程",
         QString("压载位置超出 ±0.25 m，已按 %1 m 处理。").arg(QString::number(y,'f',3)));
   }
-  if (moveDebounce_) moveDebounce_->stop();   ///< 与滑条防抖互斥
+  if (moveDebounce_) moveDebounce_->stop();   ///< 与数值框防抖互斥
   pendingY_ = y;
-  const int v = std::clamp((int)((y/0.5+0.5)*500.0), 0, 500);
-  weightSlider_->blockSignals(true); weightSlider_->setValue(v); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(y); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText(QString::number(y,'f',3)); weightEdit_->blockSignals(false);
   commitMove(y);
 }
@@ -737,7 +739,7 @@ void HullStabilityDialog::onRecord() {
 void HullStabilityDialog::onResetWeight() {
   if (moveDebounce_) moveDebounce_->stop();
   commitMove(0);   ///< 统一入口：记录 y、重置判稳、下发、刷新
-  weightSlider_->blockSignals(true); weightSlider_->setValue(250); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(0.0); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText("0"); weightEdit_->blockSignals(false);
   updateStatusDisplay();
 }

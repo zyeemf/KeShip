@@ -169,14 +169,24 @@ QString ParametricHullDialog::currentFamilyName() const
 void ParametricHullDialog::onFamilyChanged(int)
 {
   // 换船型族时，形状指数回到该族的名义值（再允许用户微调）
-  switch (familyCombo_->currentIndex()) {
+  // ★ 2026-10-29（D4-余）：Lewis U/V 两族走 secType=LEWIS_U/V 独立分支，
+  //   sectionShape() 不读 secExponent —— 界面此前仍显示 2.5/1.0 的"无效数字"会误导
+  //   学生（水线指数 wlExponent 两族仍参与计算，保持可用）。
+  //   拍板方案 A：该两族下置灰 sec 指数并提示，切回 Wigley 族恢复可用。
+  const int fam = familyCombo_->currentIndex();
+  const bool lewis = (fam == 4 || fam == 5);
+  switch (fam) {
     case 1: wlExpSpin_->setValue(3.0); secExpSpin_->setValue(2.0); break;
     case 2: wlExpSpin_->setValue(2.0); secExpSpin_->setValue(1.0); break;
     case 3: wlExpSpin_->setValue(1.2); secExpSpin_->setValue(2.0); break;
-    case 4: wlExpSpin_->setValue(2.0); secExpSpin_->setValue(2.5); break;
-    case 5: wlExpSpin_->setValue(2.0); secExpSpin_->setValue(1.0); break;
+    case 4:                                              ///< Lewis U：sec 指数不适用
+    case 5:                                              ///< Lewis V：sec 指数不适用
     default: wlExpSpin_->setValue(2.0); secExpSpin_->setValue(2.0); break;
   }
+  secExpSpin_->setEnabled(!lewis);
+  secExpSpin_->setToolTip(lewis
+      ? "本族横剖面形状由 Lewis 型线决定，横剖面指数不适用"
+      : "");
   refresh();
 }
 

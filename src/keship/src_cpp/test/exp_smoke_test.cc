@@ -261,9 +261,13 @@ int main(int _argc, char **_argv)
   bool dump = false;
   bool result = false;
   int waitMs = 1000;
-  std::vector<std::string> clicks;
-  std::vector<std::pair<int, double>> spins;
-  std::vector<std::pair<int, std::string>> combos;
+  /// ★ 2026-10-29（D5 配套）：动作按**命令行顺序**执行。
+  /// 旧机制是「先全部 spin/combo、后全部 click」，无法表达
+  /// HS-04/05「生成驳船 → 设 y → 等稳定 → 记录 → 再设下一组 y」这类
+  /// 生成动作会重置参数的序列。新增 --pause ms 显式等待（判稳需要）。
+  /// kind：'C'=click 'S'=spin 'O'=combo 'P'=pause
+  struct Action { char kind; int idx; double val; std::string text; };
+  std::vector<Action> actions;
   QString injectFile;
   QString importPath;    ///< --import：直调 importFrom/importSd04/...（不弹文件框）
   QString importPath2;   ///< --import2：第二个上游（HS-08 / SD-07 用）
@@ -286,29 +290,33 @@ int main(int _argc, char **_argv)
     } else if (std::strcmp(a, "--export") == 0 && i + 1 < _argc) {
       exportPath = QString::fromLocal8Bit(_argv[++i]);
     } else if (std::strcmp(a, "--click") == 0 && i + 1 < _argc) {
-      clicks.push_back(_argv[++i]);
+      actions.push_back({'C', 0, 0.0, _argv[++i]});
     } else if (std::strcmp(a, "--wait") == 0 && i + 1 < _argc) {
       waitMs = std::atoi(_argv[++i]);
+    } else if (std::strcmp(a, "--pause") == 0 && i + 1 < _argc) {
+      actions.push_back({'P', 0, std::atof(_argv[++i]), ""});
     } else if (std::strcmp(a, "--spin") == 0 && i + 2 < _argc) {
-      // 注意：不能写成 spins.emplace_back(atoi(argv[++i]), atof(argv[++i]))——
+      // 注意：不能把两个 ++i 写进同一条 push 的实参表——
       // 函数实参求值顺序不确定，两个 ++i 会抢跑（2026-10-28 实测踩到：索引与值互换）。
       const int idx = std::atoi(_argv[i + 1]);
       const double val = std::atof(_argv[i + 2]);
       i += 2;
-      spins.emplace_back(idx, val);
+      actions.push_back({'S', idx, val, ""});
     } else if (std::strcmp(a, "--combo") == 0 && i + 2 < _argc) {
       const int idx = std::atoi(_argv[i + 1]);
       const std::string text = _argv[i + 2];
       i += 2;
-      combos.emplace_back(idx, text);
+      actions.push_back({'O', idx, 0.0, text});
     }
   }
 
   if (exp.empty()) {
     std::printf(
         "usage: exp_smoke_test --exp <EXP-ID> [--dump] [--result] "
-        "[--spin i v]... [--combo i text]... [--click text]... [--wait ms] "
-        "[--file p] [--import p] [--import2 p] [--export p]\n");
+        "[--spin i v]... [--combo i text]... [--click text]... [--pause ms]... "
+        "[--wait ms] [--file p] [--import p] [--import2 p] [--export p]\n"
+        "  动作（--spin/--combo/--click/--pause）按命令行顺序执行；"
+        "--wait 是每次 --click 后的默认等待；--dump 快照在动作执行前\n");
     return 2;
   }
 
@@ -378,57 +386,61 @@ int main(int _argc, char **_argv)
     Pump(app, 300);
   }
 
-  // ---- 设参数（按 dump 的索引顺序）----
-  const auto spinList = dlg->findChildren<QDoubleSpinBox *>();
-  for (const auto &s : spins) {
-    if (s.first < 0 || s.first >= static_cast<int>(spinList.size())) {
-      std::printf("NOSPIN %d\n", s.first);
-      continue;
-    }
-    spinList[static_cast<size_t>(s.first)]->setValue(s.second);
-    std::printf("SPIN\t%d\t%.6g\n", s.first,
-                spinList[static_cast<size_t>(s.first)]->value());
-  }
-  const auto comboList = dlg->findChildren<QComboBox *>();
-  for (const auto &c : combos) {
-    if (c.first < 0 || c.first >= static_cast<int>(comboList.size())) {
-      std::printf("NOCOMBO %d\n", c.first);
-      continue;
-    }
-    auto *cb = comboList[static_cast<size_t>(c.first)];
-    const int idx = cb->findText(QString::fromStdString(c.second), Qt::MatchContains);
-    if (idx < 0) {
-      std::printf("COMBOMISS\t%d\t%s\n", c.first, c.second.c_str());
-      continue;
-    }
-    cb->setCurrentIndex(idx);
-    std::printf("COMBO\t%d\t%s\n", c.first,
-                cb->currentText().toUtf8().constData());
-  }
-  if (!spins.empty() || !combos.empty())
-    Pump(app, 300);
-
   if (dump) PrintUi(dlg);
 
-  // ---- 点按钮 ----
-  for (const auto &c : clicks) {
-    QPushButton *hit = nullptr;
-    for (auto *b : dlg->findChildren<QPushButton *>()) {
-      if (b->text().contains(QString::fromStdString(c), Qt::CaseInsensitive) &&
-          b->isEnabled()) {
-        hit = b;
-        break;
+  // ---- 按命令行顺序执行全部动作（2026-10-29 D5 配套；--dump 快照在动作之前）----
+  const auto spinList = dlg->findChildren<QDoubleSpinBox *>();
+  const auto comboList = dlg->findChildren<QComboBox *>();
+  for (const auto &a : actions) {
+    if (a.kind == 'S') {
+      if (a.idx < 0 || a.idx >= static_cast<int>(spinList.size())) {
+        std::printf("NOSPIN %d\n", a.idx);
+      } else {
+        spinList[static_cast<size_t>(a.idx)]->setValue(a.val);
+        std::printf("SPIN\t%d\t%.6g\n", a.idx,
+                    spinList[static_cast<size_t>(a.idx)]->value());
+        Pump(app, 300);
       }
-    }
-    if (!hit) {
-      std::printf("NOCLICK\t%s\n", c.c_str());
       std::fflush(stdout);
-      continue;
+    } else if (a.kind == 'O') {
+      if (a.idx < 0 || a.idx >= static_cast<int>(comboList.size())) {
+        std::printf("NOCOMBO %d\n", a.idx);
+      } else {
+        auto *cb = comboList[static_cast<size_t>(a.idx)];
+        const int ci =
+            cb->findText(QString::fromStdString(a.text), Qt::MatchContains);
+        if (ci < 0) {
+          std::printf("COMBOMISS\t%d\t%s\n", a.idx, a.text.c_str());
+        } else {
+          cb->setCurrentIndex(ci);
+          std::printf("COMBO\t%d\t%s\n", a.idx,
+                      cb->currentText().toUtf8().constData());
+          Pump(app, 300);
+        }
+      }
+      std::fflush(stdout);
+    } else if (a.kind == 'C') {
+      QPushButton *hit = nullptr;
+      for (auto *b : dlg->findChildren<QPushButton *>()) {
+        if (b->text().contains(QString::fromStdString(a.text), Qt::CaseInsensitive) &&
+            b->isEnabled()) {
+          hit = b;
+          break;
+        }
+      }
+      if (!hit) {
+        std::printf("NOCLICK\t%s\n", a.text.c_str());
+      } else {
+        hit->click();
+        Pump(app, waitMs);
+        std::printf("CLICKED\t%s\n", a.text.c_str());
+      }
+      std::fflush(stdout);
+    } else if (a.kind == 'P') {
+      Pump(app, static_cast<int>(a.val));
+      std::printf("PAUSE\t%d\n", static_cast<int>(a.val));
+      std::fflush(stdout);
     }
-    hit->click();
-    Pump(app, waitMs);
-    std::printf("CLICKED\t%s\n", c.c_str());
-    std::fflush(stdout);
   }
 
   // ---- 无交互导出（D1）：不弹 QFileDialog ----

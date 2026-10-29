@@ -362,11 +362,17 @@ void IncliningExperimentDialog::setupUI()
   auto *ctlGroup = new QGroupBox("压载控制", this);
   auto *ctlForm = new QFormLayout(ctlGroup);
 
-  weightSlider_ = new QSlider(Qt::Horizontal, this);
-  weightSlider_->setRange(0, 500);
-  weightSlider_->setValue(250);
-  sliderValueLabel_ = new QLabel("0.000 m", this);
-  sliderValueLabel_->setStyleSheet("font-weight: bold;");
+  /// ★ 2026-10-29（D5）：滑条改数值框 —— 滑条无程序化写入口，离屏演练驱动
+  ///   --spin 写不进去，倾斜试验（5 组横倾）取不到数据；且拖拽难以精确定位。
+  ///   键盘精确输入仍走下方 QLineEdit（2026-09-21 教训见头文件注释）。
+  weightSpin_ = new QDoubleSpinBox(this);
+  weightSpin_->setRange(-0.25, 0.25);
+  weightSpin_->setValue(0.0);
+  weightSpin_->setDecimals(3);
+  weightSpin_->setSingleStep(0.005);
+  weightSpin_->setSuffix(" m");
+  weightSpin_->setToolTip(
+      "压载横向位置（m），范围 −0.25 ~ 0.25；步进 0.005 m，停 0.3 s 后移动压载");
 
   /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**。
   /// 为什么换掉 QDoubleSpinBox：
@@ -388,14 +394,13 @@ void IncliningExperimentDialog::setupUI()
   applyBtn_->setToolTip("把压载移动到左侧输入框指定的位置（只有点这里才会真正移动）");
 
   auto *weightRow = new QHBoxLayout();
-  weightRow->addWidget(weightSlider_, 3);
+  weightRow->addWidget(weightSpin_, 3);
   weightRow->addWidget(weightEdit_, 1);
   weightRow->addWidget(new QLabel("m", this));
   weightRow->addWidget(applyBtn_);
-  ctlForm->addRow("压载位置 y:", sliderValueLabel_);
   ctlForm->addRow(weightRow);
 
-  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可直接拖动滑条（松手 0.3 s 后移动）",
+  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可用数值框步进（停 0.3 s 后移动）",
                                this);
   applyHint->setStyleSheet("color: #666; font-size: 11px;");
   applyHint->setWordWrap(true);
@@ -455,8 +460,8 @@ void IncliningExperimentDialog::setupUI()
   /// 信号连接
   connect(spawnBtn_, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onSpawn);
-  connect(weightSlider_, &QSlider::valueChanged,
-          this, &IncliningExperimentDialog::onSliderChanged);
+  connect(weightSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &IncliningExperimentDialog::onBallastSpinChanged);
   /// ★ 2026-09-21 新增：确认按钮 —— 输入压载位置后**点它才真正移动**
   connect(applyBtn_, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onApplyWeight);
@@ -472,7 +477,7 @@ void IncliningExperimentDialog::setupUI()
           this, &IncliningExperimentDialog::onExportGm);
 
   /// ★ 2026-09-21：删掉原「spinbox ↔ 滑条双向同步、各自直接 moveWeight」的两条连接。
-  /// 现在**只有一条**滑条连接（onSliderChanged，内部防抖 300 ms 后才真正下发）；
+  /// 现在**只有一条**压载数值框连接（onBallastSpinChanged，内部防抖 300 ms 后才真正下发）；
   /// 输入框**不再**触发任何下发 —— 必须由用户点「移动压载」（onApplyWeight）确认。
   /// 原因：moveWeight 走 `/world/<w>/set_pose/**blocking**`（同步阻塞 RPC，超时 2000 ms，
   /// 见 moveWeight 实现）→ 逐键 / 逐格触发会把 UI 线程冻住，
@@ -787,13 +792,12 @@ bool IncliningExperimentDialog::doSpawnBoth()
   /// 重置状态
   weightY_ = 0.0;
   if (moveDebounce_) moveDebounce_->stop();
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(250);
-  weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(0.0);
+  weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true);
   weightEdit_->setText("0");
   weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText("0.000 m");
   quiescent_ = false;
   settleCounter_ = 0;
   spawned_ = true;
@@ -814,16 +818,15 @@ void IncliningExperimentDialog::onSpawn()
   updateStatusDisplay();
 }
 
-void IncliningExperimentDialog::onSliderChanged(int _value)
+void IncliningExperimentDialog::onBallastSpinChanged(double _value)
 {
-  double y = (_value / 500.0 - 0.5) * 0.5;  // -0.25 to +0.25
+  const double y = _value;
 
-  /// 纯 UI 更新：输入框与读数**立即**跟随（不下发任何 RPC）
+  /// 纯 UI 更新：输入框**立即**跟随（不下发任何 RPC；数值框自身即读数）
   weightY_ = y;
   weightEdit_->blockSignals(true);
   weightEdit_->setText(QString::number(y, 'f', 3));
   weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText(QString::number(y, 'f', 3) + " m");
 
   if (spawned_)
   {
@@ -843,7 +846,9 @@ void IncliningExperimentDialog::onSliderChanged(int _value)
 void IncliningExperimentDialog::commitMove(double _y)
 {
   weightY_ = _y;
-  sliderValueLabel_->setText(QString::number(_y, 'f', 3) + " m");
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(_y);
+  weightSpin_->blockSignals(false);
 
   if (spawned_)
   {
@@ -885,11 +890,10 @@ void IncliningExperimentDialog::onApplyWeight()
   if (moveDebounce_) moveDebounce_->stop();
   pendingY_ = y;
 
-  /// 同步滑条位置（blockSignals 防回环触发 onSliderChanged）
-  const int v = std::clamp(static_cast<int>((y / 0.5 + 0.5) * 500.0), 0, 500);
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(v);
-  weightSlider_->blockSignals(false);
+  /// 同步数值框显示（blockSignals 防回环触发 onBallastSpinChanged）
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(y);
+  weightSpin_->blockSignals(false);
 
   /// 规范化显示（"0.1000" → "0.100"），便于阅读
   weightEdit_->blockSignals(true);
@@ -954,9 +958,9 @@ void IncliningExperimentDialog::onResetWeight()
   if (moveDebounce_) moveDebounce_->stop();
   commitMove(0.0);   ///< 统一入口：记录 y、重置判稳、下发、刷新面板
 
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(250);
-  weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(0.0);
+  weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true);
   weightEdit_->setText("0");
   weightEdit_->blockSignals(false);

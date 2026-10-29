@@ -11,7 +11,6 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
-#include <QSlider>
 #include <QTableWidget>
 #include <QTimer>
 #include <QWidget>
@@ -69,10 +68,12 @@ public:
 
 private slots:
   void onSpawn();
-  void onSliderChanged(int _value);
+  /// ★ 2026-10-29（D5）：压载位置控件由 QSlider 改为 QDoubleSpinBox（同 HS-04）。
+  /// 语义与原 onSliderChanged 相同：防抖 300 ms 后才真正下发（见 onMoveDebounced）。
+  void onBallastSpinChanged(double _value);
   /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 HS-04 同一次改造）
   void onApplyWeight();
-  /// ★ 2026-09-21 新增：滑条防抖到期后真正下发
+  /// ★ 2026-09-21 新增：压载移动防抖到期后真正下发
   void onMoveDebounced();
   void onRecord();
   void onDeleteSelected();
@@ -125,14 +126,15 @@ private:
   QLabel *awLabel_, *cwpLabel_, *ciLabel_;
   QLabel *volLabel_, *kbLabel_, *bmLabel_, *gmLabel_;
 
-  QSlider *weightSlider_;
+  /// ★ 2026-10-29（D5）：QSlider 改为 QDoubleSpinBox（滑条无程序化写入口，驱动写不进）。
+  QDoubleSpinBox *weightSpin_;
   /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 HS-04）。
   /// QDoubleSpinBox 会把值格式化成固定小数位（decimals=3 → "0.000"），
   /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被判非法 → **按键被吞**。
   /// QLineEdit 保留用户原文 + QDoubleValidator（小数位 6）即可自由编辑。
   QLineEdit *weightEdit_;
   QPushButton *applyBtn_;      ///< 「移动压载」确认按钮
-  QLabel *sliderValueLabel_, *heelLabel_, *deltaYLabel_, *wDyLabel_;
+  QLabel *heelLabel_, *deltaYLabel_, *wDyLabel_;
 
   QPushButton *spawnBtn_, *recordBtn_, *resetBtn_, *clearBtn_;
 
