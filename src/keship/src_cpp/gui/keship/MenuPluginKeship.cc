@@ -61,6 +61,7 @@
 #include "editors/ThrusterEditorDialog.hh"
 #include "editors/HydrodynamicsEditorDialog.hh"
 #include "editors/SensorEditorDialog.hh"
+#include "editors/DeviceDecorDialog.hh"
 #include "editors/WorldSettingsDialog.hh"
 #include "viewers/CameraViewerDialog.hh"
 #include "viewers/LidarViewerDialog.hh"
@@ -981,34 +982,41 @@ bool MenuPluginKeship::SetSimulationPaused(bool _pause)
 }
 
 //////////////////////////////////////////////////////////////////////////////////
-void MenuPluginKeship::OnToggleSensorVisual()
+void MenuPluginKeship::OnToggleStructVisual()
 {
-  const bool on = !keship::ModelManager::SensorVisualEnabled();
-  keship::ModelManager::SetSensorVisualEnabled(on);
+  const bool on = !keship::ModelManager::StructVisualEnabled();
+  keship::ModelManager::SetStructVisualEnabled(on);
 
-  /// <visual> 是**模型生成期**产物（MakeSensorSDF 拼进 SDF），开关只能靠重建体现
+  /// <visual> 是**模型生成期**产物（MakeSensorSDF / MakeDeviceItemVisualSDF 拼进 SDF），
+  /// 所以开关只能靠重建体现。范围 = 有传感器配置**或**有设备装饰配置的模型；
+  /// 推进器外观常显（不受开关控制），但重建会把它们一并重画，无害。
   const auto models = this->modelManager->GetModelList();   // 取副本，避免重建时迭代失效
   int rebuilt = 0, skipped = 0, failed = 0;
   for (const auto &kv : models)
   {
-    keship::SensorConfig cfg;
-    if (!this->modelManager->GetCachedSensorConfig(kv.first, cfg) || cfg.instances.empty())
+    keship::SensorConfig sCfg;
+    const bool hasSensor = this->modelManager->GetCachedSensorConfig(kv.first, sCfg)
+                           && !sCfg.instances.empty();
+    keship::DeviceDecorConfig dCfg;
+    const bool hasDecor = this->modelManager->GetCachedDeviceDecor(kv.first, dCfg)
+                          && !dCfg.items.empty();
+    if (!hasSensor && !hasDecor)
     {
       skipped++;
       continue;
     }
-    if (this->modelManager->RebuildModelWithSensors(kv.first, cfg))
+    if (this->modelManager->RebuildModelWithSensors(kv.first, sCfg))
       rebuilt++;
     else
       failed++;
   }
 
-  std::cout << "keship: 传感器结构模型显示 = " << (on ? "开" : "关")
-            << "（重建 " << rebuilt << " 个，无传感器跳过 " << skipped << " 个"
+  std::cout << "keship: 结构模型显示 = " << (on ? "开" : "关")
+            << "（重建 " << rebuilt << " 个，无结构模型跳过 " << skipped << " 个"
             << (failed ? "，失败 " + std::to_string(failed) + " 个" : std::string())
             << "）" << std::endl;
 
-  emit SensorVisualVisibleChanged();
+  emit StructVisualVisibleChanged();
   NotifyModelListChanged();
 }
 
@@ -1071,10 +1079,12 @@ void MenuPluginKeship::LoadKsmModelFile(const QString &filePath)
     keship::HydroConfig hydroCfg;
     hydroCfg.linkName = "";
     keship::SensorConfig sensorCfg;
+    /// ★ 2026-10-30：设备外观装饰段（此路径只做预览展示，解析出来仅用于将来回填，不参与 spawn）
+    keship::DeviceDecorConfig deviceCfg;
     /// ★ 2026-09-28（D2）：一并取出 ksm 里持久化的碰撞方式，用于**回填对话框**
     keship::CollisionMode ksmCollision = keship::CollisionMode::Mesh;
-    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
-                                          &ksmCollision))
+    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg,
+                                          hydroCfg, sensorCfg, deviceCfg, &ksmCollision))
     {
       QMessageBox::warning(nullptr, "错误", "无法解析 .ksm 文件");
       return;
@@ -2138,6 +2148,47 @@ void MenuPluginKeship::OnBtn_EditSensor(int _index)
         [this, d, name = nameAndId.first]() {
       keship::SensorConfig config = d->getConfig();
       if (!this->modelManager->RebuildModelWithSensors(name, config))
+        QMessageBox::warning(nullptr, "重建失败", "模型重建失败，请重试");
+      NotifyModelListChanged();
+    });
+    return d;
+  });
+  if (dialog)
+    dialog->show();
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_EditDeviceDecor(int _index)
+{
+  std::cout << "keship: 编辑设备装饰 index=" << _index << std::endl;
+
+  if (_index < 0 || _index >= (int)this->modelManager->GetModelList().size())
+  {
+    std::cout << "keship: 设备装饰索引无效" << std::endl;
+    return;
+  }
+
+  auto nameAndId = this->modelManager->GetModelNameAndIDByIndex(_index);
+  if (nameAndId.first.empty())
+    return;
+
+  QString key = "DeviceDecor/" + QString::fromStdString(nameAndId.first);
+  auto *dialog = this->acquireEditor(key, [this, nameAndId]() -> QDialog * {
+    auto *d = new DeviceDecorDialog(QString::fromStdString(nameAndId.first), "base_link");
+
+    keship::DeviceDecorConfig existingCfg;
+    if (this->modelManager->GetCachedDeviceDecor(nameAndId.first, existingCfg))
+      d->setConfig(existingCfg);
+
+    QObject::connect(d, &QDialog::accepted, this,
+        [this, d, name = nameAndId.first]() {
+      const keship::DeviceDecorConfig newCfg = d->getConfig();
+      /// ★ 先入缓存**再**重建：视觉段是生成期读缓存拼出来的，顺序反了会画旧图
+      this->modelManager->CacheDeviceDecor(name, newCfg);
+
+      keship::SensorConfig sCfg;
+      this->modelManager->GetCachedSensorConfig(name, sCfg);
+      if (!this->modelManager->RebuildModelWithSensors(name, sCfg))
         QMessageBox::warning(nullptr, "重建失败", "模型重建失败，请重试");
       NotifyModelListChanged();
     });

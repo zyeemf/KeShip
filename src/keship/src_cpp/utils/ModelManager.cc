@@ -44,8 +44,8 @@
 using namespace keship;
 /////////////////////////////////////////////////
 
-/// ★ 2026-10-30 传感器结构模型（内置 glb）场景显示开关，默认开
-bool ModelManager::sSensorVisualEnabled_ = true;
+/// ★ 2026-10-30 结构模型（传感器 + 设备装饰）场景显示开关，默认开。推进器外观不受它控制。
+bool ModelManager::sStructVisualEnabled_ = true;
 
 namespace {
 
@@ -2205,6 +2205,10 @@ bool ModelManager::RebuildModelWithBuoyancy(
   /// 保留已有传感器配置
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
 
   /// 保留已有推进器配置
@@ -2919,6 +2923,10 @@ bool ModelManager::SpawnModelWithBuoyancy(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
 
   /// 保留已有推进器配置
@@ -3088,6 +3096,17 @@ bool ModelManager::RebuildModelWithThrust(
     auto m = patched.rfind("</model>");
     if (m != std::string::npos)
       patched = patched.substr(0, m) + MakeThrustPluginSDF(_config) + patched.substr(m);
+    /// ★ 2026-10-30：本分支是字符串插入，不走 AppendDeviceVisualSDF 的常规位置 ⇒
+    ///   单独在 </link> 前补设备装饰 + 推进器外观（用新配置，缓存此时未更新）
+    {
+      auto l = patched.rfind("</link>");
+      if (l != std::string::npos)
+      {
+        std::ostringstream dv;
+        AppendDeviceVisualSDF(dv, _instanceName, &_config);
+        patched.insert(l, dv.str());
+      }
+    }
     SensorConfig sc; GetCachedSensorConfig(_instanceName, sc);
     bool ok = RespawnSdf(_instanceName, patched, savedPose, sc);
     if (ok) thrusterConfigCache_[_instanceName] = _config;
@@ -3112,6 +3131,11 @@ bool ModelManager::RebuildModelWithThrust(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  ///   本函数是 RebuildModelWithThrust ⇒ 推进器用**新**配置（缓存还没更新）
+  AppendDeviceVisualSDF(sdf, _instanceName, &_config);
+
   sdf << "    </link>\n";
 
   sdf << MakeThrustPluginSDF(_config);
@@ -3213,6 +3237,10 @@ bool ModelManager::SpawnModelWithThrust(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
 
   HydroConfig hydroCfg;
@@ -3592,7 +3620,7 @@ const char *SensorMeshFileName(SensorType _t)
 //////////////////////////////////////////////////////////////////////////////////////////////////
 std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
 {
-  if (!sSensorVisualEnabled_)
+  if (!sStructVisualEnabled_)
     return "";
 
   const char *fn = SensorMeshFileName(_inst.type);
@@ -3632,6 +3660,114 @@ std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
       << "        </material>\n"
       << "      </visual>\n";
   return sdf.str();
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 设备外观装饰（电池/电机）+ 推进器外观：类型 → 文件名（models_all/device_model/）
+///   缺文件 ⇒ 该件不显示，只告警一次；不影响其余件，也不影响任何物理量。
+namespace
+{
+const char *DeviceMeshFileName(DeviceType _t)
+{
+  switch (_t)
+  {
+    case DeviceType::Battery: return "battery.glb";
+    case DeviceType::Motor:   return "motor.glb";
+  }
+  return nullptr;
+}
+
+/// 推进器外观：按类型稳定命名，所有型号共用（2026-10-30 张老师口径：不区分型号）
+const char *kThrusterMeshFile = "thruster.glb";
+
+/// 取 <models_all>/device_model/<file> 的规范化缓存绝对路径；缺失/失败返回空串
+std::string ResolveDeviceMeshFile(const char *_file)
+{
+  if (_file == nullptr || *_file == '\0')
+    return "";
+  const std::string src = keship::KeshipAllModelsDir() + "/device_model/" + _file;
+  std::error_code ec;
+  if (!std::filesystem::exists(src, ec))
+  {
+    static std::set<std::string> warned;
+    if (warned.insert(_file).second)
+      std::cerr << "ResolveDeviceMeshFile: 模型缺失，跳过外观: " << src << std::endl;
+    return "";
+  }
+  const std::string mesh = keship::NormalizeMeshToSDFCache(src);
+  if (mesh.empty())
+    std::cerr << "ResolveDeviceMeshFile: 规范化失败，跳过外观: " << src << std::endl;
+  return mesh;
+}
+
+/// 统一视觉片段（与 MakeSensorVisualSDF 同一外观口径）
+std::string MakeDeviceVisualBlock(const std::string &_visName,
+                                  const double _pose[6],
+                                  const std::string &_mesh)
+{
+  std::ostringstream sdf;
+  sdf << "      <visual name=\"" << _visName << "\">\n"
+      << "        <pose>" << _pose[0] << " " << _pose[1] << " " << _pose[2]
+      << " " << _pose[3] << " " << _pose[4] << " " << _pose[5] << "</pose>\n"
+      << "        <geometry>\n"
+      << "          <mesh><uri>file://" << _mesh << "</uri></mesh>\n"
+      << "        </geometry>\n"
+      << "        <material>\n"
+      << "          <ambient>0.42 0.44 0.47 1</ambient>\n"
+      << "          <diffuse>0.62 0.65 0.68 1</diffuse>\n"
+      << "          <specular>0.12 0.12 0.12 1</specular>\n"
+      << "        </material>\n"
+      << "      </visual>\n";
+  return sdf.str();
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+std::string ModelManager::MakeDeviceItemVisualSDF(const DeviceItem &_item)
+{
+  if (!sStructVisualEnabled_)
+    return "";
+  const std::string mesh = ResolveDeviceMeshFile(DeviceMeshFileName(_item.type));
+  if (mesh.empty())
+    return "";
+  return MakeDeviceVisualBlock("dev_" + _item.name + "_visual", _item.pose, mesh);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+std::string ModelManager::MakeThrusterVisualSDF(const ThrusterConfig &_config)
+{
+  /// ★ 推进器外观**不受**「隐藏结构模型」开关控制（张老师 2026-10-30 口径）
+  if (_config.bodies.empty())
+    return "";
+  const std::string mesh = ResolveDeviceMeshFile(kThrusterMeshFile);
+  if (mesh.empty())
+    return "";
+  std::string out;
+  for (const auto &b : _config.bodies)
+    out += MakeDeviceVisualBlock("thr_" + b.name + "_visual", b.pose, mesh);
+  return out;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+void ModelManager::AppendDeviceVisualSDF(std::ostringstream &_sdf,
+                                         const std::string &_name,
+                                         const ThrusterConfig *_thrustOverride) const
+{
+  /// 1. 设备装饰（电池/电机）—— 受「隐藏结构模型」开关控制
+  DeviceDecorConfig dCfg;
+  if (GetCachedDeviceDecor(_name, dCfg))
+  {
+    for (const auto &it : dCfg.items)
+      _sdf << MakeDeviceItemVisualSDF(it);
+  }
+
+  /// 2. 推进器外观 —— 常显；pose 直接复用推进器配置，不重复录。
+  ///    重建流程里缓存尚未更新 ⇒ 调用方用 _thrustOverride 传入**新**配置。
+  ThrusterConfig tCfg;
+  if (_thrustOverride != nullptr)
+    _sdf << MakeThrusterVisualSDF(*_thrustOverride);
+  else if (GetCachedThrusterConfig(_name, tCfg))
+    _sdf << MakeThrusterVisualSDF(tCfg);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3805,6 +3941,10 @@ bool ModelManager::RebuildModelWithHydro(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
 
   BuoyancyConfig bCfg;
@@ -3898,7 +4038,13 @@ bool ModelManager::RebuildModelWithSensors(
     std::string patched = base;
     auto l = patched.rfind("</link>");
     if (l != std::string::npos)
-      patched = patched.substr(0, l) + MakeSensorSDF(_config, _instanceName, worldName) + patched.substr(l);
+    {
+      std::ostringstream extras;
+      extras << MakeSensorSDF(_config, _instanceName, worldName);
+      /// ★ 2026-10-30：本分支是字符串插入，设备装饰/推进器外观要跟着一起补
+      AppendDeviceVisualSDF(extras, _instanceName);
+      patched = patched.substr(0, l) + extras.str() + patched.substr(l);
+    }
     bool ok = RespawnSdf(_instanceName, patched, savedPose, _config);
     if (ok) sensorConfigCache_[_instanceName] = _config;
     return ok;
@@ -3914,6 +4060,10 @@ bool ModelManager::RebuildModelWithSensors(
   sdf << base;
 
   sdf << MakeSensorSDF(_config, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
 
   HydroConfig hydroCfg;
@@ -4041,6 +4191,16 @@ bool ModelManager::GetCachedSensorConfig(const std::string &_name, SensorConfig 
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+bool ModelManager::GetCachedDeviceDecor(const std::string &_name,
+                                        DeviceDecorConfig &_out) const
+{
+  auto it = deviceDecorCache_.find(_name);
+  if (it == deviceDecorCache_.end()) return false;
+  _out = it->second;
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 bool ModelManager::ParseInertiaFromSDF(const std::string &_sdf, InertiaParams &_out)
 {
   const std::string &sdf = _sdf;
@@ -4138,7 +4298,8 @@ std::string ModelManager::ComposeRebuiltSDF(
     bool hasSensor, const SensorConfig &sensorCfg,
     bool hasThrust, const ThrusterConfig &tCfg,
     bool hasHydro, const HydroConfig &hydroCfg,
-    bool haveBuoy, const BuoyancyConfig &bCfg)
+    bool haveBuoy, const BuoyancyConfig &bCfg,
+    const DeviceDecorConfig &_decor)
 {
   std::string base = _baseSdf;
 
@@ -4154,6 +4315,15 @@ std::string ModelManager::ComposeRebuiltSDF(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, _worldName);
+
+  /// ★ 2026-10-30 设备装饰（电池/电机）+ 推进器外观 —— 必须在 </link> 之前。
+  ///   注：本函数标称"纯函数"，这两段会读 <models_all>/device_model 的规范化缓存
+  ///   （命中 sidecar 只是 stat，首次才解析网格）；不改变"插件不丢失"不变量。
+  for (const auto &it : _decor.items)
+    sdf << MakeDeviceItemVisualSDF(it);
+  if (hasThrust)
+    sdf << MakeThrusterVisualSDF(tCfg);
+
   sdf << "    </link>\n";
 
   if (hasThrust)
@@ -4361,10 +4531,14 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   BuoyancyConfig bCfg;
   const bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
 
+  /// ★ 2026-10-30：设备装饰也必须在重建里带上，否则改推进器/浮力后电池电机会消失
+  DeviceDecorConfig dCfg;
+  GetCachedDeviceDecor(_instanceName, dCfg);
+
   const std::string finalSdf = ComposeRebuiltSDF(
       origBaseSdf, _instanceName, worldName,
       hasSensor, sensorCfg, hasThrust, tCfg,
-      hasHydro, hydroCfg, haveBuoy, bCfg);
+      hasHydro, hydroCfg, haveBuoy, bCfg, dCfg);
 
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
@@ -4573,6 +4747,27 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
       ofs << "\n";
     }
     ofs << "===END===\n\n";
+  }
+
+  /// ★ 2026-10-30：DEVICES（设备外观装饰，电池/电机）
+  ///   **只在有装饰项时才写段** ⇒ 无装饰的模型与改动前逐字节一致（与 SENSORS/COLLISION 同策）。
+  ///   行格式：`item=<type>,<name>,x,y,z,roll,pitch,yaw`
+  ///   推进器**不写此段** —— 它的 pose 已在 THRUST 段，外观直接复用，不重复存。
+  {
+    auto devIt = deviceDecorCache_.find(_name);
+    if (devIt != deviceDecorCache_.end() && !devIt->second.items.empty())
+    {
+      const auto &dc = devIt->second;
+      ofs << "===DEVICES===\n"
+          << "link_name=" << dc.linkName << "\n";
+      for (const auto &it : dc.items)
+      {
+        ofs << "item=" << deviceTypeName(it.type) << "," << it.name << ","
+            << it.pose[0] << "," << it.pose[1] << "," << it.pose[2] << ","
+            << it.pose[3] << "," << it.pose[4] << "," << it.pose[5] << "\n";
+      }
+      ofs << "===END===\n\n";
+    }
   }
 
   /// ★ 2026-09-28（D2）：碰撞体积计算方式
@@ -5024,6 +5219,7 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
                                  ThrusterConfig &_thrustCfg,
                                  HydroConfig &_hydroCfg,
                                  SensorConfig &_sensorCfg,
+                                 DeviceDecorConfig &_deviceCfg,
                                  CollisionMode *_outCollisionMode)
 {
   std::ifstream ifs(_filepath);
@@ -5033,7 +5229,7 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     return false;
   }
 
-  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS, COLLISION } section = NONE;
+  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS, COLLISION, DEVICES } section = NONE;
   std::string line;
   std::ostringstream sdfBuf;
 
@@ -5049,6 +5245,8 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     if (line == "===THRUST===")        { section = THRUST;    continue; }
     if (line == "===HYDRO===")         { section = HYDRO;     continue; }
     if (line == "===SENSORS===")       { section = SENSORS;   continue; }
+    /// ★ 2026-10-30：设备外观装饰（电池/电机）。缺段 ⇒ items 为空，老 ksm 零影响
+    if (line == "===DEVICES===")       { section = DEVICES;   continue; }
     /// ★ 2026-09-28（D2）：碰撞体积计算方式（缺段 ⇒ 调用方保持初值 ⇒ 向后兼容）
     if (line == "===COLLISION===")     { section = COLLISION; continue; }
     if (line == "===END===")           { section = NONE;      continue; }
@@ -5202,6 +5400,33 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
         }
       }
     }
+      else if (section == DEVICES)
+    {
+      if (line.find("link_name=") == 0)
+        _deviceCfg.linkName = line.substr(10);
+      else if (line.find("item=") == 0)
+      {
+        std::vector<std::string> parts;
+        boost::split(parts, line.substr(5), boost::is_any_of(","));
+        if (parts.size() >= 8)
+        {
+          DeviceType dt;
+          if (!deviceTypeFromName(parts[0], dt))
+          {
+            /// 未知类型：忽略该条但**不报错**（新版本 ksm 被老版本读时不炸）
+            std::cerr << "ParseKSMFile: 未知设备装饰类型，已忽略: " << parts[0] << std::endl;
+            continue;
+          }
+          DeviceItem it;
+          it.type = dt;
+          it.name = parts[1];
+          it.pose[0]=std::stod(parts[2]); it.pose[1]=std::stod(parts[3]);
+          it.pose[2]=std::stod(parts[4]); it.pose[3]=std::stod(parts[5]);
+          it.pose[4]=std::stod(parts[6]); it.pose[5]=std::stod(parts[7]);
+          _deviceCfg.items.push_back(it);
+        }
+      }
+    }
   }
   } catch (const std::exception &) {
     std::cerr << "ParseKSMFile: 文件格式错误" << std::endl;
@@ -5267,9 +5492,10 @@ bool ModelManager::LoadModelFromKsmFile(
   HydroConfig hydroCfg;
   hydroCfg.linkName = "";          /// 哨兵：仅当 HYDRO 段有 link_name 时才视为"启用了 Fossen"
   SensorConfig sensorCfg;
+  DeviceDecorConfig deviceCfg;                        ///< ★ 2026-10-30 设备外观装饰
   CollisionMode ksmCollision = CollisionMode::Mesh;   ///< 缺段 ⇒ 默认（向后兼容）
   if (!ParseKSMFile(_ksmPath, baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
-                    &ksmCollision))
+                    deviceCfg, &ksmCollision))
   {
     std::cerr << "LoadModelFromKsmFile: 解析失败 " << _ksmPath << std::endl;
     return false;
@@ -5297,6 +5523,10 @@ bool ModelManager::LoadModelFromKsmFile(
     CacheHydroConfig(_instanceName, hydroCfg);
   if (!sensorCfg.instances.empty())
     CacheSensorConfig(_instanceName, sensorCfg);
+  /// ★ 2026-10-30：设备装饰必须在第 4 步分派 spawn **之前**入缓存，
+  ///   否则首帧生成时读不到、电池电机会缺一次（直到下次重建）。
+  if (!deviceCfg.items.empty())
+    CacheDeviceDecor(_instanceName, deviceCfg);
 
   /// 4. 按段分派 spawn（规则与 KSW 加载一致，见函数头注释）
   bool ok = false;

@@ -425,12 +425,12 @@ Rectangle {
                     StyledMenu {
                         id: viewMenu
                         StyledMenuItem {
-                            text: MenuPluginKeship.sensorVisualVisible
-                                  ? qsTr("隐藏传感器结构模型")
-                                  : qsTr("显示传感器结构模型")
+                            text: MenuPluginKeship.structVisualVisible
+                                  ? qsTr("隐藏结构模型")
+                                  : qsTr("显示结构模型")
                             onTriggered: {
                                 viewMenu.close();
-                                MenuPluginKeship.OnToggleSensorVisual();
+                                MenuPluginKeship.OnToggleStructVisual();
                             }
                         }
                     }
@@ -835,6 +835,9 @@ Rectangle {
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditHydro(modelData.midx); } }
                                     StyledMenuItem { text: "传感器"
                                         onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditSensor(modelData.midx); } }
+                                    /// ★ 2026-10-30：设备外观装饰（电池/电机）—— 纯视觉，无传感器数据
+                                    StyledMenuItem { text: "设备装饰"
+                                        onTriggered: { modelRowMenu.close(); MenuPluginKeship.OnBtn_EditDeviceDecor(modelData.midx); } }
                                     Component.onCompleted: {
                                         // 与原先的 visible 条件等价：mathHull 只影响浮力体；静态则三项全去
                                         if (modelData.isStatic || modelData.mathHull)

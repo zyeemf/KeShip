@@ -137,6 +137,7 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/editors/ThrusterEditorDialog.cc
   src_cpp/gui/keship/editors/HydrodynamicsEditorDialog.cc
   src_cpp/gui/keship/editors/SensorEditorDialog.cc
+  src_cpp/gui/keship/editors/DeviceDecorDialog.cc
   src_cpp/gui/keship/editors/WorldSettingsDialog.cc
   src_cpp/gui/keship/shared/Buoyancy3DView.cc
   src_cpp/gui/keship/shared/FlowLayout.cc

@@ -78,3 +78,4 @@ tools/icon_probe/icon_probe
 
 # ===== 传感器结构模型（内置 glb）：源文件入库，normalized 缓存不入库（2026-10-30）=====
 models_all/sensor_model/normalized/
+models_all/device_model/normalized/

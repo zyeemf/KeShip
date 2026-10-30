@@ -45,7 +45,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   Q_PROPERTY(QStringList waterAreaNames READ GetWaterAreaNames NOTIFY ModelNamesChanged)
   Q_PROPERTY(QStringList waterAreaSeaStates READ GetWaterAreaSeaStates NOTIFY ModelNamesChanged)
   Q_PROPERTY(QVariantList worldHierarchy READ GetWorldHierarchy NOTIFY ModelNamesChanged)
-  Q_PROPERTY(bool sensorVisualVisible READ isSensorVisualVisible NOTIFY SensorVisualVisibleChanged)
+  Q_PROPERTY(bool structVisualVisible READ isStructVisualVisible NOTIFY StructVisualVisibleChanged)
 
 
   /// \brief Constructor
@@ -65,9 +65,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   public: int GetSelectedIndex() const { return selectedIndex_; }
   /// \brief Get paused state.
   public: bool isPaused() const { return paused_; }
-  /// \brief 传感器结构模型（内置 glb）是否在 3D 场景中显示。
-  public: bool isSensorVisualVisible() const
-      { return keship::ModelManager::SensorVisualEnabled(); }
+  /// \brief 结构模型（传感器 + 设备装饰）是否在 3D 场景中显示；推进器外观不受此开关影响。
+  public: bool isStructVisualVisible() const
+      { return keship::ModelManager::StructVisualEnabled(); }
   /// \brief Get model static flags.
   public: QVariantList GetModelStaticFlags() const;
   public: QVariantList GetModelMathHullFlags() const;
@@ -91,16 +91,16 @@ class MenuPluginKeship : public gz::gui::Plugin
   signals: void SensorListChanged();
   /// \brief Selected index changed signal.
   signals: void SelectedIndexChanged();
-  /// \brief 传感器结构模型显示开关变化信号。
-  signals: void SensorVisualVisibleChanged();
+  /// \brief 结构模型显示开关变化信号。
+  signals: void StructVisualVisibleChanged();
 
 
   /// \brief Load world from file.
   protected slots: void OnBtn_LoadWorld();
   /// \brief Pause/Resume toggle.
   protected slots: void OnPauseToggle();
-  /// \brief 切换传感器结构模型在场景中的显示（对所有已带传感器的模型重建生效）。
-  protected slots: void OnToggleSensorVisual();
+  /// \brief 切换「结构模型」（传感器 + 设备装饰）在场景中的显示。推进器外观常显，不参与。
+  protected slots: void OnToggleStructVisual();
   /// \brief Save world (all models).
   protected slots: void OnBtn_SaveWorld();
   /// \brief 保存子世界（按子 World 链独立导出；弹对话框确认）
@@ -185,6 +185,8 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_EditHydro(int _index);
   /// \brief 编辑传感器
   protected slots: void OnBtn_EditSensor(int _index);
+  /// \brief 编辑设备外观装饰（电池/电机）—— 纯视觉，不产生传感器数据
+  protected slots: void OnBtn_EditDeviceDecor(int _index);
   /// \brief 传感器下拉选中
   protected slots: void OnSensorSelected(const QString &_sensorId);
   /// \brief 刷新传感器列表
