@@ -980,6 +980,38 @@ bool MenuPluginKeship::SetSimulationPaused(bool _pause)
   return ok;
 }
 
+//////////////////////////////////////////////////////////////////////////////////
+void MenuPluginKeship::OnToggleSensorVisual()
+{
+  const bool on = !keship::ModelManager::SensorVisualEnabled();
+  keship::ModelManager::SetSensorVisualEnabled(on);
+
+  /// <visual> 是**模型生成期**产物（MakeSensorSDF 拼进 SDF），开关只能靠重建体现
+  const auto models = this->modelManager->GetModelList();   // 取副本，避免重建时迭代失效
+  int rebuilt = 0, skipped = 0, failed = 0;
+  for (const auto &kv : models)
+  {
+    keship::SensorConfig cfg;
+    if (!this->modelManager->GetCachedSensorConfig(kv.first, cfg) || cfg.instances.empty())
+    {
+      skipped++;
+      continue;
+    }
+    if (this->modelManager->RebuildModelWithSensors(kv.first, cfg))
+      rebuilt++;
+    else
+      failed++;
+  }
+
+  std::cout << "keship: 传感器结构模型显示 = " << (on ? "开" : "关")
+            << "（重建 " << rebuilt << " 个，无传感器跳过 " << skipped << " 个"
+            << (failed ? "，失败 " + std::to_string(failed) + " 个" : std::string())
+            << "）" << std::endl;
+
+  emit SensorVisualVisibleChanged();
+  NotifyModelListChanged();
+}
+
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_LoadModel()
 {

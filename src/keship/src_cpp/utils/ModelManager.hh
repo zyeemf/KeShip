@@ -460,6 +460,11 @@ namespace keship
                                       const std::string &_modelName,
                                       const std::string &_worldName = "keship_world");
 
+    /// @brief 传感器**结构模型**（内置 glb）在 3D 场景中的显示开关，默认开。
+    ///        改后需对已带传感器的模型重建才生效（GUI「视图」菜单调用）。
+    static void SetSensorVisualEnabled(bool _on) { sSensorVisualEnabled_ = _on; }
+    static bool SensorVisualEnabled() { return sSensorVisualEnabled_; }
+
     /// @brief 重建模型并应用流体动力配置（保留已有浮力体/推进器）
     bool RebuildModelWithHydro(const std::string &_instanceName,
                                const HydroConfig &_config);
@@ -765,6 +770,12 @@ namespace keship
     std::map<std::string, HydroConfig> hydroConfigCache_;
     /// \brief 传感器配置缓存，用于编辑器还原
     std::map<std::string, SensorConfig> sensorConfigCache_;
+
+    /// ★ 2026-10-30 传感器结构模型（内置 glb）场景显示开关，进程级全局。
+    static bool sSensorVisualEnabled_;
+
+    /// @brief 为单个传感器生成 <visual> 片段（结构模型）；关闭或无模型文件时返回空串
+    static std::string MakeSensorVisualSDF(const SensorInstance &_inst);
     /// \brief 静态模型标记缓存
     mutable std::map<std::string, bool> staticCache_;
     /// ★ 2026-09-28 碰撞体积计算方式缓存（缺省 = Mesh，保持既有行为）

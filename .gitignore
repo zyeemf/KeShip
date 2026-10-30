@@ -75,3 +75,6 @@ tools/ui_theme_probe/ui_theme_probe
 tools/map_layout_probe/map_layout_probe
 tools/map_layout_probe/moc_MapWidget.cpp
 tools/icon_probe/icon_probe
+
+# ===== 传感器结构模型（内置 glb）：源文件入库，normalized 缓存不入库（2026-10-30）=====
+models_all/sensor_model/normalized/

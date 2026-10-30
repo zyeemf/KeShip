@@ -392,6 +392,10 @@ Rectangle {
                                 bk_pressedColor: theme.warnDown
                                 onClicked: { MenuPluginKeship.OnPauseToggle(); }
                             }
+                            CustomButton {
+                                text: qsTr("视图 ▾")
+                                onClicked: { viewMenu.popup() }
+                            }
                         }
                     }
 
@@ -414,6 +418,21 @@ Rectangle {
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddDefaultWaterArea(); } }
                         StyledMenuItem { text: "添加自定义水域"
                             onTriggered: { loadMenu.close(); MenuPluginKeship.OnBtn_AddWaterArea(); } }
+                    }
+
+                    /// "视图"下拉：传感器结构模型（内置 glb）在 3D 场景中的显示开关
+                    /// 2026-10-30 新增 —— 结构模型挡船体时一键隐藏；开关靠重建模型生效
+                    StyledMenu {
+                        id: viewMenu
+                        StyledMenuItem {
+                            text: MenuPluginKeship.sensorVisualVisible
+                                  ? qsTr("隐藏传感器结构模型")
+                                  : qsTr("显示传感器结构模型")
+                            onTriggered: {
+                                viewMenu.close();
+                                MenuPluginKeship.OnToggleSensorVisual();
+                            }
+                        }
                     }
 
                     /// 行2：惯性计算（模型辅助工具）+ 任务（实验/考核基础设施）

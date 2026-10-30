@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <set>
 #include <map>
 
@@ -147,6 +148,42 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
                   << ") â è½¬æ¢å° Z_UP" << std::endl;
         result = ConvertToZUp(result, effective);
       }
+    }
+  }
+
+  /// ★ 2026-10-30 传感器结构模型（.glb/.gltf）：glTF 规范为 **Y-UP**，Assimp 原样
+  /// 输出（实测底面落在 y=0 平面、高度沿 +y），而平台其余链路统一 Z-UP。
+  /// 这里做**真旋转** (x,y,z) → (x,-z,y)（绕 X 轴 +90°，行列式 +1），
+  /// 不用 ConvertToZUp(Y_UP)：后者是纯轴交换（反射，行列式 −1），会把模型镜像；
+  /// 且它只对 signZ<0 的反射补绕序 ⇒ glb 走那条路会变成内表面（正面被剔除）。
+  {
+    std::string ext;
+    auto dot = _filePath.rfind('.');
+    if (dot != std::string::npos)
+    {
+      ext = _filePath.substr(dot);
+      for (auto &c : ext)
+        c = (char)std::tolower((unsigned char)c);
+    }
+    if (ext == ".glb" || ext == ".gltf")
+    {
+      auto yUpToZUp = [](gz::math::Vector3d &_p)
+      {
+        const double y = _p.Y();
+        _p.Y() = -_p.Z();
+        _p.Z() = y;
+      };
+      for (auto &v : result.vertices)
+        yUpToZUp(v);
+      for (auto &t : result.triangles)
+      {
+        yUpToZUp(t.v0);
+        yUpToZUp(t.v1);
+        yUpToZUp(t.v2);
+      }
+      for (auto &n : result.normals)
+        yUpToZUp(n);
+      std::cout << "MeshUtils: glTF/GLB Y-UP → Z-UP（绕 X +90° 真旋转）" << std::endl;
     }
   }
 

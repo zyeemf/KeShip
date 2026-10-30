@@ -45,6 +45,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   Q_PROPERTY(QStringList waterAreaNames READ GetWaterAreaNames NOTIFY ModelNamesChanged)
   Q_PROPERTY(QStringList waterAreaSeaStates READ GetWaterAreaSeaStates NOTIFY ModelNamesChanged)
   Q_PROPERTY(QVariantList worldHierarchy READ GetWorldHierarchy NOTIFY ModelNamesChanged)
+  Q_PROPERTY(bool sensorVisualVisible READ isSensorVisualVisible NOTIFY SensorVisualVisibleChanged)
 
 
   /// \brief Constructor
@@ -64,6 +65,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   public: int GetSelectedIndex() const { return selectedIndex_; }
   /// \brief Get paused state.
   public: bool isPaused() const { return paused_; }
+  /// \brief 传感器结构模型（内置 glb）是否在 3D 场景中显示。
+  public: bool isSensorVisualVisible() const
+      { return keship::ModelManager::SensorVisualEnabled(); }
   /// \brief Get model static flags.
   public: QVariantList GetModelStaticFlags() const;
   public: QVariantList GetModelMathHullFlags() const;
@@ -87,12 +91,16 @@ class MenuPluginKeship : public gz::gui::Plugin
   signals: void SensorListChanged();
   /// \brief Selected index changed signal.
   signals: void SelectedIndexChanged();
+  /// \brief 传感器结构模型显示开关变化信号。
+  signals: void SensorVisualVisibleChanged();
 
 
   /// \brief Load world from file.
   protected slots: void OnBtn_LoadWorld();
   /// \brief Pause/Resume toggle.
   protected slots: void OnPauseToggle();
+  /// \brief 切换传感器结构模型在场景中的显示（对所有已带传感器的模型重建生效）。
+  protected slots: void OnToggleSensorVisual();
   /// \brief Save world (all models).
   protected slots: void OnBtn_SaveWorld();
   /// \brief 保存子世界（按子 World 链独立导出；弹对话框确认）

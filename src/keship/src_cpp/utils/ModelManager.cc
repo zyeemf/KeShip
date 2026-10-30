@@ -18,6 +18,7 @@
 #include <cmath>
 #include <algorithm>
 #include <filesystem>
+#include <set>
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -42,6 +43,9 @@
 /////////////////////////////////////////////////
 using namespace keship;
 /////////////////////////////////////////////////
+
+/// ★ 2026-10-30 传感器结构模型（内置 glb）场景显示开关，默认开
+bool ModelManager::sSensorVisualEnabled_ = true;
 
 namespace {
 
@@ -3555,6 +3559,82 @@ CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
 }
 }  // namespace keship
 
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 传感器结构模型（内置 glb）：类型 → 文件名
+///   放置目录：<keship_ws>/models_all/sensor_model/<file>（KeshipAllModelsDir()/sensor_model）
+///   缺文件 ⇒ 该类型**不生成** <visual>（退回「场景中只有传感器逻辑、看不见」的老行为），
+///   仅告警一次，不影响传感器本身工作。
+///
+///   模型来源（Blender 工程 HF-wamv16 的 payloads 导出，按类型改成稳定名，版本信息见下）：
+///     imu.glb          ← PAY-IMU_v001.glb
+///     navsat.glb       ← PAY-GNSS_v001.glb
+///     magnetometer.glb ← PAY-WIND_v001.glb（暂借风仪外形，磁力计模型待补）
+///     camera.glb       ← PAY-CAM_v001.glb
+///     lidar.glb        ← PAY-LIDAR_v001.glb
+///   约定（见建模文档 units-coordinates / payload 记忆）：1 BU = 1 m、导出 Y-UP、
+///   原点在安装面中心（底座底面中心）⇒ 视觉 pose 与本传感器 pose 同值，模型自安装面向上生长。
+namespace
+{
+const char *SensorMeshFileName(SensorType _t)
+{
+  switch (_t)
+  {
+    case SensorType::IMU:          return "imu.glb";
+    case SensorType::NavSat:       return "navsat.glb";
+    case SensorType::Magnetometer: return "magnetometer.glb";
+    case SensorType::Camera:       return "camera.glb";
+    case SensorType::Lidar:        return "lidar.glb";
+  }
+  return nullptr;
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
+{
+  if (!sSensorVisualEnabled_)
+    return "";
+
+  const char *fn = SensorMeshFileName(_inst.type);
+  if (fn == nullptr || *fn == '\0')
+    return "";
+
+  const std::string src = keship::KeshipAllModelsDir() + "/sensor_model/" + fn;
+  std::error_code ec;
+  if (!std::filesystem::exists(src, ec))
+  {
+    static std::set<std::string> warned;
+    if (warned.insert(fn).second)
+      std::cerr << "MakeSensorVisualSDF: 结构模型缺失，跳过传感器视觉: "
+                << src << std::endl;
+    return "";
+  }
+
+  /// 与船体走同一条规范化链路：任意格式 → 标准 Z-UP OBJ 缓存（返回绝对路径）
+  const std::string mesh = keship::NormalizeMeshToSDFCache(src);
+  if (mesh.empty())
+  {
+    std::cerr << "MakeSensorVisualSDF: 规范化失败，跳过传感器视觉: " << src << std::endl;
+    return "";
+  }
+
+  std::ostringstream sdf;
+  sdf << "      <visual name=\"" << _inst.name << "_visual\">\n"
+      << "        <pose>" << _inst.pose[0] << " " << _inst.pose[1] << " " << _inst.pose[2]
+      << " " << _inst.pose[3] << " " << _inst.pose[4] << " " << _inst.pose[5] << "</pose>\n"
+      << "        <geometry>\n"
+      << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
+      << "        </geometry>\n"
+      << "        <material>\n"
+      << "          <ambient>0.42 0.44 0.47 1</ambient>\n"
+      << "          <diffuse>0.62 0.65 0.68 1</diffuse>\n"
+      << "          <specular>0.12 0.12 0.12 1</specular>\n"
+      << "        </material>\n"
+      << "      </visual>\n";
+  return sdf.str();
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
                                          const std::string &_modelName,
                                          const std::string &_worldName)
@@ -3636,6 +3716,11 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "      </sensor>\n";
       break;
     }
+
+    /// ★ 2026-10-30 结构模型视觉：与 <sensor> 同 pose，作为 <link> 内的兄弟节点。
+    ///   注意本函数产物是**在 NormalizeMeshUrisInSDF 之后**才拼进 SDF 的，
+    ///   所以 mesh uri 必须在这里自己算成绝对路径（不能指望上层再规范化）。
+    sdf << MakeSensorVisualSDF(inst);
   }
 
   return sdf.str();
