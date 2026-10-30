@@ -10,6 +10,8 @@
 #include <QFormLayout>
 #include <QMessageBox>
 
+#include <cmath>
+
 DeviceDecorDialog::DeviceDecorDialog(const QString &_modelName,
                                      const QString &_linkName,
                                      QWidget *_parent)
@@ -99,6 +101,12 @@ DeviceDecorDialog::DeviceDecorDialog(const QString &_modelName,
             if (config_[selectedIdx_].name.startsWith("battery_") ||
                 config_[selectedIdx_].name.startsWith("motor_"))
               nameEdit_->setText(autoName(t));
+            /// 列表标签跟着类型走，否则界面上会出现「[电池] xxx」而实际已是电机
+            if (auto *li = listWidget_->item(selectedIdx_))
+            {
+              li->setText(QString(t == keship::DeviceType::Battery ? "[电池] " : "[电机] ")
+                          + nameEdit_->text());
+            }
           });
 }
 
@@ -119,6 +127,9 @@ void DeviceDecorDialog::onAddItem()
   InternalItem item;
   item.type = t;
   item.name = autoName(t);
+  /// 出厂默认抬到 z = 0.5 m：装饰件默认落在 link 原点会被船体挡住，看起来像"没加成功"
+  /// （与传感器 Camera/Lidar 默认 z = 1.0 同一考虑，见 SensorEditorDialog::onAddSensor）
+  item.pose[2] = 0.5;
   config_.push_back(item);
 
   updateList();
@@ -233,11 +244,16 @@ keship::DeviceDecorConfig DeviceDecorDialog::getConfig() const
   cfg.linkName = linkName_.toStdString();
   for (const auto &it : config_)
   {
-    keship::DeviceItem item;
-    item.type = it.type;
-    item.name = it.name.toStdString();
-    for (int i = 0; i < 6; i++) item.pose[i] = it.pose[i];
-    cfg.items.push_back(item);
+      keship::DeviceItem item;
+      item.type = it.type;
+      item.name = it.name.toStdString();
+      for (int i = 0; i < 6; i++) item.pose[i] = it.pose[i];
+      /// ★ 2026-10-30：界面用**度**，SDF / ksm / 缓存一律用**弧度**
+      ///   —— 与 SensorEditorDialog / ThrusterEditorDialog 同一口径（漏了这步会让 90° 变成 90 rad）
+      item.pose[3] = it.pose[3] * M_PI / 180.0;
+      item.pose[4] = it.pose[4] * M_PI / 180.0;
+      item.pose[5] = it.pose[5] * M_PI / 180.0;
+      cfg.items.push_back(item);
   }
   return cfg;
 }
@@ -253,6 +269,10 @@ void DeviceDecorDialog::setConfig(const keship::DeviceDecorConfig &_config)
     it.type = item.type;
     it.name = QString::fromStdString(item.name);
     for (int i = 0; i < 6; i++) it.pose[i] = item.pose[i];
+    /// 弧度 → 度（界面显示口径，与 getConfig 的 deg→rad 对称）
+    it.pose[3] = it.pose[3] * 180.0 / M_PI;
+    it.pose[4] = it.pose[4] * 180.0 / M_PI;
+    it.pose[5] = it.pose[5] * 180.0 / M_PI;
     config_.push_back(it);
   }
   selectedIdx_ = -1;
