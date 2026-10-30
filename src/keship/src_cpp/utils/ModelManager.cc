@@ -3239,7 +3239,9 @@ bool ModelManager::SpawnModelWithThrust(
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
 
   /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
-  AppendDeviceVisualSDF(sdf, _instanceName);
+  ///   本函数是 SpawnModelWithThrust ⇒ 推进器缓存要等 spawn 成功才写入（3202 行），
+  ///   这里必须显式传 _config，否则首个 spawn 会**没有推进器外观**或沿用旧 pose。
+  AppendDeviceVisualSDF(sdf, _instanceName, &_config);
 
   sdf << "    </link>\n";
 
@@ -5544,7 +5546,23 @@ bool ModelManager::LoadModelFromKsmFile(
   else
   {
     route = "SpawnModelInGazeboFromSDFString";
-    ok = SpawnModelInGazeboFromSDFString(_instanceName, baseSDF);
+    /// ★ 2026-10-30：本路线原先把 base SDF **原样** spawn ⇒ 该路线上的传感器与
+    ///   设备装饰都会丢（base 里从不含这两段）。此处按其它路线同一口径补进去；
+    ///   没有传感器/装饰时两段都是空串 ⇒ 无配置的模型行为与改动前完全一致。
+    {
+      std::string patched = baseSDF;
+      auto l = patched.rfind("</link>");
+      if (l != std::string::npos)
+      {
+        std::ostringstream extras;
+        if (!sensorCfg.instances.empty())
+          extras << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+        AppendDeviceVisualSDF(extras, _instanceName);
+        if (!extras.str().empty())
+          patched = patched.substr(0, l) + extras.str() + patched.substr(l);
+      }
+      ok = SpawnModelInGazeboFromSDFString(_instanceName, patched);
+    }
   }
 
   if (!ok)
