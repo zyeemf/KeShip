@@ -296,7 +296,7 @@ void IncliningExperimentDialog::setupUI()
   auto *descLabel = new QLabel(
       "<b>实验目的：</b>通过移动压载测量横倾角，反算初稳性高度 GM。<br>"
       "<b>原理：</b>GM = w·Δy / (Δ·tanφ)<br>"
-      "<b>操作：</b>①点击[生成驳船] → ②拖动滑块移动压载 → "
+      "<b>操作：</b>①点击[生成驳船] → ②在「压载位置 y」数值框改值（停 0.3 s 生效）或输入框＋「移动压载」按钮 → "
       "③等待横倾角稳定 → ④记录数据 → ⑤重复多组 → 观察拟合线。",
       this);
   descLabel->setWordWrap(true);
