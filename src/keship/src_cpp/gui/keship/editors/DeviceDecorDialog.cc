@@ -12,6 +12,33 @@
 
 #include <cmath>
 
+namespace
+{
+/// 列表标签（与 ksm 里的类型名分开：界面用中文，持久化用 ASCII）
+const char *TagOf(keship::DeviceType _t)
+{
+  switch (_t)
+  {
+    case keship::DeviceType::Battery:    return "[电池]";
+    case keship::DeviceType::Motor:      return "[电机]";
+    case keship::DeviceType::Controller: return "[控制器]";
+  }
+  return "[设备]";
+}
+
+/// 自动命名前缀
+const char *PrefixOf(keship::DeviceType _t)
+{
+  switch (_t)
+  {
+    case keship::DeviceType::Battery:    return "battery_";
+    case keship::DeviceType::Motor:      return "motor_";
+    case keship::DeviceType::Controller: return "controller_";
+  }
+  return "device_";
+}
+}  // namespace
+
 DeviceDecorDialog::DeviceDecorDialog(const QString &_modelName,
                                      const QString &_linkName,
                                      QWidget *_parent)
@@ -48,6 +75,7 @@ DeviceDecorDialog::DeviceDecorDialog(const QString &_modelName,
   typeCombo_ = new QComboBox;
   typeCombo_->addItem("电池", (int)keship::DeviceType::Battery);
   typeCombo_->addItem("电机", (int)keship::DeviceType::Motor);
+  typeCombo_->addItem("控制器", (int)keship::DeviceType::Controller);
   formLayout->addRow("类型:", typeCombo_);
 
   nameEdit_ = new QLineEdit;
@@ -97,23 +125,22 @@ DeviceDecorDialog::DeviceDecorDialog(const QString &_modelName,
             if (isLoading_ || selectedIdx_ < 0 || selectedIdx_ >= (int)config_.size())
               return;
             const auto t = (keship::DeviceType)typeCombo_->currentData().toInt();
-            config_[selectedIdx_].type = t;
-            if (config_[selectedIdx_].name.startsWith("battery_") ||
-                config_[selectedIdx_].name.startsWith("motor_"))
+            auto &cur = config_[selectedIdx_];
+            cur.type = t;
+            /// 名称是「自动名」时才跟着换前缀；用户手改过的不动
+            if (cur.name.startsWith("battery_") || cur.name.startsWith("motor_") ||
+                cur.name.startsWith("controller_"))
               nameEdit_->setText(autoName(t));
-            /// 列表标签跟着类型走，否则界面上会出现「[电池] xxx」而实际已是电机
+            /// 列表标签跟着类型走，否则会出现「[电池] xxx」而实际已是电机
             if (auto *li = listWidget_->item(selectedIdx_))
-            {
-              li->setText(QString(t == keship::DeviceType::Battery ? "[电池] " : "[电机] ")
-                          + nameEdit_->text());
-            }
+              li->setText(QString::fromUtf8(TagOf(t)) + " " + nameEdit_->text());
           });
 }
 
 //////////////////////////////////////////////////////////////////////////////////
 QString DeviceDecorDialog::autoName(keship::DeviceType _type) const
 {
-  const QString prefix = (_type == keship::DeviceType::Battery) ? "battery_" : "motor_";
+  const QString prefix = QString::fromLatin1(PrefixOf(_type));
   int n = 0;
   for (const auto &it : config_)
     if (it.type == _type) n++;
@@ -219,10 +246,7 @@ void DeviceDecorDialog::updateList()
 {
   listWidget_->clear();
   for (const auto &it : config_)
-  {
-    const QString tag = (it.type == keship::DeviceType::Battery) ? "[电池]" : "[电机]";
-    listWidget_->addItem(tag + " " + it.name);
-  }
+    listWidget_->addItem(QString::fromUtf8(TagOf(it.type)) + " " + it.name);
 }
 
 //////////////////////////////////////////////////////////////////////////////////

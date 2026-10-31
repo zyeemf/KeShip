@@ -3673,8 +3673,9 @@ const char *DeviceMeshFileName(DeviceType _t)
 {
   switch (_t)
   {
-    case DeviceType::Battery: return "battery.glb";
-    case DeviceType::Motor:   return "motor.glb";
+    case DeviceType::Battery:    return "battery.glb";
+    case DeviceType::Motor:      return "motor.glb";
+    case DeviceType::Controller: return "controller.glb";
   }
   return nullptr;
 }

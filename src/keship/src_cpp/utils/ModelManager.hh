@@ -238,14 +238,15 @@ namespace keship
   ///
   /// 模型文件：<keship_ws>/models_all/device_model/<类型>.glb（缺文件则不显示，只告警一次）
   /// 约定：1 BU = 1 m、原点在安装面中心、导出 Y-UP（平台内部转 Z-UP）。
-  enum class DeviceType { Battery, Motor };
+  enum class DeviceType { Battery, Motor, Controller };
 
   inline const char *deviceTypeName(DeviceType _t)
   {
     switch (_t)
     {
-      case DeviceType::Battery: return "Battery";
-      case DeviceType::Motor:   return "Motor";
+      case DeviceType::Battery:    return "Battery";
+      case DeviceType::Motor:      return "Motor";
+      case DeviceType::Controller: return "Controller";
     }
     return "Unknown";
   }
@@ -253,8 +254,9 @@ namespace keship
   /// @brief 由名字反查类型；未知名字返回 false（ksm 前向兼容：新类型由老版本忽略）
   inline bool deviceTypeFromName(const std::string &_s, DeviceType &_out)
   {
-    if (_s == "Battery") { _out = DeviceType::Battery; return true; }
-    if (_s == "Motor")   { _out = DeviceType::Motor;   return true; }
+    if (_s == "Battery")    { _out = DeviceType::Battery;    return true; }
+    if (_s == "Motor")      { _out = DeviceType::Motor;      return true; }
+    if (_s == "Controller") { _out = DeviceType::Controller; return true; }
     return false;
   }
 
