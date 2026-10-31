@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -32,6 +33,26 @@
 
 namespace {
 constexpr double kWaterDensity = 1000.0;
+
+/// 资料坐标 → 平台坐标（张老师 2026-10-31 要求"坐标系统一"）
+///   资料：x∈[-1,1]（中点为 0）、z∈[0,1]（水线 0 → 龙骨 1，**向下为正**）、y=Y/(B/2)
+///   平台：x∈[0,L]（艉 0 → 艏 L）、z∈[-D,0]（水线 0 → 龙骨 -D，**向上**）、y 为实际半宽
+///   换算：x=(x_l+1)·L/2、z=-z_l·D、y=y_l·B/2
+///   stations 仍升序、waterlines 仍降序（0 → -D），与 LinesData 约定一致，无需反转。
+void ConvertDocCoordsToPlatform(keship::LinesData &_d, double _L, double _B, double _D)
+{
+  for (auto &x : _d.stations) x = (x + 1.0) * 0.5 * _L;
+  for (auto &z : _d.waterlines) z = -z * _D;
+  for (auto &row : _d.halfBreadths)
+    for (auto &y : row) y *= 0.5 * _B;
+
+  /// ⚠ 顺序必须一并反转：ParseOffsetsCsv 把 waterlines 排成**降序**（按资料 z 从 1 到 0），
+  ///   取负后变成 [-D, 0] **升序**，与 LinesData 约定（0 → -D 降序）相反。
+  ///   实测症状：V4 报「水线未覆盖 [-D,0]：首 -1.000000，末 -0.000000」。
+  ///   halfBreadths 的列与 waterlines 一一对应，必须同步反转，否则半宽会错位。
+  std::reverse(_d.waterlines.begin(), _d.waterlines.end());
+  for (auto &row : _d.halfBreadths) std::reverse(row.begin(), row.end());
+}
 
 const char *kPyTemplate = R"PY(# SD-10 型值表生成 —— 补全公式后点「运行」
 # 输出约定：每行一个型值点，格式 x,z,halfBreadth（逗号分隔，单位 m）
@@ -138,6 +159,11 @@ void OffsetsHullDialog::buildUi()
                            "体积校验(V6)按该族的解析体积对拍。\n"
                            "选错会导致体积被误判为\"写错\"。");
   formR->addRow("参考船型族：", familyCombo_);
+
+  docCoordsCheck_ = new QCheckBox("按资料坐标输入（归一化，z 向下）", paramBox);
+  docCoordsCheck_->setToolTip("勾选后：把资料的 x∈[-1,1]、z∈[0,1]（向下为正）、y=Y/(B/2)\n"
+                              "自动换算为平台的 x∈[0,L]、z∈[-D,0]（向上）、y 实际半宽。");
+  formR->addRow(QString(), docCoordsCheck_);
 
   auto *helpBtn = new QPushButton("船型说明…", paramBox);
   helpBtn->setToolTip("查看 6 个船型族的半宽公式、体积与适用场景");
@@ -328,6 +354,9 @@ bool OffsetsHullDialog::applyCsvText(const QString &_csv, std::string *_err)
     return false;
   }
 
+  if (docCoordsCheck_ && docCoordsCheck_->isChecked())
+    ConvertDocCoordsToPlatform(d, L, B, D);   ///< 资料坐标 → 平台坐标
+
   lines_ = d;
   report_ = keship::ValidateOffsets(d, L, B, D, familyVolume());
 
@@ -451,6 +480,16 @@ void OffsetsHullDialog::setFamilyIndex(int _i)
   familyCombo_->setCurrentIndex(_i);
 }
 
+void OffsetsHullDialog::setDocCoords(bool _on)
+{
+  if (docCoordsCheck_) docCoordsCheck_->setChecked(_on);
+}
+
+bool OffsetsHullDialog::docCoords() const
+{
+  return docCoordsCheck_ && docCoordsCheck_->isChecked();
+}
+
 int OffsetsHullDialog::familyIndex() const
 {
   return familyCombo_ ? familyCombo_->currentIndex() : 0;
@@ -543,14 +582,20 @@ void OffsetsHullDialog::onShowFamilyHelp()
       "<p><b>建议：</b>先做经典族（体积恰为 4LBD/9），通过后再换族体会形状对稳性的影响。</p>"
       "<hr><h3>与课程资料（Wigley 四模型基准）的对照</h3>"
       "<p>课程资料来自 <b>Gothenburg 1980</b> 的 Wigley 基准算例，公式是：</p>"
-      "<p style=\'margin-left:20px\'><code>y = (1−z²)(1−x²)(1+a₂x²+a₄x⁴) + α·z²(1−z)⁸(1−x²)⁴</code><br>"
+      "<p style=\'margin-left:20px\'><code>y = (1−z²)(1−x²)(1+a₂x²+a₄x⁴) + α·z²(1−z⁸)(1−x²)⁴</code><br>"
       "a₂=0.2, a₄=0.0；α=1.0 → 模型 I/II（Cm=0.909）；α=0.0 → 模型 III/IV（Cm=0.667）</p>"
+      "<p style=\'margin-left:20px;color:#555\'>自检：α=1 时舯剖面 y(0,z)=(1−z²)+z²(1−z⁸)=1−z¹⁰，"
+      "∫₀¹(1−z¹⁰)dz=10/11=0.9091 ⇒ Cm=0.909 ✓；"
+      "α=0 时 y(0,z)=1−z²，∫=2/3 ⇒ Cm=0.667 ✓。"
+      "体积也吻合：L3/B0.3/d0.1875 下 Model I 得 0.0946、Model III 得 0.0780，与资料表 1 一致。</p>"
       "<p><b>三处与平台不同，照着写要注意：</b></p>"
       "<ol>"
-      "<li><b>坐标系</b>：资料用归一化坐标 —— x=X/(L/2)∈[−1,1]、z=Z/d <b>向下为正</b>、y=Y/(B/2)；"
-      "平台用实际坐标 —— x∈[0,L]、z∈[−D,0] <b>向上</b>、y 直接是半宽。"
-      "换算：<code>x_平台 = (x_资料+1)·L/2</code>，<code>z_平台 = −z_资料·D</code>，"
-      "<code>y_平台 = y_资料·B/2</code>。</li>"
+      "<li><b>坐标系（必须统一到平台）</b>：平台只用一套 —— "
+      "<code>x∈[0,L]</code>（艉 0 → 艏 L）、<code>z∈[−D,0]</code>（水线 0 → 龙骨 −D，<b>向上</b>）、"
+      "<code>y</code> 直接是半宽（不是归一化值）。"
+      "资料的 <code>x∈[−1,1]</code>、<code>z∈[0,1]</code> <b>向下</b>、<code>y=Y/(B/2)</code> 需换算："
+      "<code>x_平台=(x_资料+1)·L/2</code>、<code>z_平台=−z_资料·D</code>、<code>y_平台=y_资料·B/2</code>。"
+      "<br>懒得换算？勾选下方的<b>「按资料坐标输入」</b>，平台自动转换。</li>"
       "<li><b>公式多一项</b>：资料的 Model III/IV 含 <code>(1+0.2x²)</code>，"
       "平台经典族没有 ⇒ 同主尺度下体积大 <b>约 4%</b>，超过 V6 的 2% 容差。</li>"
       "<li><b>Model I/II 平台没有对应族</b>：它们的横剖面更丰满（Cm=0.909 vs 平台的 0.667）。</li>"

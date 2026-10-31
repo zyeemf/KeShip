@@ -96,6 +96,26 @@ std::string LinesToCsv(const keship::LinesData &_d)
   return s;
 }
 
+
+/// 资料（Journée 1992）归一化坐标 CSV：x∈[-1,1]、z∈[0,1] 向下、y=Y/(B/2)
+/// alpha=0 -> Model III/IV（Cm=0.667）；alpha=1 -> Model I/II（Cm=0.909）
+std::string MakeDocCsv(int _nx, int _nz, double _alpha)
+{
+  std::string s;
+  char buf[128];
+  for (int i = 0; i <= _nx; ++i) {
+    const double x = -1.0 + 2.0 * i / _nx;
+    for (int j = 0; j <= _nz; ++j) {
+      const double z = 1.0 * j / _nz;
+      const double y = (1.0 - z * z) * (1.0 - x * x) * (1.0 + 0.2 * x * x) +
+                       _alpha * z * z * (1.0 - std::pow(z, 8.0)) * std::pow(1.0 - x * x, 4.0);
+      std::snprintf(buf, sizeof(buf), "%.6f,%.6f,%.6f\n", x, z, y);
+      s += buf;
+    }
+  }
+  return s;
+}
+
 }  // namespace
 
 int main(int argc, char **argv)
@@ -258,6 +278,29 @@ int main(int argc, char **argv)
       }
     }
     dlg.setFamilyIndex(0);   // 复位
+  }
+
+  // ⑦ 资料坐标自动转换（张老师要求"坐标系统一"）
+  {
+    dlg.setFamilyIndex(6);       // 自定义（资料模型不对拍体积）
+    dlg.setDocCoords(true);      // 输入按资料归一化坐标
+    std::string err;
+    const bool ok = dlg.applyCsvText(QString::fromStdString(MakeDocCsv(20, 10, 0.0)), &err);
+    check(ok, "资料坐标（Model III）转换后通过 V1~V5" +
+                  (err.empty() ? std::string() : "：" + err));
+    // 资料 Model III 体积系数 0.46222*L*B*D，对 6/1.5/1 = 4.1599
+    const double v = dlg.report().volumeFromTable;
+    check(std::abs(v - 4.1599) / 4.1599 < 0.01,
+          "转换后体积 " + std::to_string(v) + " ≈ 4.1599（资料 Model III，容差 1%）");
+    check(dlg.report().exactVolume < 0.0, "自定义模式：V6 无参考值（不判定）");
+    check(dlg.hull() != nullptr, "资料坐标也能建出船体");
+    if (dlg.hull()) {
+      const double draft = dlg.hull()->hydroProps().draft;
+      check(draft > 0.3 && draft < 1.0,
+            "设计吃水 " + std::to_string(draft) + " 落在 (0.3, 1.0) 内");
+    }
+    dlg.setDocCoords(false);
+    dlg.setFamilyIndex(0);
   }
 
   std::printf("--- SD-10 对话框结果：%s（失败 %d 项）---\n",

@@ -31,6 +31,7 @@
 #include "HullOffsets.hh"
 #include "ShipHullGenerator.hh"
 
+class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QSpinBox;
@@ -63,6 +64,10 @@ public:
   void setFamilyIndex(int _i);
   int familyIndex() const;
 
+  /// 输入是否按资料归一化坐标（测试与脚本用）
+  void setDocCoords(bool _on);
+  bool docCoords() const;
+
 signals:
   /// 用户点「生成可浮船型」时发出，由外部负责 spawn（与 ShipHullDialog 同模式）
   void spawnRequested(keship::ShipHullSpec spec, std::string name);
@@ -92,6 +97,7 @@ private:
   QDoubleSpinBox *depthSpin_ = nullptr;
   QDoubleSpinBox *densitySpin_ = nullptr;
   QComboBox *familyCombo_ = nullptr;   ///< 参考船型族（决定 V6 对拍基准）
+  QCheckBox *docCoordsCheck_ = nullptr;  ///< 输入按资料归一化坐标（z 向下），平台自动转换
   QSpinBox *nxSpin_ = nullptr;
   QSpinBox *nzSpin_ = nullptr;
   QRadioButton *pythonRadio_ = nullptr;
