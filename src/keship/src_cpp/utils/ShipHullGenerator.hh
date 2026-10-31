@@ -68,6 +68,15 @@ struct ShipHullSpec {
   LinesData offsets;
   bool useOffsets = false;
 
+  // === 资料船型公式（Journée 1992, TU Delft Report 0909）===
+  /// 0 = 不用（走下面的 W(ξ)·S(ζ) 分离式，**默认**，老路径零影响）
+  /// 1 = α=1.0 → Model I/II，Cm=0.909
+  /// 2 = α=0.0 → Model III/IV，Cm=0.667
+  ///
+  /// 为什么需要单独分支：资料公式的 α 项 z²(1−z⁸)(1−x²)⁴ **耦合了 x 与 z**，
+  /// 无法写成 W(ξ)·S(ζ) 的分离形式，故不能复用 wlExponent/secExponent。
+  int docModel = 0;
+
   // === 工厂方法 ===
   static ShipHullSpec WigleyClassic(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec WigleyFlat(double L, double B, double D, double rho = 500.0);
@@ -75,6 +84,10 @@ struct ShipHullSpec {
   static ShipHullSpec WigleyFine(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec LewisU(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec LewisV(double L, double B, double D, double rho = 500.0);
+
+  /// 资料公式族（Journée 1992）：_cm909=true → Model I/II；false → Model III/IV
+  static ShipHullSpec WigleyDoc(double L, double B, double D, bool _cm909,
+                                 double rho = 500.0);
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -160,6 +173,11 @@ class ShipHullGenerator {
 
   // === 型值 ===
   const LinesData &lines() const { return lines_; }
+
+  /// 单点半宽（供说明文档画剖面曲线；与生成网格用的是同一个函数）
+  double sampleHalfBreadthForHelp(double _x, double _z) const {
+    return halfBreadthFunc(_x, _z);
+  }
 
   // === Catto 验证 ===
   double cattoTotalVolume() const { return cattoVolume_; }

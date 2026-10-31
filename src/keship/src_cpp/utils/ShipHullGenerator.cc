@@ -64,6 +64,18 @@ ShipHullSpec ShipHullSpec::LewisU(double L, double B, double D, double rho) {
   s.secType=SectionType::LEWIS_U;
   return s;
 }
+ShipHullSpec ShipHullSpec::WigleyDoc(double L, double B, double D, bool _cm909,
+                                      double rho)
+{
+  ShipHullSpec s;
+  s.L = L;
+  s.B = B;
+  s.D = D;
+  s.rho = rho;
+  s.docModel = _cm909 ? 1 : 2;
+  return s;
+}
+
 ShipHullSpec ShipHullSpec::LewisV(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
   s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
@@ -101,6 +113,26 @@ double ShipHullGenerator::halfBreadthFunc(double _x, double _z) const {
   if (spec_.useOffsets && spec_.offsets.stations.size() >= 2 &&
       spec_.offsets.waterlines.size() >= 2) {
     return SampleOffsetsBilinear(spec_.offsets, _x, _z);
+  }
+
+  /// ★ 2026-10-31：资料公式族（Journée 1992, TU Delft Report 0909）
+  ///   y = (1−ζ²)(1−ξ²)(1+a₂ξ²+a₄ξ⁴) + α·ζ²(1−ζ⁸)(1−ξ²)⁴
+  ///   其中 ξ=2x/L−1 ∈[−1,1]（资料 x）、ζ=−z/D ∈[0,1]（资料 z，向下为正）、
+  ///   a₂=0.2、a₄=0.0；α=1 → Model I/II（Cm=0.909）、α=0 → Model III/IV（Cm=0.667）。
+  ///   自检：α=1 时舯剖面 y(0,ζ)=1−ζ¹⁰，∫₀¹=10/11 ⇒ Cm=0.909，与资料表 1 一致。
+  ///   docModel==0 时不进此分支，老路径行为不变。
+  if (spec_.docModel == 1 || spec_.docModel == 2) {
+    const double xi = 2.0 * _x / spec_.L - 1.0;
+    const double zt = -_z / spec_.D;
+    if (xi < -1.0 || xi > 1.0 || zt < 0.0 || zt > 1.0) return 0.0;
+    const double a2 = 0.2, a4 = 0.0;
+    const double alpha = (spec_.docModel == 1) ? 1.0 : 0.0;
+    const double base = (1.0 - zt * zt) * (1.0 - xi * xi) *
+                        (1.0 + a2 * xi * xi + a4 * xi * xi * xi * xi);
+    const double t1 = 1.0 - xi * xi;
+    const double bump = alpha * zt * zt * (1.0 - std::pow(zt, 8.0)) *
+                        t1 * t1 * t1 * t1;
+    return spec_.B * 0.5 * (base + bump);
   }
   double xi = 2.0 * (_x / spec_.L) - 1.0;  // ∈ [-1, 1]
   double wl = waterlineShape(xi);

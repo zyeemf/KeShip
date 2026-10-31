@@ -10,6 +10,9 @@
 
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QUrl>
+#include <QDir>
+#include <QDesktopServices>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -154,7 +157,9 @@ void OffsetsHullDialog::buildUi()
   familyCombo_->addItem("Wigley 瘦削（小水线面）");
   familyCombo_->addItem("Lewis U 形横剖");
   familyCombo_->addItem("Lewis V 形横剖");
-  familyCombo_->addItem("自定义 / 课程资料模型（不对拍体积）");
+  familyCombo_->addItem("Wigley Model I/II（资料，Cm=0.909）");
+  familyCombo_->addItem("Wigley Model III/IV（资料，Cm=0.667）");
+  familyCombo_->addItem("自定义（不对拍体积）");
   familyCombo_->setToolTip("选择你代码里实现的船型族：\n"
                            "体积校验(V6)按该族的解析体积对拍。\n"
                            "选错会导致体积被误判为\"写错\"。");
@@ -499,9 +504,10 @@ int OffsetsHullDialog::familyIndex() const
 QString OffsetsHullDialog::familyName() const
 {
   static const char *kNames[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底",
-                                 "Wigley 瘦削", "Lewis U 形", "Lewis V 形", "自定义"};
+                                 "Wigley 瘦削", "Lewis U 形", "Lewis V 形",
+                                 "Wigley Model I/II", "Wigley Model III/IV", "自定义"};
   const int i = familyCombo_ ? familyCombo_->currentIndex() : 0;
-  return QString::fromUtf8(kNames[(i >= 0 && i < 7) ? i : 0]);
+  return QString::fromUtf8(kNames[(i >= 0 && i < 9) ? i : 0]);
 }
 
 //-----------------------------------------------------------------------------
@@ -523,28 +529,21 @@ double OffsetsHullDialog::familyVolume() const
     case 3: s = keship::ShipHullSpec::WigleyFine(L, B, D, rho); break;
     case 4: s = keship::ShipHullSpec::LewisU(L, B, D, rho); break;
     case 5: s = keship::ShipHullSpec::LewisV(L, B, D, rho); break;
-    case 6: return -1.0;   ///< 自定义：无解析参考 ⇒ ValidateOffsets 跳过 V6，仅报告体积
+    case 6: s = keship::ShipHullSpec::WigleyDoc(L, B, D, true, rho); break;   ///< 资料 Model I/II
+    case 7: s = keship::ShipHullSpec::WigleyDoc(L, B, D, false, rho); break;  ///< 资料 Model III/IV
+    case 8: return -1.0;   ///< 自定义：无解析参考 ⇒ ValidateOffsets 跳过 V6，仅报告体积
     default: s = keship::ShipHullSpec::WigleyClassic(L, B, D, rho); break;
   }
   return keship::ShipHullGenerator(s).hydroProps().volume;
 }
 
 //-----------------------------------------------------------------------------
-void OffsetsHullDialog::onShowFamilyHelp()
+QString OffsetsHullDialog::familyHelpHtml() const
 {
   const double L = lengthSpin_->value(), B = breadthSpin_->value(), D = depthSpin_->value();
   const double vFull = 4.0 * L * B * D / 9.0;
 
-  auto row = [&](const char *_n, const char *_wl, const char *_sec, double _v) {
-    const double err = 100.0 * (_v - vFull) / vFull;
-    return QString("<tr><td><b>%1</b></td><td>%2</td><td>%3</td>"
-                   "<td align='right'>%4</td><td align='right'>%5%</td></tr>")
-        .arg(QString::fromUtf8(_n), QString::fromUtf8(_wl), QString::fromUtf8(_sec))
-        .arg(_v, 0, 'f', 4)
-        .arg(err, 0, 'f', 1);
-  };
-
-  auto vol = [&](int _i) {
+  auto specOf = [&](int _i) {
     keship::ShipHullSpec s;
     switch (_i) {
       case 1: s = keship::ShipHullSpec::WigleyFlat(L, B, D, 500.0); break;
@@ -552,67 +551,185 @@ void OffsetsHullDialog::onShowFamilyHelp()
       case 3: s = keship::ShipHullSpec::WigleyFine(L, B, D, 500.0); break;
       case 4: s = keship::ShipHullSpec::LewisU(L, B, D, 500.0); break;
       case 5: s = keship::ShipHullSpec::LewisV(L, B, D, 500.0); break;
+      case 6: s = keship::ShipHullSpec::WigleyDoc(L, B, D, true, 500.0); break;
+      case 7: s = keship::ShipHullSpec::WigleyDoc(L, B, D, false, 500.0); break;
       default: s = keship::ShipHullSpec::WigleyClassic(L, B, D, 500.0); break;
     }
-    return keship::ShipHullGenerator(s).hydroProps().volume;
+    return s;
   };
 
-  QString html = QString(
-      "<h3>数学船型族说明</h3>"
-      "<p>所有族的半宽都写成 <b>y = B/2 · W(ξ) · S(ζ)</b>，"
-      "ξ = 2x/L − 1（沿船长，−1 艉 → +1 艏），ζ = −z/D（沿吃水，0 水线 → 1 龙骨）。"
-      "换族 = 换 W 和 S 两个函数。</p>"
-      "<table border='1' cellspacing='0' cellpadding='4'>"
-      "<tr><th>族</th><th>水线面 W(ξ)</th><th>横剖面 S(ζ)</th>"
-      "<th>全船体积 m³</th><th>相对经典族</th></tr>");
+  static const char *kName[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底", "Wigley 瘦削",
+                                "Lewis U 形", "Lewis V 形", "资料 Model I/II",
+                                "资料 Model III/IV"};
+  static const char *kW[] = {"1 − ξ²", "1 − ξ²", "1 − ξ²", "1 − ξ⁴",
+                             "1 − ξ²", "1 − ξ²", "见资料公式", "见资料公式"};
+  static const char *kS[] = {"1 − ζ²", "1 − ζ⁴", "1 − ζ", "1 − ζ²",
+                             "√(1 − ζ²)", "1 − ζ", "见资料公式", "见资料公式"};
+  static const char *kColor[] = {"#2563eb", "#16a34a", "#dc2626", "#9333ea",
+                                 "#ea580c", "#0891b2", "#be123c", "#7c3aed"};
 
-  html += row("Wigley 经典", "1 − ξ²", "1 − ζ²", vol(0));
-  html += row("Wigley 平底", "1 − ξ²", "1 − ζ⁴（底部变方）", vol(1));
-  html += row("Wigley 尖底", "1 − ξ²", "1 − ζ（V 形到底）", vol(2));
-  html += row("Wigley 瘦削", "1 − ξ⁴（端部更尖）", "1 − ζ²", vol(3));
-  html += row("Lewis U 形", "1 − ξ²", "√(1 − ζ²)（U 形，圆舭）", vol(4));
-  html += row("Lewis V 形", "1 − ξ²", "1 − ζ（直线斜剖）", vol(5));
+  // === 舯剖面 SVG：8 族各画一条 y(0,z) 曲线 ===
+  const double W = 460, H = 260, pad = 40;
+  const double sx = (W - 2 * pad) / (0.5 * B);   // 半宽 → 像素
+  const double sy = (H - 2 * pad) / D;           // 深度 → 像素
+  QString paths;
+  for (int i = 0; i < 8; ++i) {
+    keship::ShipHullGenerator g(specOf(i));
+    QString d;
+    const int N = 60;
+    for (int k = 0; k <= N; ++k) {
+      const double z = -D * k / N;                    // 水线 0 → 龙骨 -D
+      const double y = g.sampleHalfBreadthForHelp(L * 0.5, z);
+      const double px = pad + y * sx;
+      const double py = pad + (-z) * sy;
+      d += (k == 0 ? "M " : "L ") + QString::number(px, 'f', 2) + " " +
+           QString::number(py, 'f', 2) + " ";
+    }
+    paths += QString("<path d=\"%1\" fill=\"none\" stroke=\"%2\" stroke-width=\"2\"/>")
+                 .arg(d, QString::fromUtf8(kColor[i]));
+  }
+
+  QString html;
+  html += R"HTML(<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>数学船型族说明 · SD-10</title><style>
+body{font-family:"Microsoft YaHei",system-ui,sans-serif;max-width:960px;margin:32px auto;
+padding:0 20px;line-height:1.7;color:#1f2328;background:#fff}
+h1{font-size:26px;border-bottom:3px solid #2563eb;padding-bottom:8px}
+h2{font-size:20px;margin-top:36px;color:#0f172a;border-left:4px solid #2563eb;padding-left:10px}
+h3{font-size:16px;color:#334155;margin-top:22px}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+th,td{border:1px solid #d0d7de;padding:7px 10px;text-align:left}
+th{background:#f6f8fa;font-weight:600}
+code{background:#f6f8fa;padding:2px 6px;border-radius:4px;font-family:Consolas,monospace;font-size:13px}
+.formula{background:#f6f8fa;border-left:4px solid #2563eb;padding:12px 16px;margin:12px 0;
+font-family:Cambria,"Times New Roman",serif;font-size:16px;overflow-x:auto}
+.note{background:#fffbeb;border-left:4px solid #d97706;padding:10px 14px;margin:12px 0;font-size:14px}
+.warn{background:#fef2f2;border-left:4px solid #dc2626;padding:10px 14px;margin:12px 0;font-size:14px}
+.ok{color:#15803d;font-weight:600}
+.bad{color:#b91c1c;font-weight:600}
+svg{border:1px solid #e5e7eb;border-radius:6px;background:#fcfcfd;display:block;margin:14px auto}
+</style></head><body>
+)HTML";
+
+  html += QString("<h1>数学船型族说明</h1>");
+  html += QString("<p>当前主尺度：<b>L = %1 m，B = %2 m，D = %3 m</b>。"
+                  "下表的体积与曲线都按这组尺寸现算。</p>")
+              .arg(L, 0, 'f', 3).arg(B, 0, 'f', 3).arg(D, 0, 'f', 3);
+
+  html += R"HTML(
+<h2>一、通用形式</h2>
+<p>所有船型族的半宽都能写成<b>两个函数的乘积</b>：</p>
+<div class="formula">y(x, z) = (B/2) · W(ξ) · S(ζ)　　其中　ξ = 2x/L − 1 ∈ [−1, 1]，　ζ = −z/D ∈ [0, 1]</div>
+<p><code>ξ</code> 沿船长（−1 艉端 → +1 艏端），<code>ζ</code> 沿吃水（0 水线 → 1 龙骨）。
+<b>换族 = 换 W 和 S 这两个函数</b>，主尺度不变。</p>
+)HTML";
+
+  html += QString("<h2>二、平台内置六族 + 资料两族</h2>");
+  html += QString("<table><tr><th>族</th><th>水线面 W(ξ)</th><th>横剖面 S(ζ)</th>"
+                  "<th>全船体积 (m³)</th><th>相对经典族</th></tr>");
+  for (int i = 0; i < 8; ++i) {
+    const double v = keship::ShipHullGenerator(specOf(i)).hydroProps().volume;
+    const double err = 100.0 * (v - vFull) / vFull;
+    html += QString("<tr><td><b style=\"color:%1\">%2</b></td><td>%3</td><td>%4</td>"
+                    "<td align=\"right\">%5</td><td align=\"right\">%6%</td></tr>")
+                .arg(QString::fromUtf8(kColor[i]), QString::fromUtf8(kName[i]),
+                     QString::fromUtf8(kW[i]), QString::fromUtf8(kS[i]))
+                .arg(v, 0, 'f', 4).arg(err, 0, 'f', 1);
+  }
   html += "</table>";
 
-  html += QString(
-      "<p><b>怎么用：</b>先在「参考船型族」里选中你要实现的族，"
-      "再照上表写 W 与 S。平台的体积校验(V6)会按<b>该族</b>的解析体积对拍。</p>"
-      "<p><b>为什么必须选对：</b>六族体积相差很大（上表最后一列），"
-      "选错会让正确代码被判成「体积偏差过大」。</p>"
-      "<p><b>建议：</b>先做经典族（体积恰为 4LBD/9），通过后再换族体会形状对稳性的影响。</p>"
-      "<hr><h3>与课程资料（Wigley 四模型基准）的对照</h3>"
-      "<p>课程资料来自 <b>Gothenburg 1980</b> 的 Wigley 基准算例，公式是：</p>"
-      "<p style=\'margin-left:20px\'><code>y = (1−z²)(1−x²)(1+a₂x²+a₄x⁴) + α·z²(1−z⁸)(1−x²)⁴</code><br>"
-      "a₂=0.2, a₄=0.0；α=1.0 → 模型 I/II（Cm=0.909）；α=0.0 → 模型 III/IV（Cm=0.667）</p>"
-      "<p style=\'margin-left:20px;color:#555\'>自检：α=1 时舯剖面 y(0,z)=(1−z²)+z²(1−z⁸)=1−z¹⁰，"
-      "∫₀¹(1−z¹⁰)dz=10/11=0.9091 ⇒ Cm=0.909 ✓；"
-      "α=0 时 y(0,z)=1−z²，∫=2/3 ⇒ Cm=0.667 ✓。"
-      "体积也吻合：L3/B0.3/d0.1875 下 Model I 得 0.0946、Model III 得 0.0780，与资料表 1 一致。</p>"
-      "<p><b>三处与平台不同，照着写要注意：</b></p>"
-      "<ol>"
-      "<li><b>坐标系（必须统一到平台）</b>：平台只用一套 —— "
-      "<code>x∈[0,L]</code>（艉 0 → 艏 L）、<code>z∈[−D,0]</code>（水线 0 → 龙骨 −D，<b>向上</b>）、"
-      "<code>y</code> 直接是半宽（不是归一化值）。"
-      "资料的 <code>x∈[−1,1]</code>、<code>z∈[0,1]</code> <b>向下</b>、<code>y=Y/(B/2)</code> 需换算："
-      "<code>x_平台=(x_资料+1)·L/2</code>、<code>z_平台=−z_资料·D</code>、<code>y_平台=y_资料·B/2</code>。"
-      "<br>懒得换算？勾选下方的<b>「按资料坐标输入」</b>，平台自动转换。</li>"
-      "<li><b>公式多一项</b>：资料的 Model III/IV 含 <code>(1+0.2x²)</code>，"
-      "平台经典族没有 ⇒ 同主尺度下体积大 <b>约 4%</b>，超过 V6 的 2% 容差。</li>"
-      "<li><b>Model I/II 平台没有对应族</b>：它们的横剖面更丰满（Cm=0.909 vs 平台的 0.667）。</li>"
-      "</ol>"
-      "<p><b>所以照着资料写时，请把「参考船型族」选为"
-      "「自定义 / 课程资料模型（不对拍体积）」</b> —— "
-      "此时平台只做 V1~V5（网格/半宽/端点）校验，V6 改为<b>只报告体积不判定</b>。"
-      "这不是放过错误：资料模型的解析体积与平台族本就不同，硬套一个参考值只会制造假通过或假失败。</p>"
-      "<p><b>资料的真正价值</b>：它附带 Model I~IV 的<b>实测静水阻力</b>（Fn=0.20/0.30），"
-      "你造出船后可以拿平台的阻力实验（RP-01/02）与之对照 —— 这是本实验往 CFD 方向延伸的入口。</p>");
+  html += QString("<h3>舯剖面形状对比（x = L/2 处的半宽随吃水变化）</h3>");
+  html += QString("<svg width=\"%1\" height=\"%2\" viewBox=\"0 0 %1 %2\">").arg(W).arg(H);
+  html += QString("<line x1=\"%1\" y1=\"%2\" x2=\"%3\" y2=\"%2\" stroke=\"#94a3b8\" "
+                  "stroke-dasharray=\"4 4\"/>").arg(pad).arg(pad).arg(W - pad);
+  html += QString("<text x=\"%1\" y=\"%2\" font-size=\"11\" fill=\"#64748b\">水线 ζ=0</text>")
+              .arg(pad + 4).arg(pad - 6);
+  html += QString("<line x1=\"%1\" y1=\"%2\" x2=\"%1\" y2=\"%3\" stroke=\"#cbd5e1\"/>")
+              .arg(pad).arg(pad).arg(H - pad);
+  html += QString("<text x=\"%1\" y=\"%2\" font-size=\"11\" fill=\"#64748b\">龙骨 ζ=1</text>")
+              .arg(pad + 4).arg(H - pad + 14);
+  html += paths;
+  html += "</svg>";
+  html += R"HTML(<p style="font-size:13px;color:#64748b;text-align:center">
+横轴 = 半宽 y，纵轴 = 吃水深度。曲线越靠右说明该深度处越宽；
+资料 Model I/II 的曲线在水线附近明显更靠右（剖面更丰满，Cm=0.909）。</p>
+)HTML";
 
-  QMessageBox box(this);
-  box.setWindowTitle("数学船型族说明");
-  box.setTextFormat(Qt::RichText);
-  box.setText(html);
-  box.setStandardButtons(QMessageBox::Ok);
-  box.exec();
+  html += R"HTML(
+<h2>三、课程资料：Wigley 四模型（Journée 1992）</h2>
+<p>来源：<b>Journée, J.M.J. (1992)</b>, <i>Experiments and Calculations on 4 Wigley Hull Forms
+in Head Waves</i>, Report 0909, Ship Hydromechanics Laboratory, Delft University of Technology.</p>
+<div class="formula">y = (1 − ζ²)(1 − ξ²)(1 + a₂ξ² + a₄ξ⁴) + α · ζ²(1 − ζ⁸)(1 − ξ²)⁴</div>
+<p>参数：<code>a₂ = 0.2</code>，<code>a₄ = 0.0</code>；
+<code>α = 1.0</code> → Model I/II（Cm = 0.909）；<code>α = 0.0</code> → Model III/IV（Cm = 0.667）。</p>
+<div class="note"><b>自检（可用于核对实现）：</b><br>
+α=1 时舯剖面 y(0,ζ) = (1−ζ²) + ζ²(1−ζ⁸) = <b>1 − ζ¹⁰</b>，∫₀¹(1−ζ¹⁰)dζ = 10/11 = <b>0.9091</b> ⇒ Cm = 0.909 ✓<br>
+α=0 时 y(0,ζ) = 1 − ζ²，∫₀¹ = 2/3 ⇒ Cm = 0.667 ✓<br>
+体积同样吻合：L3/B0.3/d0.1875 下 Model I 得 <b>0.0946</b>、Model III 得 <b>0.0780</b>，与资料表 1 一致。
+</div>
+<p><b>Model I 与 II 的区别不在公式</b>，而在主尺度（L/B = 10 vs 5）；III 与 IV 同理。
+所以在参考族里选「资料 Model I/II」或「资料 Model III/IV」即可，L/B 由你自己输入。</p>
+)HTML";
+
+  html += R"HTML(
+<h2>四、坐标系统一（重要）</h2>
+<p><b>平台只用一套坐标</b>，与 Gazebo 的 Z_UP 一致：</p>
+<table>
+<tr><th>轴</th><th>平台（唯一标准）</th><th>课程资料</th><th>换算</th></tr>
+<tr><td>x</td><td>[0, L]，艉 0 → 艏 L</td><td>[−1, 1]，中点为 0</td>
+<td><code>x_平台 = (x_资料 + 1) · L/2</code></td></tr>
+<tr><td>z</td><td>[−D, 0]，<b>向上</b>（水线 0，龙骨 −D）</td><td>[0, 1]，<b>向下</b>（水线 0，龙骨 1）</td>
+<td><code>z_平台 = −z_资料 · D</code></td></tr>
+<tr><td>y</td><td>实际半宽 [0, B/2]</td><td>归一化 [0, 1]，即 Y/(B/2)</td>
+<td><code>y_平台 = y_资料 · B/2</code></td></tr>
+</table>
+<div class="warn"><b>关于 z 方向：</b>船舶操纵性理论（Fossen 的 NED 体系）确实用 <b>+z 向下</b>，
+而「吃水」本身也是向下为正的深度。但<b>平台的几何与物理坐标是 Gazebo Z_UP（z 向上）</b>——
+龙骨在 −D 而不是 +D。两套语义在平台里是分开的：<b>几何用 z 向上，draft 用正深度</b>。
+</div>
+<p>不想手算？在对话框里勾选 <b>「按资料坐标输入（归一化，z 向下）」</b>，
+平台会自动按上表换算（并同步反转水线顺序）。</p>
+)HTML";
+
+  html += R"HTML(
+<h2>五、六项校验</h2>
+<table>
+<tr><th>#</th><th>校验</th><th>阈值</th><th>不过说明什么</th></tr>
+<tr><td>V1</td><td>网格完整</td><td>每站 × 每水线都有点</td><td>循环漏了一层</td></tr>
+<tr><td>V2</td><td>无重复点</td><td>0 个</td><td>同一 (x,z) 打了两次</td></tr>
+<tr><td>V3</td><td>半宽 ∈ [0, B/2]</td><td>硬边界</td><td>打了左舷，或漏了 /2</td></tr>
+<tr><td>V4</td><td>覆盖 [0,L] 与 [−D,0]</td><td>端点必须在</td><td>循环写成 <code>i &lt; Nx</code></td></tr>
+<tr><td>V5</td><td>端部半宽趋零</td><td>&lt; 1%·B</td><td>艏艉没收敛</td></tr>
+<tr><td>V6</td><td>体积对拍</td><td>&lt; 2%</td><td>公式写错，或选错参考族</td></tr>
+</table>
+<p>V6 的对拍基准<b>按你选的参考族取</b>；选「自定义」时 V6 只报告体积、不判定
+（避免拿不存在的参考值制造假通过或假失败）。</p>
+
+<h2>六、建议路线</h2>
+<ol>
+<li>先做 <b>Wigley 经典</b>（体积恰为 4LBD/9），跑通全流程；</li>
+<li>再试 <b>资料 Model III/IV</b>（Cm=0.667，与经典族差约 4%），体会 <code>(1+0.2ξ²)</code> 项的影响；</li>
+<li>最后试 <b>资料 Model I/II</b>（Cm=0.909，剖面丰满得多），观察它对稳性 GM 的影响；</li>
+<li>造好的船可以接 <b>RP-01/02 阻力实验</b>，与资料附带的实测阻力（Fn=0.20/0.30）对照。</li>
+</ol>
+</body></html>
+)HTML";
+
+  return html;
+}
+
+//-----------------------------------------------------------------------------
+void OffsetsHullDialog::onShowFamilyHelp()
+{
+  const QString path = QDir::tempPath() + "/keship_sd10_hull_family_help.html";
+  QFile f(path);
+  if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    QMessageBox::warning(this, "船型说明", "无法写入说明文件：" + path);
+    return;
+  }
+  f.write(familyHelpHtml().toUtf8());
+  f.close();
+  QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 //-----------------------------------------------------------------------------

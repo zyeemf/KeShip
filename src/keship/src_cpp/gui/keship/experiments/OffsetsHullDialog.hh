@@ -68,6 +68,9 @@ public:
   void setDocCoords(bool _on);
   bool docCoords() const;
 
+  /// 船型说明的完整 HTML（网页版；onShowFamilyHelp 写文件并打开浏览器）
+  QString familyHelpHtml() const;
+
 signals:
   /// 用户点「生成可浮船型」时发出，由外部负责 spawn（与 ShipHullDialog 同模式）
   void spawnRequested(keship::ShipHullSpec spec, std::string name);

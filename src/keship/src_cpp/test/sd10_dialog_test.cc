@@ -282,7 +282,7 @@ int main(int argc, char **argv)
 
   // ⑦ 资料坐标自动转换（张老师要求"坐标系统一"）
   {
-    dlg.setFamilyIndex(6);       // 自定义（资料模型不对拍体积）
+    dlg.setFamilyIndex(8);       // 自定义（不对拍体积）
     dlg.setDocCoords(true);      // 输入按资料归一化坐标
     std::string err;
     const bool ok = dlg.applyCsvText(QString::fromStdString(MakeDocCsv(20, 10, 0.0)), &err);
@@ -301,6 +301,56 @@ int main(int argc, char **argv)
     }
     dlg.setDocCoords(false);
     dlg.setFamilyIndex(0);
+  }
+
+  // ⑧ 资料公式族（Journée 1992）：Model I/II 与 III/IV 各自对拍通过
+  {
+    struct Case { int idx; bool cm909; const char *name; };
+    const Case cases[] = {{6, true, "Model I/II"}, {7, false, "Model III/IV"}};
+    for (const auto &c : cases) {
+      dlg.setDocCoords(false);
+      dlg.setFamilyIndex(c.idx);
+      const auto spec = keship::ShipHullSpec::WigleyDoc(L, B, D, c.cm909, 500.0);
+      keship::ShipHullGenerator g(spec);
+      const std::string csv = LinesToCsv(g.lines());
+      std::string err;
+      const bool ok = dlg.applyCsvText(QString::fromStdString(csv), &err);
+      check(ok, std::string("资料族 ") + c.name + " 通过校验" +
+                    (err.empty() ? std::string() : "：" + err));
+      if (ok) {
+        check(std::abs(dlg.report().volumeErrPct) < 1.0,
+              std::string("资料族 ") + c.name + " 体积偏差 " +
+                  std::to_string(dlg.report().volumeErrPct) + "% < 1%");
+        // 与资料表 1 的口径交叉验证：L3/B0.3/d0.1875 时 Model I=0.0946, III=0.0780
+        const auto s2 = keship::ShipHullSpec::WigleyDoc(3.0, 0.3, 0.1875, c.cm909, 500.0);
+        const double v2 = keship::ShipHullGenerator(s2).hydroProps().volume;
+        const double ref = c.cm909 ? 0.0946 : 0.0780;
+        check(std::abs(v2 - ref) / ref < 0.01,
+              std::string("资料族 ") + c.name + " 复现资料表 1 体积 " +
+                  std::to_string(v2) + " ≈ " + std::to_string(ref));
+      }
+    }
+    dlg.setFamilyIndex(0);
+  }
+
+  // ⑨ 船型说明网页：内容完整性（不打开浏览器）
+  {
+    const QString h = dlg.familyHelpHtml();
+    check(h.contains("数学船型族说明"), "说明 HTML 有标题");
+    check(h.contains("Journée, J.M.J. (1992)"), "说明 HTML 引用原始文献");
+    check(h.contains("(1 − ζ⁸)"), "说明 HTML 公式为 (1−ζ⁸)（非 (1−ζ)⁸）");
+    check(h.contains("1 − ζ¹⁰") || h.contains("10/11"), "说明 HTML 含 Cm 自检算式");
+    check(h.contains("<svg"), "说明 HTML 含 SVG 剖面图");
+    check(h.count("<path") >= 8, "SVG 至少 8 条剖面曲线（6 族 + 资料 2 族）");
+    check(h.contains("z_平台 = −z_资料 · D"), "说明 HTML 含坐标换算公式");
+    check(h.contains("Gazebo Z_UP"), "说明 HTML 说明平台 z 向上");
+    check(h.contains("资料 Model I/II"), "说明 HTML 含资料族");
+    // 落盘供人工查看渲染效果（测试副作用，便于验收）
+    QFile out(QStringLiteral("/tmp/keship_sd10_help_preview.html"));
+    if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+      out.write(h.toUtf8());
+      out.close();
+    }
   }
 
   std::printf("--- SD-10 对话框结果：%s（失败 %d 项）---\n",
