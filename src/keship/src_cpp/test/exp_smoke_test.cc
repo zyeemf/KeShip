@@ -58,6 +58,7 @@
 #include "experiments/MidshipSectionDialog.hh"
 #include "experiments/OperabilityDialog.hh"
 #include "experiments/ParametricHullDialog.hh"
+#include "experiments/OffsetsHullDialog.hh"
 #include "experiments/PropellerDialog.hh"
 #include "experiments/ResistanceDialog.hh"
 #include "experiments/SensorEstimationDialog.hh"
@@ -123,6 +124,7 @@ QDialog *Make(const std::string &_exp, gz::transport::Node &_node,
   if (exp == "SD-07") return new DamageStabilityDialog(nullptr);
   if (exp == "SD-08") return new ParametricHullDialog(nullptr);
   if (exp == "SD-09") return new LongitudinalStrengthDialog(nullptr);
+  if (exp == "SD-10") return new OffsetsHullDialog(nullptr);
 
   return nullptr;
 }
@@ -228,6 +230,12 @@ bool TryImport(QDialog *_dlg, const QString &_p1, const QString &_p2)
   if (auto *x = qobject_cast<ProxyGeometryDialog *>(_dlg)) {
     x->loadMeshFileForTest(_p1.toStdString()); return true;
   }
+  if (auto *x = qobject_cast<OffsetsHullDialog *>(_dlg)) {
+    QFile f(_p1);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    std::string err;
+    return x->applyCsvText(QString::fromUtf8(f.readAll()), &err);
+  }
   return false;
 }
 
@@ -240,6 +248,7 @@ bool TryExport(QDialog *_dlg, const QString &_p)
   if (auto *x = qobject_cast<LongitudinalStrengthDialog *>(_dlg))  return x->exportTo(_p, &err);
   if (auto *x = qobject_cast<StructureCognitionDialog *>(_dlg))    return x->exportTo(_p, &err);
   if (auto *x = qobject_cast<ParametricHullDialog *>(_dlg))        return x->exportTo(_p, &err);
+  if (auto *x = qobject_cast<OffsetsHullDialog *>(_dlg))          return x->exportTo(_p, &err);
   if (auto *x = qobject_cast<LinesReadingDialog *>(_dlg))          return x->exportTo(_p);
   if (auto *x = qobject_cast<BuoyancyLayoutDialog *>(_dlg))        return x->exportTo(_p);
   if (auto *x = qobject_cast<GzStabilityDialog *>(_dlg))           return x->exportTo(_p);

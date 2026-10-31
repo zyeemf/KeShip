@@ -375,6 +375,9 @@ void OffsetsHullDialog::showReport()
 
   if (report_.ok) {
     s += QStringLiteral("<span style='color:#1a7f37;'>校验通过</span>");
+  } else if (report_.errors.empty()) {
+    // 还没运行代码 / 未提交型值表 —— 不是"未通过"，别用错误色吓人
+    s += QStringLiteral("<span style='color:#8a6d3b;'>待运行代码：尚未提交型值表</span>");
   } else {
     s += QStringLiteral("<span style='color:#b42318;'>校验未通过（%1 条）</span><ul>")
              .arg(report_.errors.size());
