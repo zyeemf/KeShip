@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "OffsetsHullDialog.hh"
+#include "ShipHullGenerator.hh"
 #include "StudentCodeRunner.hh"
 
 namespace {
@@ -61,6 +62,35 @@ std::string MakeCsv(int _nx, int _nz, double _scaleY = 1.0, bool _dropOne = fals
       std::snprintf(buf, sizeof(buf), "%.6f,%.6f,%.6f\n", x, z, _scaleY * Hb(x, z));
       s += buf;
       ++n;
+    }
+  }
+  return s;
+}
+
+
+/// 按族索引构造规格（与对话框 familyVolume() 同口径）
+keship::ShipHullSpec SpecOf(int _i, double _L, double _B, double _D, double _rho)
+{
+  switch (_i) {
+    case 1: return keship::ShipHullSpec::WigleyFlat(_L, _B, _D, _rho);
+    case 2: return keship::ShipHullSpec::WigleySharp(_L, _B, _D, _rho);
+    case 3: return keship::ShipHullSpec::WigleyFine(_L, _B, _D, _rho);
+    case 4: return keship::ShipHullSpec::LewisU(_L, _B, _D, _rho);
+    case 5: return keship::ShipHullSpec::LewisV(_L, _B, _D, _rho);
+    default: return keship::ShipHullSpec::WigleyClassic(_L, _B, _D, _rho);
+  }
+}
+
+/// 把平台算出的型值表转成 CSV（模拟学生程序的 stdout）
+std::string LinesToCsv(const keship::LinesData &_d)
+{
+  std::string s;
+  char buf[128];
+  for (std::size_t i = 0; i < _d.stations.size(); ++i) {
+    for (std::size_t j = 0; j < _d.waterlines.size(); ++j) {
+      std::snprintf(buf, sizeof(buf), "%.6f,%.6f,%.6f\n",
+                    _d.stations[i], _d.waterlines[j], _d.halfBreadths[i][j]);
+      s += buf;
     }
   }
   return s;
@@ -204,6 +234,30 @@ int main(int argc, char **argv)
               "全链路吃水 " + std::to_string(hp.draft) + " ~= 0.6527");
       }
     }
+  }
+
+  // ⑥ 六族全通过：每个族用自己的解析体积做 V6 基准（问题 1 的回归）
+  {
+    static const char *kNames[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底",
+                                   "Wigley 瘦削", "Lewis U", "Lewis V"};
+    for (int fam = 0; fam < 6; ++fam) {
+      dlg.setFamilyIndex(fam);
+      const auto spec = SpecOf(fam, L, B, D, 500.0);
+      keship::ShipHullGenerator g(spec);
+      const std::string csv = LinesToCsv(g.lines());
+      std::string err;
+      const bool ok = dlg.applyCsvText(QString::fromStdString(csv), &err);
+      check(ok, std::string("族 ") + kNames[fam] + " 通过校验" +
+                    (err.empty() ? std::string() : "：" + err));
+      if (ok && dlg.hull()) {
+        const double dV = dlg.hull()->hydroProps().volume;
+        const double dErr = 100.0 * (dlg.report().volumeFromTable - dV) / dV;
+        check(std::abs(dErr) < 2.0,
+              std::string("族 ") + kNames[fam] + " 体积偏差 " +
+                  std::to_string(dErr) + "% < 2%");
+      }
+    }
+    dlg.setFamilyIndex(0);   // 复位
   }
 
   std::printf("--- SD-10 对话框结果：%s（失败 %d 项）---\n",

@@ -31,6 +31,7 @@
 #include "HullOffsets.hh"
 #include "ShipHullGenerator.hh"
 
+class QComboBox;
 class QDoubleSpinBox;
 class QSpinBox;
 class QRadioButton;
@@ -58,6 +59,10 @@ public:
   /// 已建好的船体（未通过校验时为空）
   const keship::ShipHullGenerator *hull() const { return hull_.get(); }
 
+  /// 参考船型族索引（0=Wigley 经典 … 5=Lewis V）。测试与脚本用。
+  void setFamilyIndex(int _i);
+  int familyIndex() const;
+
 signals:
   /// 用户点「生成可浮船型」时发出，由外部负责 spawn（与 ShipHullDialog 同模式）
   void spawnRequested(keship::ShipHullSpec spec, std::string name);
@@ -68,6 +73,7 @@ private slots:
   void onLanguageChanged();
   void onSpawn();
   void onExport();
+  void onShowFamilyHelp();
 
 private:
   void buildUi();
@@ -75,12 +81,17 @@ private:
   void showReport();
   void rebuildSpec();
   QString buildTemplate() const;
+  /// 当前所选船型族的全船体积（V6 对拍基准；各族差异可达 ±25%）
+  double familyVolume() const;
+  /// 当前所选船型族的中文名（导出与日志用）
+  QString familyName() const;
 
   // === 输入 ===
   QDoubleSpinBox *lengthSpin_ = nullptr;
   QDoubleSpinBox *breadthSpin_ = nullptr;
   QDoubleSpinBox *depthSpin_ = nullptr;
   QDoubleSpinBox *densitySpin_ = nullptr;
+  QComboBox *familyCombo_ = nullptr;   ///< 参考船型族（决定 V6 对拍基准）
   QSpinBox *nxSpin_ = nullptr;
   QSpinBox *nzSpin_ = nullptr;
   QRadioButton *pythonRadio_ = nullptr;

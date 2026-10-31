@@ -9,6 +9,7 @@
 #include <vector>
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -125,6 +126,22 @@ void OffsetsHullDialog::buildUi()
   formL->addRow("型深 D：", depthSpin_);
   formR->addRow("船体密度 rho：", densitySpin_);
 
+  familyCombo_ = new QComboBox(paramBox);
+  familyCombo_->addItem("Wigley 经典（抛物水线 + 抛物横剖）");
+  familyCombo_->addItem("Wigley 平底（大水线面）");
+  familyCombo_->addItem("Wigley 尖底（V 形）");
+  familyCombo_->addItem("Wigley 瘦削（小水线面）");
+  familyCombo_->addItem("Lewis U 形横剖");
+  familyCombo_->addItem("Lewis V 形横剖");
+  familyCombo_->setToolTip("选择你代码里实现的船型族：\n"
+                           "体积校验(V6)按该族的解析体积对拍。\n"
+                           "选错会导致体积被误判为\"写错\"。");
+  formR->addRow("参考船型族：", familyCombo_);
+
+  auto *helpBtn = new QPushButton("船型说明…", paramBox);
+  helpBtn->setToolTip("查看 6 个船型族的半宽公式、体积与适用场景");
+  formR->addRow(QString(), helpBtn);
+
   nxSpin_ = new QSpinBox(paramBox);
   nxSpin_->setRange(20, 120);
   nxSpin_->setValue(20);
@@ -147,7 +164,7 @@ void OffsetsHullDialog::buildUi()
   auto *langRow = new QHBoxLayout();
   pythonRadio_ = new QRadioButton("Python", leftBox);
   cRadio_ = new QRadioButton("C", leftBox);
-  pythonRadio_->setChecked(true);
+  cRadio_->setChecked(true);   ///< 默认 C（课程要求；Python 仍可切换）
   auto *langGroup = new QButtonGroup(leftBox);
   langGroup->addButton(pythonRadio_);
   langGroup->addButton(cRadio_);
@@ -214,6 +231,9 @@ void OffsetsHullDialog::buildUi()
   connect(pythonRadio_, &QRadioButton::toggled, this, &OffsetsHullDialog::onLanguageChanged);
   connect(spawnBtn_, &QPushButton::clicked, this, &OffsetsHullDialog::onSpawn);
   connect(exportBtn_, &QPushButton::clicked, this, &OffsetsHullDialog::onExport);
+  connect(helpBtn, &QPushButton::clicked, this, &OffsetsHullDialog::onShowFamilyHelp);
+  connect(familyCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this](int) { if (hull_) { rebuildSpec(); } showReport(); });
 }
 
 //-----------------------------------------------------------------------------
@@ -308,7 +328,7 @@ bool OffsetsHullDialog::applyCsvText(const QString &_csv, std::string *_err)
   }
 
   lines_ = d;
-  report_ = keship::ValidateOffsets(d, L, B, D, keship::WigleyExactVolume(L, B, D));
+  report_ = keship::ValidateOffsets(d, L, B, D, familyVolume());
 
   if (!report_.ok) {
     hull_.reset();
@@ -420,6 +440,112 @@ void OffsetsHullDialog::onSpawn()
     return;
   }
   emit spawnRequested(spec_, std::string("sd10_hull"));
+}
+
+//-----------------------------------------------------------------------------
+void OffsetsHullDialog::setFamilyIndex(int _i)
+{
+  if (!familyCombo_) return;
+  if (_i < 0 || _i >= familyCombo_->count()) return;
+  familyCombo_->setCurrentIndex(_i);
+}
+
+int OffsetsHullDialog::familyIndex() const
+{
+  return familyCombo_ ? familyCombo_->currentIndex() : 0;
+}
+
+//-----------------------------------------------------------------------------
+QString OffsetsHullDialog::familyName() const
+{
+  static const char *kNames[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底",
+                                 "Wigley 瘦削", "Lewis U 形", "Lewis V 形"};
+  const int i = familyCombo_ ? familyCombo_->currentIndex() : 0;
+  return QString::fromUtf8(kNames[(i >= 0 && i < 6) ? i : 0]);
+}
+
+//-----------------------------------------------------------------------------
+double OffsetsHullDialog::familyVolume() const
+{
+  const double L = lengthSpin_ ? lengthSpin_->value() : 6.0;
+  const double B = breadthSpin_ ? breadthSpin_->value() : 1.5;
+  const double D = depthSpin_ ? depthSpin_->value() : 1.0;
+  const double rho = densitySpin_ ? densitySpin_->value() : 500.0;
+
+  /// ★ V6 的对拍基准**必须按族取**：实测六族的全船体积相对 4LBD/9 相差
+  ///   flat +12.4% / sharp −25.0% / fine −18.2% / lewis-u +17.6% / lewis-v −25.0%，
+  ///   只有 classic 是 4LBD/9。若一律用 4LBD/9，除经典族外全部会被误判成"公式写错"。
+  keship::ShipHullSpec s;
+  const int i = familyCombo_ ? familyCombo_->currentIndex() : 0;
+  switch (i) {
+    case 1: s = keship::ShipHullSpec::WigleyFlat(L, B, D, rho); break;
+    case 2: s = keship::ShipHullSpec::WigleySharp(L, B, D, rho); break;
+    case 3: s = keship::ShipHullSpec::WigleyFine(L, B, D, rho); break;
+    case 4: s = keship::ShipHullSpec::LewisU(L, B, D, rho); break;
+    case 5: s = keship::ShipHullSpec::LewisV(L, B, D, rho); break;
+    default: s = keship::ShipHullSpec::WigleyClassic(L, B, D, rho); break;
+  }
+  return keship::ShipHullGenerator(s).hydroProps().volume;
+}
+
+//-----------------------------------------------------------------------------
+void OffsetsHullDialog::onShowFamilyHelp()
+{
+  const double L = lengthSpin_->value(), B = breadthSpin_->value(), D = depthSpin_->value();
+  const double vFull = 4.0 * L * B * D / 9.0;
+
+  auto row = [&](const char *_n, const char *_wl, const char *_sec, double _v) {
+    const double err = 100.0 * (_v - vFull) / vFull;
+    return QString("<tr><td><b>%1</b></td><td>%2</td><td>%3</td>"
+                   "<td align='right'>%4</td><td align='right'>%5%</td></tr>")
+        .arg(QString::fromUtf8(_n), QString::fromUtf8(_wl), QString::fromUtf8(_sec))
+        .arg(_v, 0, 'f', 4)
+        .arg(err, 0, 'f', 1);
+  };
+
+  auto vol = [&](int _i) {
+    keship::ShipHullSpec s;
+    switch (_i) {
+      case 1: s = keship::ShipHullSpec::WigleyFlat(L, B, D, 500.0); break;
+      case 2: s = keship::ShipHullSpec::WigleySharp(L, B, D, 500.0); break;
+      case 3: s = keship::ShipHullSpec::WigleyFine(L, B, D, 500.0); break;
+      case 4: s = keship::ShipHullSpec::LewisU(L, B, D, 500.0); break;
+      case 5: s = keship::ShipHullSpec::LewisV(L, B, D, 500.0); break;
+      default: s = keship::ShipHullSpec::WigleyClassic(L, B, D, 500.0); break;
+    }
+    return keship::ShipHullGenerator(s).hydroProps().volume;
+  };
+
+  QString html = QString(
+      "<h3>数学船型族说明</h3>"
+      "<p>所有族的半宽都写成 <b>y = B/2 · W(ξ) · S(ζ)</b>，"
+      "ξ = 2x/L − 1（沿船长，−1 艉 → +1 艏），ζ = −z/D（沿吃水，0 水线 → 1 龙骨）。"
+      "换族 = 换 W 和 S 两个函数。</p>"
+      "<table border='1' cellspacing='0' cellpadding='4'>"
+      "<tr><th>族</th><th>水线面 W(ξ)</th><th>横剖面 S(ζ)</th>"
+      "<th>全船体积 m³</th><th>相对经典族</th></tr>");
+
+  html += row("Wigley 经典", "1 − ξ²", "1 − ζ²", vol(0));
+  html += row("Wigley 平底", "1 − ξ²", "1 − ζ⁴（底部变方）", vol(1));
+  html += row("Wigley 尖底", "1 − ξ²", "1 − ζ（V 形到底）", vol(2));
+  html += row("Wigley 瘦削", "1 − ξ⁴（端部更尖）", "1 − ζ²", vol(3));
+  html += row("Lewis U 形", "1 − ξ²", "√(1 − ζ²)（U 形，圆舭）", vol(4));
+  html += row("Lewis V 形", "1 − ξ²", "1 − ζ（直线斜剖）", vol(5));
+  html += "</table>";
+
+  html += QString(
+      "<p><b>怎么用：</b>先在「参考船型族」里选中你要实现的族，"
+      "再照上表写 W 与 S。平台的体积校验(V6)会按<b>该族</b>的解析体积对拍。</p>"
+      "<p><b>为什么必须选对：</b>六族体积相差很大（上表最后一列），"
+      "选错会让正确代码被判成「体积偏差过大」。</p>"
+      "<p><b>建议：</b>先做经典族（体积恰为 4LBD/9），通过后再换族体会形状对稳性的影响。</p>");
+
+  QMessageBox box(this);
+  box.setWindowTitle("数学船型族说明");
+  box.setTextFormat(Qt::RichText);
+  box.setText(html);
+  box.setStandardButtons(QMessageBox::Ok);
+  box.exec();
 }
 
 //-----------------------------------------------------------------------------
