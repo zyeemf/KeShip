@@ -124,7 +124,7 @@ void OffsetsHullDialog::buildUi()
   formL->addRow("船长 L：", lengthSpin_);
   formL->addRow("型宽 B：", breadthSpin_);
   formL->addRow("型深 D：", depthSpin_);
-  formR->addRow("船体密度 rho：", densitySpin_);
+  formL->addRow("船体密度 rho：", densitySpin_);   ///< 与长/宽/深同列（张老师 2026-10-31）
 
   familyCombo_ = new QComboBox(paramBox);
   familyCombo_->addItem("Wigley 经典（抛物水线 + 抛物横剖）");
@@ -133,6 +133,7 @@ void OffsetsHullDialog::buildUi()
   familyCombo_->addItem("Wigley 瘦削（小水线面）");
   familyCombo_->addItem("Lewis U 形横剖");
   familyCombo_->addItem("Lewis V 形横剖");
+  familyCombo_->addItem("自定义 / 课程资料模型（不对拍体积）");
   familyCombo_->setToolTip("选择你代码里实现的船型族：\n"
                            "体积校验(V6)按该族的解析体积对拍。\n"
                            "选错会导致体积被误判为\"写错\"。");
@@ -459,9 +460,9 @@ int OffsetsHullDialog::familyIndex() const
 QString OffsetsHullDialog::familyName() const
 {
   static const char *kNames[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底",
-                                 "Wigley 瘦削", "Lewis U 形", "Lewis V 形"};
+                                 "Wigley 瘦削", "Lewis U 形", "Lewis V 形", "自定义"};
   const int i = familyCombo_ ? familyCombo_->currentIndex() : 0;
-  return QString::fromUtf8(kNames[(i >= 0 && i < 6) ? i : 0]);
+  return QString::fromUtf8(kNames[(i >= 0 && i < 7) ? i : 0]);
 }
 
 //-----------------------------------------------------------------------------
@@ -483,6 +484,7 @@ double OffsetsHullDialog::familyVolume() const
     case 3: s = keship::ShipHullSpec::WigleyFine(L, B, D, rho); break;
     case 4: s = keship::ShipHullSpec::LewisU(L, B, D, rho); break;
     case 5: s = keship::ShipHullSpec::LewisV(L, B, D, rho); break;
+    case 6: return -1.0;   ///< 自定义：无解析参考 ⇒ ValidateOffsets 跳过 V6，仅报告体积
     default: s = keship::ShipHullSpec::WigleyClassic(L, B, D, rho); break;
   }
   return keship::ShipHullGenerator(s).hydroProps().volume;
@@ -538,7 +540,27 @@ void OffsetsHullDialog::onShowFamilyHelp()
       "再照上表写 W 与 S。平台的体积校验(V6)会按<b>该族</b>的解析体积对拍。</p>"
       "<p><b>为什么必须选对：</b>六族体积相差很大（上表最后一列），"
       "选错会让正确代码被判成「体积偏差过大」。</p>"
-      "<p><b>建议：</b>先做经典族（体积恰为 4LBD/9），通过后再换族体会形状对稳性的影响。</p>");
+      "<p><b>建议：</b>先做经典族（体积恰为 4LBD/9），通过后再换族体会形状对稳性的影响。</p>"
+      "<hr><h3>与课程资料（Wigley 四模型基准）的对照</h3>"
+      "<p>课程资料来自 <b>Gothenburg 1980</b> 的 Wigley 基准算例，公式是：</p>"
+      "<p style=\'margin-left:20px\'><code>y = (1−z²)(1−x²)(1+a₂x²+a₄x⁴) + α·z²(1−z)⁸(1−x²)⁴</code><br>"
+      "a₂=0.2, a₄=0.0；α=1.0 → 模型 I/II（Cm=0.909）；α=0.0 → 模型 III/IV（Cm=0.667）</p>"
+      "<p><b>三处与平台不同，照着写要注意：</b></p>"
+      "<ol>"
+      "<li><b>坐标系</b>：资料用归一化坐标 —— x=X/(L/2)∈[−1,1]、z=Z/d <b>向下为正</b>、y=Y/(B/2)；"
+      "平台用实际坐标 —— x∈[0,L]、z∈[−D,0] <b>向上</b>、y 直接是半宽。"
+      "换算：<code>x_平台 = (x_资料+1)·L/2</code>，<code>z_平台 = −z_资料·D</code>，"
+      "<code>y_平台 = y_资料·B/2</code>。</li>"
+      "<li><b>公式多一项</b>：资料的 Model III/IV 含 <code>(1+0.2x²)</code>，"
+      "平台经典族没有 ⇒ 同主尺度下体积大 <b>约 4%</b>，超过 V6 的 2% 容差。</li>"
+      "<li><b>Model I/II 平台没有对应族</b>：它们的横剖面更丰满（Cm=0.909 vs 平台的 0.667）。</li>"
+      "</ol>"
+      "<p><b>所以照着资料写时，请把「参考船型族」选为"
+      "「自定义 / 课程资料模型（不对拍体积）」</b> —— "
+      "此时平台只做 V1~V5（网格/半宽/端点）校验，V6 改为<b>只报告体积不判定</b>。"
+      "这不是放过错误：资料模型的解析体积与平台族本就不同，硬套一个参考值只会制造假通过或假失败。</p>"
+      "<p><b>资料的真正价值</b>：它附带 Model I~IV 的<b>实测静水阻力</b>（Fn=0.20/0.30），"
+      "你造出船后可以拿平台的阻力实验（RP-01/02）与之对照 —— 这是本实验往 CFD 方向延伸的入口。</p>");
 
   QMessageBox box(this);
   box.setWindowTitle("数学船型族说明");
