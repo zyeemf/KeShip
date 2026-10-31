@@ -24,6 +24,19 @@ struct Triangle3D
   gz::math::Vector3d v0, v1, v2;
 };
 
+/// @brief 源模型的一个材质（★ 2026-10-31：保留每材质颜色，规范化 OBJ 时写成多段 usemtl）
+///
+/// 背景：此前加载器把 2~4 个 aiMesh（每个对应一个 glTF primitive/材质）合并成
+///   一份顶点表，材质索引直接丢掉 ⇒ 写出的 OBJ 只有一个 `usemtl material_1`
+///   + `Kd 0.7 灰`，于是橙色阳极氧化、钢、玻璃统统变白模。
+struct MeshMaterial
+{
+  std::string name;                       ///< 材质名（已脱敏，可安全用于 OBJ/MTL）
+  float kd[3] = {0.7f, 0.7f, 0.7f};       ///< 漫反射（glTF baseColorFactor）
+  float ks[3] = {0.05f, 0.05f, 0.05f};    ///< 高光
+  float ns = 10.0f;                       ///< 光泽度
+};
+
 /// @brief 从文件加载的网格数据
 struct MeshDataSimple
 {
@@ -33,6 +46,10 @@ struct MeshDataSimple
   std::vector<std::pair<double,double>> texCoords;     // 每顶点 UV
   std::string texturePath;                             // diffuse 纹理路径
   std::vector<std::array<unsigned, 3>> triangleIndices; // 三角形顶点索引
+  /// ★ 2026-10-31 多材质：材质表 + 与 triangleIndices 对齐的每三角形材质索引。
+  ///   两者任一为空 ⇒ 走旧行为（单材质 material_1 灰），保证老资产输出不变。
+  std::vector<MeshMaterial> materials;
+  std::vector<int> triangleMaterial;
 };
 
 /// @brief 源模型的"朝上"约定。6 种，完整覆盖所有建模工具。

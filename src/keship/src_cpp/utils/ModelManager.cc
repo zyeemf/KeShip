@@ -3655,11 +3655,8 @@ std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
       << "        <geometry>\n"
       << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
       << "        </geometry>\n"
-      << "        <material>\n"
-      << "          <ambient>0.42 0.44 0.47 1</ambient>\n"
-      << "          <diffuse>0.62 0.65 0.68 1</diffuse>\n"
-      << "          <specular>0.12 0.12 0.12 1</specular>\n"
-      << "        </material>\n"
+      /// ★ 2026-10-31：**不再写 <material>** —— visual 级材质会覆盖网格自带材质，
+      ///   把多材质（橙色阳极氧化 / 钢 / 玻璃）又压成一种灰。材质交给 OBJ+MTL 决定。
       << "      </visual>\n";
   return sdf.str();
 }
@@ -3715,11 +3712,8 @@ std::string MakeDeviceVisualBlock(const std::string &_visName,
       << "        <geometry>\n"
       << "          <mesh><uri>file://" << _mesh << "</uri></mesh>\n"
       << "        </geometry>\n"
-      << "        <material>\n"
-      << "          <ambient>0.42 0.44 0.47 1</ambient>\n"
-      << "          <diffuse>0.62 0.65 0.68 1</diffuse>\n"
-      << "          <specular>0.12 0.12 0.12 1</specular>\n"
-      << "        </material>\n"
+      /// ★ 2026-10-31：**不再写 <material>** —— visual 级材质会覆盖网格自带材质，
+      ///   把多材质（橙色阳极氧化 / 钢 / 玻璃）又压成一种灰。材质交给 OBJ+MTL 决定。
       << "      </visual>\n";
   return sdf.str();
 }
