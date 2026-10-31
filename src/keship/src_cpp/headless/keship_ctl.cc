@@ -69,6 +69,7 @@
 #include "WavefieldPublisher.hh"
 #include "SensorEstimationCore.hh"
 #include "ShipHullGenerator.hh"
+#include "HullOffsets.hh"   // SD-10 型值表
 #include "WaterAreaSerializer.hh"
 #include "keship/utils/KeshipPaths.hh"
 #include "keship/utils/SeaState.hh"
@@ -493,13 +494,80 @@ keship::ShipHullSpec SpecFromArgs(const Args &_a) {
   return keship::ShipHullSpec();
 }
 
+/// SD-10：从学生型值表 CSV 构造 spec。校验未通过则 Fail 并逐条列出原因。
+///
+/// 主尺度取值顺序：命令行 --L/--B/--D 优先；未给时由表推断
+///   L = stations.back()、D = -waterlines.back()、B = 2*max(halfBreadth)
+/// 体积判据：默认按 Wigley 解析值 4LBD/9 对拍（标准题模式）；
+///   --no-volume-check 关闭（自由题模式，无解析解可比时不得拿假参考值判分）。
+static void ApplyOffsetsFromCsv(const Args &_a, keship::ShipHullSpec &_spec)
+{
+  const std::string path = _a.Get("offsets", "");
+  if (path.empty()) return;
+
+  std::ifstream ifs(path);
+  if (!ifs) Fail("无法打开型值表文件：" + path);
+  std::ostringstream oss;
+  oss << ifs.rdbuf();
+
+  keship::LinesData d;
+  std::vector<std::string> perr;
+  if (!keship::ParseOffsetsCsv(oss.str(), d, perr)) {
+    std::string msg = "型值表解析失败（" + std::to_string(perr.size()) + " 处问题）：\n";
+    for (std::size_t i = 0; i < perr.size() && i < 10; ++i) msg += "  - " + perr[i] + "\n";
+    if (perr.size() > 10) msg += "  ...（共 " + std::to_string(perr.size()) + " 条）\n";
+    Fail(msg);
+  }
+
+  const double L = _a.Has("L") ? _a.GetD("L", 0.0) : d.stations.back();
+  const double D = _a.Has("D") ? _a.GetD("D", 0.0) : -d.waterlines.back();
+  double B = _a.Has("B") ? _a.GetD("B", 0.0) : 0.0;
+  if (B <= 0.0) {
+    double ymax = 0.0;
+    for (const auto &row : d.halfBreadths)
+      for (double y : row) ymax = std::max(ymax, y);
+    B = 2.0 * ymax;
+  }
+
+  const double exactV = _a.Has("no-volume-check") ? -1.0
+                                                 : keship::WigleyExactVolume(L, B, D);
+  const auto rep = keship::ValidateOffsets(d, L, B, D, exactV);
+
+  std::ostringstream info;
+  info << std::fixed << std::setprecision(4)
+       << "型值表：" << rep.nStations << " 站 x " << rep.nWaterlines << " 水线"
+       << "  最大半宽 " << rep.maxHalfBreadth
+       << "  三角 " << rep.estTriangles
+       << "  表积分体积 " << rep.volumeFromTable << " m3";
+  if (rep.exactVolume > 0)
+    info << "（解析 " << rep.exactVolume << "，偏差 " << std::setprecision(3)
+         << rep.volumeErrPct << "%）";
+  Info(info.str());
+  for (const auto &w : rep.warnings) Info("  提示：" + w);
+
+  if (!rep.ok) {
+    std::string msg = "型值表校验未通过（" + std::to_string(rep.errors.size()) + " 条）：\n";
+    for (const auto &e : rep.errors) msg += "  - " + e + "\n";
+    Fail(msg);
+  }
+
+  _spec.L = L;
+  _spec.B = B;
+  _spec.D = D;
+  _spec.offsets = d;
+  _spec.useOffsets = true;
+}
+
 int CmdModelSpawnHull(keship::ModelManager &_mm, const Args &_a) {
   if (_a.pos.empty())
     Fail("用法：model spawn-hull <name> [--type ...] [--L --B --D --rho] [--pos x y z r p y]\n"
          "        可选插件参数：--hydro --publish-subvol --damping <Zw,Kp,Mq>\n"
+         "        型值表（SD-10）：--offsets <csv> [--no-volume-check]\n"
+         "            CSV 每行 x,z,halfBreadth（只右舷，行序不限）；未给 --L/--B/--D 时由表推断\n"
          "        水动力估算（2026-10-25）：--hydro-estimate（轻量）/ --hydro-full（完整）");
   const std::string name = _a.pos[0];
   keship::ShipHullSpec spec = SpecFromArgs(_a);
+  ApplyOffsetsFromCsv(_a, spec);   // SD-10：--offsets 覆盖主尺度与几何
   double pos[6]; PoseFromArgs(_a, spec.D, pos);
 
   keship::MathHullPluginOpts opts;

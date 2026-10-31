@@ -164,6 +164,7 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/shared/StudentCodeRunner.cc
   src_cpp/gui/keship/experiments/SensorEstimationDialog.cc
   src_cpp/gui/keship/experiments/ParametricHullDialog.cc
+  src_cpp/gui/keship/experiments/OffsetsHullDialog.cc
   src_cpp/gui/keship/experiments/OperabilityDialog.cc
   src_cpp/gui/keship/experiments/ResistanceDialog.cc
   src_cpp/gui/keship/experiments/PropellerDialog.cc
@@ -233,6 +234,7 @@ add_library(keship_utils STATIC
   src_cpp/utils/FossenModel.cc
   src_cpp/utils/DiagnosticLog.cc
   src_cpp/utils/ShipHullGenerator.cc
+  src_cpp/utils/HullOffsets.cc
   src_cpp/utils/WaterAreaManager.cc
   src_cpp/utils/WaterAreaVisualManager.cc
   src_cpp/utils/WaterAreaSerializer.cc
@@ -431,6 +433,40 @@ if(KESHIP_BUILD_TESTS)
   ament_target_dependencies(sd08_lines_test rclcpp ament_index_cpp)
   add_test(NAME sd08_lines COMMAND sd08_lines_test)
 
+  # ---- 甲-9：SD-10 型值表编程生成可浮船型（2026-10-30）
+  # 覆盖：乱序 CSV 归位 / 六条判据各配负例（缺格/重复/负半宽/超 B/2/缺端点/端部未趋零/体积偏差/网格过疏）
+  #       / 插值端点与区间外必须为 0（保证封闭）/ 21x11 体积对拍 / 三角数上限
+  add_executable(sd10_offsets_test src_cpp/test/sd10_offsets_test.cc)
+  target_include_directories(sd10_offsets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_offsets_test keship_utils)
+  add_test(NAME sd10_offsets COMMAND sd10_offsets_test)
+
+  # SD-10 对话框：离屏回归（四要素的机器证据：可构造 + 无交互入口 + 导出）
+  add_executable(sd10_dialog_test
+    src_cpp/test/sd10_dialog_test.cc
+    src_cpp/gui/keship/experiments/OffsetsHullDialog.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc
+    src_cpp/gui/keship/shared/StudentCodeRunner.cc)
+  target_include_directories(sd10_dialog_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/experiments
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_dialog_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(sd10_dialog_test rclcpp ament_index_cpp)
+  add_test(NAME sd10_dialog COMMAND sd10_dialog_test)
+  set_tests_properties(sd10_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # SD-10 探针：离线复算网格浮力的浸水体积曲线（排查用，不入 ctest）
+  add_executable(sd10_buoy_probe src_cpp/test/sd10_buoy_probe.cc)
+  target_include_directories(sd10_buoy_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_buoy_probe keship_utils)
+
   # ---- 甲-8：L8 阻力/推进计算内核（2026-10-27）
   add_executable(rp_core_test src_cpp/test/rp_core_test.cc
     src_cpp/utils/ResistanceCore.cc src_cpp/utils/PropellerCore.cc)
@@ -496,11 +532,11 @@ if(KESHIP_BUILD_TESTS)
   # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
   #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
   set_tests_properties(hidden_cases f3_enable_buoy rp_core l2_stability control_core
-                       hs06_sd02 structure_chain
+                       hs06_sd02 structure_chain sd10_offsets
                        PROPERTIES LABELS regression)
   # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
   set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
-                       sl02_hull_dialog sdf_assembly sd08_lines
+                       sl02_hull_dialog sdf_assembly sd08_lines sd10_dialog
                        PROPERTIES LABELS regression
                                   ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 

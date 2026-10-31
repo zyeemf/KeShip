@@ -29,6 +29,17 @@ enum class SectionType {
   LEWIS_U,     // S(ζ) = √(1 - ζ²)
   LEWIS_V,     // S(ζ) = 1 - ζ
 };
+// ═══════════════════════════════════════════════════════════
+// 型值数据 (供型线图和学生编程)
+// ═══════════════════════════════════════════════════════════
+
+struct LinesData {
+  std::vector<double> stations;    // 站位 x [Nx+1]
+  std::vector<double> waterlines;  // 水线 z [Nz+1]
+  // 半宽表 halfBreadth[stationIdx][waterlineIdx]
+  std::vector<std::vector<double>> halfBreadths;
+};
+
 
 /// 统一数学船型规格
 struct ShipHullSpec {
@@ -49,6 +60,13 @@ struct ShipHullSpec {
   // === 网格分辨率 ===
   int visNx = 40, visNz = 20;    // 视觉网格
   int buoyNx = 20, buoyNz = 10;  // 浮力网格
+
+  // === 外部型值表（SD-10，可选）===
+  /// useOffsets=true 且 offsets 非空时，半宽改由 offsets 双线性插值给出
+  /// （见 HullOffsets::SampleOffsetsBilinear）；useOffsets=false（默认）时
+  /// **完全走原解析式，行为逐位不变** —— 老路径零影响由此保证。
+  LinesData offsets;
+  bool useOffsets = false;
 
   // === 工厂方法 ===
   static ShipHullSpec WigleyClassic(double L, double B, double D, double rho = 500.0);
@@ -92,17 +110,6 @@ struct HydroProperties {
   // 排水量曲线 (不同吃水)
   std::vector<double> draftCurve;       // 吃水采样值 [m]
   std::vector<double> volumeCurve;      // 对应排水体积 [m³]
-};
-
-// ═══════════════════════════════════════════════════════════
-// 型值数据 (供型线图和学生编程)
-// ═══════════════════════════════════════════════════════════
-
-struct LinesData {
-  std::vector<double> stations;    // 站位 x [Nx+1]
-  std::vector<double> waterlines;  // 水线 z [Nz+1]
-  // 半宽表 halfBreadth[stationIdx][waterlineIdx]
-  std::vector<std::vector<double>> halfBreadths;
 };
 
 // ═══════════════════════════════════════════════════════════

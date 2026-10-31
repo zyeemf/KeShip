@@ -4,6 +4,7 @@
 /* 数学船型生成器 v2 实现 — Gazebo Z_UP 直接生成 */
 
 #include "ShipHullGenerator.hh"
+#include "HullOffsets.hh"   // SD-10：外部型值表插值
 
 #include <algorithm>
 #include <cmath>
@@ -93,6 +94,14 @@ double ShipHullGenerator::sectionShape(double _zeta) const {
 }
 
 double ShipHullGenerator::halfBreadthFunc(double _x, double _z) const {
+  /// ★ SD-10（2026-10-30）：外部型值表优先。
+  ///   useOffsets=false（默认）时本分支不执行 ⇒ 老路径行为逐位不变。
+  ///   这是本次改动的**唯一内核接入点** —— 静水力 / 排水量 / GM / 网格 / 浮力
+  ///   均经本函数采样，故改此一处即全链跟随。
+  if (spec_.useOffsets && spec_.offsets.stations.size() >= 2 &&
+      spec_.offsets.waterlines.size() >= 2) {
+    return SampleOffsetsBilinear(spec_.offsets, _x, _z);
+  }
   double xi = 2.0 * (_x / spec_.L) - 1.0;  // ∈ [-1, 1]
   double wl = waterlineShape(xi);
   if (wl <= 0.0) return 0.0;

@@ -303,6 +303,7 @@ Rectangle {
         ListElement { expId: "SD-07";  name: "破舱稳性仿真";            course: "船体结构与制图";        tier: "操作类"; enabled: true }
         ListElement { expId: "SD-08";  name: "参数化型线设计";          course: "船体结构与制图";        tier: "设计类"; enabled: true }
         ListElement { expId: "SD-09";  name: "综合结构设计";            course: "船体结构与制图";        tier: "设计类"; enabled: true }
+        ListElement { expId: "SD-10";  name: "型值表编程生成可浮船型"; course: "船体结构与制图";        tier: "设计类"; enabled: true }
     }
 
     Column {
@@ -1070,6 +1071,8 @@ Rectangle {
         MenuPluginKeship.OnBtn_SD03_MidshipSection();
     } else if (expId === "SD-09") {
         MenuPluginKeship.OnBtn_SD09_LongitudinalStrength();
+    } else if (expId === "SD-10") {
+        MenuPluginKeship.OnBtn_SD10_OffsetsHull();
     } else if (expId === "MS-05") {
         MenuPluginKeship.OnBtn_MS05_Operability();
     } else if (expId === "RP-01") {

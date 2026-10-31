@@ -71,6 +71,7 @@
 #include "editors/InertiaCalculatorDialog.hh"
 #include "editors/ProxyGeometryDialog.hh"
 #include "experiments/ParametricHullDialog.hh"
+#include "experiments/OffsetsHullDialog.hh"
 #include "experiments/OperabilityDialog.hh"
 #include "experiments/ResistanceDialog.hh"
 #include "experiments/PropellerDialog.hh"
@@ -1898,6 +1899,40 @@ void MenuPluginKeship::OnBtn_Displacement()
 }
 
 /////////////////////////////////////////////////
+/////////////////////////////////////////////////
+/// SD-10 型值表编程生成可浮船型
+/// 对话框负责「学生代码 → 型值表 → 校验 → spec」，spawn 由本槽完成
+/// （与 OnBtn_NewMathHull 同一模式：对话框发信号，插件持有 modelManager）。
+void MenuPluginKeship::OnBtn_SD10_OffsetsHull()
+{
+  auto *dialog = new OffsetsHullDialog(nullptr);   ///< 插件不是 QWidget（同 ShipHullDialog）
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &OffsetsHullDialog::spawnRequested, this,
+    [this](keship::ShipHullSpec spec, std::string name) {
+      int suffix = 1;
+      std::string finalName = name;
+      for (const auto &m : modelManager->GetModelList())
+        if (m.first == finalName) finalName = name + "_" + std::to_string(++suffix);
+
+      double pos[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+      pos[2] = 0.0;   ///< 从水面位置释放，让它自己浮到平衡吃水
+
+      keship::MathHullPluginOpts opts;
+      keship::HydroConfig hydroCfg = keship::ModelManager::EstimateMathHullHydro(spec, false);
+      opts.enableHydro = true;   ///< 不给阻尼 ⇒ 长时间垂荡不收敛（实测 40 s 才稳）
+      opts.hydro = &hydroCfg;
+      opts.publishSubVolume = true;
+
+      if (modelManager->SpawnMathHull(finalName, spec, pos, opts)) {
+        std::cout << "SD-10: 型值表船型 " << finalName << " 已生成" << std::endl;
+        NotifyModelListChanged();
+      } else {
+        std::cerr << "SD-10: 型值表船型生成失败" << std::endl;
+      }
+    });
+  dialog->show();
+}
+
 void MenuPluginKeship::OnBtn_NewMathHull()
 {
   /// ★ 2026-10-25：实例名称与生成位姿改由对话框输入（此前名称取自船型名、

@@ -218,6 +218,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_SD01_StructureCognition();
   protected slots: void OnBtn_SD03_MidshipSection();
   protected slots: void OnBtn_SD09_LongitudinalStrength();
+  protected slots: void OnBtn_SD10_OffsetsHull();
 
   /// \brief MS-05 海况等级下的操限评估（多海况累积成表 + 操限交付物）
   protected slots: void OnBtn_MS05_Operability();
