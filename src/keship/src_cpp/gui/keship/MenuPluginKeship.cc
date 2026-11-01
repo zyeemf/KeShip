@@ -2176,12 +2176,18 @@ void MenuPluginKeship::OnBtn_EditSensor(int _index)
         QString::fromStdString(nameAndId.first), "base_link", modelInfo);
 
     keship::SensorConfig existingCfg;
-    if (this->modelManager->GetCachedSensorConfig(nameAndId.first, existingCfg))
+    const bool hadCfg = this->modelManager->GetCachedSensorConfig(nameAndId.first, existingCfg);
+    if (hadCfg)
       d->setConfig(existingCfg);
 
+    /// ★ 2026-11-01 pose 语义：新建（无缓存）用**新语义**（pose = 安装点，sensor 自带偏移）；
+    ///   已有配置保持原语义 —— 否则打开老模型改一下传感器，整船传感器会集体平移 3~30 cm。
+    const bool mountSemantics = hadCfg ? existingCfg.mountSemantics : true;
+
     QObject::connect(d, &QDialog::accepted, this,
-        [this, d, name = nameAndId.first]() {
+        [this, d, name = nameAndId.first, mountSemantics]() {
       keship::SensorConfig config = d->getConfig();
+      config.mountSemantics = mountSemantics;
       if (!this->modelManager->RebuildModelWithSensors(name, config))
         QMessageBox::warning(nullptr, "重建失败", "模型重建失败，请重试");
       NotifyModelListChanged();

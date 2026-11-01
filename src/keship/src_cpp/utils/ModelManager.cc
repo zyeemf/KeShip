@@ -3620,11 +3620,111 @@ const char *SensorMeshFileName(SensorType _t)
 }  // namespace
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
-std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-11-01 标准载荷模型（安装点/量测点分离）相关工具
+namespace
+{
+/// @brief 刚体组合 _out = _a ∘ _b（SDF 的 ZYX 欧拉约定）
+///        用途：sensor 实际 pose = 用户给的**安装点** × 模型里的**量测点偏移**
+void ComposePose6(const double _a[6], const double _b[6], double _out[6])
+{
+  const gz::math::Pose3d pa(gz::math::Vector3d(_a[0], _a[1], _a[2]),
+                            gz::math::Quaterniond(_a[3], _a[4], _a[5]));
+  const gz::math::Pose3d pb(gz::math::Vector3d(_b[0], _b[1], _b[2]),
+                            gz::math::Quaterniond(_b[3], _b[4], _b[5]));
+  const gz::math::Pose3d pc = pa * pb;
+  _out[0] = pc.Pos().X(); _out[1] = pc.Pos().Y(); _out[2] = pc.Pos().Z();
+  const gz::math::Vector3d e = pc.Rot().Euler();
+  _out[3] = e.X(); _out[4] = e.Y(); _out[5] = e.Z();
+}
+
+/// @brief model.sdf 的 <sensor type> → 平台 SensorType（不认识返回 false ⇒ 跳过并告警）
+bool GzTypeToSensorType(const std::string &_gz, SensorType &_out)
+{
+  if (_gz == "camera" || _gz == "wideanglecamera") { _out = SensorType::Camera; return true; }
+  if (_gz == "gpu_lidar" || _gz == "lidar" || _gz == "ray") { _out = SensorType::Lidar; return true; }
+  if (_gz == "imu")          { _out = SensorType::IMU; return true; }
+  if (_gz == "navsat")       { _out = SensorType::NavSat; return true; }
+  if (_gz == "magnetometer") { _out = SensorType::Magnetometer; return true; }
+  if (_gz == "air_speed")    { _out = SensorType::AirSpeed; return true; }
+  return false;
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+const PayloadModelDef *ModelManager::FindPayloadDef(SensorType _type)
+{
+  /// 整目录只扫一次：<models_all>/payload_model/<型号>/
+  static std::map<int, PayloadModelDef> cache;
+  static bool scanned = false;
+  if (!scanned)
+  {
+    scanned = true;
+    const std::string root = keship::KeshipAllModelsDir() + "/payload_model";
+    std::error_code ec;
+    if (std::filesystem::exists(root, ec))
+    {
+      for (const auto &e : std::filesystem::directory_iterator(root, ec))
+      {
+        if (!e.is_directory())
+          continue;
+        PayloadModelDef def;
+        if (!LoadPayloadModel(e.path().string(), def))
+          continue;
+        for (const auto &sf : def.sensors)
+        {
+          SensorType t;
+          if (!GzTypeToSensorType(sf.gzType, t))
+          {
+            std::cerr << "FindPayloadDef: 未知传感器类型，已忽略: " << sf.gzType
+                      << " (模型 " << def.modelName << ")" << std::endl;
+            continue;
+          }
+          if (cache.find((int)t) == cache.end())
+            cache[(int)t] = def;
+        }
+      }
+    }
+    std::cout << "FindPayloadDef: 已索引 " << cache.size()
+              << " 类标准载荷模型（" << root << "）" << std::endl;
+  }
+  auto it = cache.find((int)_type);
+  return (it == cache.end()) ? nullptr : &it->second;
+}
+
+std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst, bool _mountSemantics)
 {
   if (!sStructVisualEnabled_)
     return "";
 
+  /// ★ 2026-11-01 标准载荷模型优先：pose = 安装点 × <visual><pose>，网格来自 payload_model/
+  double visPose[6];
+  for (int i = 0; i < 6; i++) visPose[i] = _inst.pose[i];
+
+  const PayloadModelDef *def = FindPayloadDef(_inst.type);
+  if (def != nullptr && !def->meshPath.empty())
+  {
+    if (_mountSemantics)
+      ComposePose6(_inst.pose, def->visualPose, visPose);
+    const std::string mesh = keship::NormalizeMeshToSDFCache(def->meshPath, def->meshAlreadyZUp);
+    if (mesh.empty())
+    {
+      std::cerr << "MakeSensorVisualSDF: 规范化失败，跳过传感器视觉: "
+                << def->meshPath << std::endl;
+      return "";
+    }
+    std::ostringstream sdf;
+    sdf << "      <visual name=\"" << _inst.name << "_visual\">\n"
+        << "        <pose>" << visPose[0] << " " << visPose[1] << " " << visPose[2]
+        << " " << visPose[3] << " " << visPose[4] << " " << visPose[5] << "</pose>\n"
+        << "        <geometry>\n"
+        << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
+        << "        </geometry>\n"
+        << "      </visual>\n";
+    return sdf.str();
+  }
+
+  /// 回退：旧的扁平模型目录（sensor_model/*.glb，Y-up）—— 老 ksm 仍走这条路
   const char *fn = SensorMeshFileName(_inst.type);
   if (fn == nullptr || *fn == '\0')
     return "";
@@ -3650,8 +3750,8 @@ std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst)
 
   std::ostringstream sdf;
   sdf << "      <visual name=\"" << _inst.name << "_visual\">\n"
-      << "        <pose>" << _inst.pose[0] << " " << _inst.pose[1] << " " << _inst.pose[2]
-      << " " << _inst.pose[3] << " " << _inst.pose[4] << " " << _inst.pose[5] << "</pose>\n"
+      << "        <pose>" << visPose[0] << " " << visPose[1] << " " << visPose[2]
+      << " " << visPose[3] << " " << visPose[4] << " " << visPose[5] << "</pose>\n"
       << "        <geometry>\n"
       << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
       << "        </geometry>\n"
@@ -3780,6 +3880,17 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
         "/world/" + _worldName + "/model/" + _modelName
         + "/link/" + _config.linkName + "/sensor/" + inst.name);
 
+    /// ★ 2026-11-01 安装点语义：sensor 的实际 pose = 安装点 × 模型内偏移（量测点）
+    ///   旧语义（mountSemantics=false）直接用 inst.pose，与改动前逐字节一致。
+    double poseOut[6];
+    for (int k = 0; k < 6; k++) poseOut[k] = inst.pose[k];
+    if (_config.mountSemantics)
+    {
+      const PayloadModelDef *pdef = FindPayloadDef(inst.type);
+      if (pdef != nullptr && !pdef->sensors.empty())
+        ComposePose6(inst.pose, pdef->sensors[0].pose, poseOut);
+    }
+
     switch (inst.type)
     {
     case SensorType::IMU:
@@ -3790,8 +3901,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "          <angular_velocity><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.01</stddev></noise></x></angular_velocity>\n"
           << "          <linear_acceleration><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.1</stddev></noise></x></linear_acceleration>\n"
           << "        </imu>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3800,8 +3911,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "        <always_on>1</always_on>\n"
           << "        <update_rate>10</update_rate>\n"
           << "        <topic>" << sensorPath + "/navsat" << "</topic>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3810,8 +3921,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "        <topic>" << sensorPath + "/magnetometer" << "</topic>\n"
           << "        <update_rate>10</update_rate>\n"
           << "        <magnetometer><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.0001</stddev></noise></x></magnetometer>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3830,8 +3941,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << camSpec.height << "</height></image>\n"
           << "          <clip><near>0.1</near><far>100</far></clip>\n"
           << "        </camera>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
     }
@@ -3844,8 +3955,20 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "          <scan><horizontal><samples>360</samples><resolution>1</resolution><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal></scan>\n"
           << "          <range><min>0.1</min><max>50</max></range>\n"
           << "        </ray>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
+          << "      </sensor>\n";
+      break;
+
+    case SensorType::AirSpeed:
+      /// ★ 2026-11-01 风杯：gz-sim 8 的 air_speed 传感器。
+      ///   ⚠ 需要世界里有 gz-sim 的 air-speed **系统**插件才会发数据；
+      ///     且该系统只喂实体相对速度、不读风场 ⇒ 静风时读数 = −船速（与真实风杯一致）。
+      sdf << "      <sensor name=\"" << inst.name << "\" type=\"air_speed\">\n"
+          << "        <topic>" << sensorPath + "/air_speed" << "</topic>\n"
+          << "        <update_rate>10</update_rate>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
     }
@@ -3853,7 +3976,7 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
     /// ★ 2026-10-30 结构模型视觉：与 <sensor> 同 pose，作为 <link> 内的兄弟节点。
     ///   注意本函数产物是**在 NormalizeMeshUrisInSDF 之后**才拼进 SDF 的，
     ///   所以 mesh uri 必须在这里自己算成绝对路径（不能指望上层再规范化）。
-    sdf << MakeSensorVisualSDF(inst);
+    sdf << MakeSensorVisualSDF(inst, _config.mountSemantics);
   }
 
   return sdf.str();
@@ -4725,6 +4848,9 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
     const auto &sc = sensorIt->second;
     ofs << "===SENSORS===\n"
         << "link_name=" << sc.linkName << "\n";
+    /// ★ 2026-11-01 pose 语义标记：**只有新语义才写** ⇒ 老 ksm 逐字节不变、读回仍按量测点
+    if (sc.mountSemantics)
+      ofs << "pose_semantics=mount\n";
     for (const auto &inst : sc.instances)
     {
       ofs << "instance=" << sensorTypeName(inst.type) << "," << inst.name << ","
@@ -5372,6 +5498,9 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     {
       if (line.find("link_name=") == 0)
         _sensorCfg.linkName = line.substr(10);
+      /// ★ 2026-11-01 pose 语义：缺行 ⇒ 旧语义（量测点），老 ksm 行为不变
+      else if (line.find("pose_semantics=") == 0)
+        _sensorCfg.mountSemantics = (line.substr(15) == "mount");
       else if (line.find("instance=") == 0)
       {
         std::vector<std::string> parts;

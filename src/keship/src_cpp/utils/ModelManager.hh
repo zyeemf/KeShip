@@ -22,6 +22,7 @@
 #include "FossenModel.hh"
 #include <assimp/scene.h>
 
+#include "PayloadModel.hh"
 #include "Tetrahedron.hh"
 #include "PrimitiveMeshGenerator.hh"
 #include "ShipHullGenerator.hh"
@@ -79,7 +80,8 @@ namespace keship
 
   /////////////////////////////////////////////////
   /// 传感器类型枚举
-  enum class SensorType { IMU, NavSat, Magnetometer, Camera, Lidar };
+  /// ★ 2026-11-01：新增 AirSpeed（风杯）—— gz-sim 8 的 air_speed 传感器
+  enum class SensorType { IMU, NavSat, Magnetometer, Camera, Lidar, AirSpeed };
   inline const char *sensorTypeName(SensorType _t)
   {
     switch (_t) {
@@ -88,6 +90,7 @@ namespace keship
       case SensorType::Magnetometer: return "Magnetometer";
       case SensorType::Camera:       return "Camera";
       case SensorType::Lidar:        return "Lidar";
+      case SensorType::AirSpeed:     return "AirSpeed";
     }
     return "Unknown";
   }
@@ -98,6 +101,7 @@ namespace keship
     if (_s == "Magnetometer") return SensorType::Magnetometer;
     if (_s == "Camera")       return SensorType::Camera;
     if (_s == "Lidar")        return SensorType::Lidar;
+    if (_s == "AirSpeed")     return SensorType::AirSpeed;
     return SensorType::IMU; // fallback
   }
 
@@ -215,6 +219,11 @@ namespace keship
   {
     std::string linkName = "base_link";
     std::vector<SensorInstance> instances;
+
+    /// ★ 2026-11-01 pose 语义开关（写进 ksm 的 `pose_semantics=mount`）：
+    ///   true  = instance.pose 是**安装点**，sensor 的实际 pose = 安装点 × 模型内偏移
+    ///   false = 旧语义，instance.pose 就是量测点（老 ksm 无标记 ⇒ false，行为不变）
+    bool mountSemantics = false;
 
     bool empty() const { return instances.empty(); }
     bool has(SensorType _t) const {
@@ -833,7 +842,12 @@ namespace keship
     static bool sStructVisualEnabled_;
 
     /// @brief 为单个传感器生成 <visual> 片段（结构模型）；关闭或无模型文件时返回空串
-    static std::string MakeSensorVisualSDF(const SensorInstance &_inst);
+    /// @param _mountSemantics true = _inst.pose 是安装点，视觉 = 安装点 × <visual><pose>
+    static std::string MakeSensorVisualSDF(const SensorInstance &_inst, bool _mountSemantics);
+
+    /// @brief 按平台传感器类型查找标准载荷模型（<models_all>/payload_model/，整目录懒解析一次）
+    /// @return 找不到返回 nullptr（该类型无模型 ⇒ 传感器照跑、不画外观）
+    static const PayloadModelDef *FindPayloadDef(SensorType _type);
 
     /// @brief 为单个设备装饰项生成 <visual>（电池/电机）；缺模型文件时返回空串
     static std::string MakeDeviceItemVisualSDF(const DeviceItem &_item);

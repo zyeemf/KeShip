@@ -11,9 +11,15 @@
           </mesh>
         </geometry>
       </visual>
+      <sensor name="wind" type="air_speed">
+        <pose>0 0 0.301 0 0 0</pose>
+        <always_on>true</always_on>
+        <update_rate>10</update_rate>
+      </sensor>
     </link>
-    <!-- No built-in SDF wind sensor; expose the rotor center as a model-scope
-         frame so a custom plugin / sensor can attach here. -->
+    <!-- 2026-11-01: gz-sim 8 supports an air_speed sensor (needs the air-speed
+         system plugin in the world); the sensor above is the platform's input.
+         The frame below is kept for external plugins that attach by name. -->
     <frame name="anemometer">
       <pose>0 0 0.301 0 0 0</pose>
     </frame>
