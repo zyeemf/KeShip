@@ -79,3 +79,6 @@ tools/icon_probe/icon_probe
 # ===== 传感器结构模型（内置 glb）：源文件入库，normalized 缓存不入库（2026-10-30）=====
 models_all/sensor_model/normalized/
 models_all/device_model/normalized/
+
+# ===== 标准载荷模型（Z-up）：源 glb 入库，规范化缓存在 meshes/normalized/ 不入库 =====
+models_all/payload_model/*/meshes/normalized/

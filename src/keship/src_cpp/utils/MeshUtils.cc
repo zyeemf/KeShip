@@ -53,7 +53,7 @@ std::string SanitizeMatName(const std::string &_in, int _idx)
 }
 }  // namespace
 
-MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
+MeshDataSimple LoadMeshFromFile(const std::string &_filePath, bool _alreadyZUp)
 {
   MeshDataSimple result;
 
@@ -232,6 +232,14 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
     }
     if (ext == ".glb" || ext == ".gltf")
     {
+      /// ★ 2026-11-01 标准载荷模型（`export_yup=False`）本来就是 Z-up，
+      ///   再转一次会躺倒 90° ⇒ 由调用方显式声明 _alreadyZUp 跳过。
+      if (_alreadyZUp)
+      {
+        std::cout << "MeshUtils: glTF/GLB 声明为已 Z-UP，跳过轴向旋转" << std::endl;
+      }
+      else
+      {
       auto yUpToZUp = [](gz::math::Vector3d &_p)
       {
         const double y = _p.Y();
@@ -249,6 +257,7 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
       for (auto &n : result.normals)
         yUpToZUp(n);
       std::cout << "MeshUtils: glTF/GLB Y-UP → Z-UP（绕 X +90° 真旋转）" << std::endl;
+      }
     }
   }
 
@@ -973,7 +982,7 @@ std::string GenerateConvexHullCache(const std::string &_srcPath)
 }
 
 /////////////////////////////////////////////////
-std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
+std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZUp)
 {
   if (_srcPath.empty())
     return "";
@@ -1028,7 +1037,8 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
         if (!keyInputStored.empty())
         {
           /// 用 sidecar 里的纹理路径**重算** keyInput（与写盘时同一公式）
-          std::string keyInputNow = MeshFileCacheKey(_srcPath) + "|gzmap2";
+          std::string keyInputNow = MeshFileCacheKey(_srcPath)
+              + (_alreadyZUp ? "|gzmap2z" : "|gzmap2");
           if (!texAbsStored.empty())
             keyInputNow += "|" + MeshFileCacheKey(texAbsStored);
           const std::string k8 = Sha1Hex(keyInputNow).substr(0, 8);
@@ -1046,7 +1056,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     }
   }
 
-  MeshDataSimple mesh = LoadMeshFromFile(_srcPath);
+  MeshDataSimple mesh = LoadMeshFromFile(_srcPath, _alreadyZUp);
   if (mesh.vertices.empty() || mesh.triangles.empty())
   {
     std::cerr << "MeshUtils: 规范化失败 — 网格为空或加载失败: "
@@ -1082,7 +1092,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
 
   /// 2. 缓存 key：源文件 + 纹理文件（mtime+size），变化即失效
   std::string keyInput = MeshFileCacheKey(_srcPath);
-  keyInput += "|gzmap2";
+  keyInput += _alreadyZUp ? "|gzmap2z" : "|gzmap2";
   if (!texAbs.empty())
     keyInput += "|" + MeshFileCacheKey(texAbs);
   std::string key = Sha1Hex(keyInput).substr(0, 8);

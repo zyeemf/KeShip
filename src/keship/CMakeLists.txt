@@ -241,6 +241,7 @@ add_library(keship_utils STATIC
   src_cpp/utils/StbImageLoader.cc
   src_cpp/utils/MeshInertiaCalculator.cc
   src_cpp/utils/ModelManager.cc
+  src_cpp/utils/PayloadModel.cc
   src_cpp/utils/ForceAccumulator.cc
   src_cpp/utils/TurningExperimentCore.cc
   src_cpp/utils/ZigzagExperimentCore.cc
@@ -259,6 +260,7 @@ target_link_libraries(keship_utils PUBLIC
   gz-common5::gz-common5
   assimp::assimp
   Eigen3::Eigen
+  tinyxml2                     # ★ 2026-11-01 标准载荷模型（model.sdf）解析
   ${QHULL_R_LIBRARIES}          # ★ 2026-09-28 qhull（凸包）
 )
 target_include_directories(keship_utils PUBLIC ${QHULL_R_INCLUDE_DIRS})

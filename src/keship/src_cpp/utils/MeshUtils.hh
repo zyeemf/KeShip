@@ -79,8 +79,10 @@ MeshDataSimple ConvertToZUp(const MeshDataSimple &_mesh, UpAxis _source);
 
 /// @brief 使用 Assimp 加载网格文件，返回 Z_UP 坐标系下的网格数据
 /// @param _filePath 模型文件路径（支持 DAE, STL, OBJ, GLTF 等）
+/// @param _alreadyZUp ★ 2026-11-01：源文件**已经是 Z-up**（标准载荷模型约定）⇒ 跳过
+///        glb/gltf 的 Y-UP→Z-UP 旋转。默认 false（保持既有行为）。
 /// @return 加载的网格数据（已校正为 Z_UP），加载失败时 vertices 为空
-MeshDataSimple LoadMeshFromFile(const std::string &_filePath);
+MeshDataSimple LoadMeshFromFile(const std::string &_filePath, bool _alreadyZUp = false);
 
 /// @brief 计算文件的缓存键（SHA1(绝对路径+修改时间+文件大小)）
 /// @param _filePath 文件路径
@@ -99,7 +101,10 @@ std::string MeshFileCacheKey(const std::string &_filePath);
 ///
 /// @param _srcPath 模型文件绝对路径（DAE/OBJ/STL/glTF 等，assimp 可读）
 /// @return 缓存 OBJ 的绝对路径（可直接写入 SDF <uri>），失败返回空串
-std::string NormalizeMeshToSDFCache(const std::string &_srcPath);
+/// @param _alreadyZUp ★ 2026-11-01：源文件已经是 Z-up（标准载荷模型）⇒ 不转轴；
+///        同时进入缓存 key（`|gzmap2z`），与 Y-up 版本互不串用。
+std::string NormalizeMeshToSDFCache(const std::string &_srcPath,
+                                    bool _alreadyZUp = false);
 
 /// @brief 只读规范化 OBJ 的顶点（**不做 Assimp 全量解析**）
 ///
