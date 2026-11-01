@@ -228,6 +228,7 @@ QString SensorEditorDialog::autoName(keship::SensorType _type) const
     case keship::SensorType::IMU:          prefix = "imu_"; break;
     case keship::SensorType::NavSat:       prefix = "bds_"; break;
     case keship::SensorType::Magnetometer: prefix = "mag_"; break;
+    case keship::SensorType::AirSpeed:     prefix = "wind_"; break;
     default: return "sensor";
   }
   int n = 0;
@@ -242,18 +243,21 @@ void SensorEditorDialog::onAddSensor()
   /// 弹出类型选择
   QStringList types;
   types << "Camera (相机)" << "Lidar (激光雷达)" << "IMU (惯性单元)"
-        << "NavSat (BDS)" << "Magnetometer (磁力计)";
+        << "NavSat (BDS)" << "Magnetometer (磁力计)" << "AirSpeed (风杯)";
   bool ok = false;
   QString sel = QInputDialog::getItem(this, "选择传感器类型",
       "类型:", types, 0, false, &ok);
   if (!ok || sel.isEmpty()) return;
 
   keship::SensorType st;
-  if (sel.startsWith("Camera"))       st = keship::SensorType::Camera;
-  else if (sel.startsWith("Lidar"))   st = keship::SensorType::Lidar;
-  else if (sel.startsWith("IMU"))     st = keship::SensorType::IMU;
-  else if (sel.startsWith("NavSat"))  st = keship::SensorType::NavSat;
-  else                                st = keship::SensorType::Magnetometer;
+  if (sel.startsWith("Camera"))        st = keship::SensorType::Camera;
+  else if (sel.startsWith("Lidar"))    st = keship::SensorType::Lidar;
+  else if (sel.startsWith("IMU"))      st = keship::SensorType::IMU;
+  else if (sel.startsWith("NavSat"))   st = keship::SensorType::NavSat;
+  else if (sel.startsWith("AirSpeed")) st = keship::SensorType::AirSpeed;
+  else                                 st = keship::SensorType::Magnetometer;
+  /// ★ 2026-11-01：分支必须与上面的 types 清单**逐项对应** —— 之前用 else 兜底，
+  ///   新增类型若漏写分支会静默变成磁力计（排查代价极高）。
 
   InternalSensor inst;
   inst.type = st;
