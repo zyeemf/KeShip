@@ -14,12 +14,17 @@
       <sensor name="wind" type="air_speed">
         <pose>0 0 0.301 0 0 0</pose>
         <always_on>true</always_on>
-        <update_rate>10</update_rate>
+        <topic>wind/air_speed</topic>
       </sensor>
+      <collision name="collision">
+        <pose>0.0 0.0 0.1605 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.24 0.2132 0.321</size>
+          </box>
+        </geometry>
+      </collision>
     </link>
-    <!-- 2026-11-01: gz-sim 8 supports an air_speed sensor (needs the air-speed
-         system plugin in the world); the sensor above is the platform's input.
-         The frame below is kept for external plugins that attach by name. -->
     <frame name="anemometer">
       <pose>0 0 0.301 0 0 0</pose>
     </frame>
