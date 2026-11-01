@@ -521,6 +521,10 @@ namespace keship
     ///        ★ 推进器外观**不受此开关控制**（常显）：推进器代表动力源，
     ///        藏掉会出现「没装推进器却有推力」的错觉，而且它的模型本身就是推力方向指示。
     ///        改后需对已带传感器/装饰的模型重建才生效（GUI「视图」菜单调用）。
+    /// @brief 风杯所需的**模型级**系统插件（无 AirSpeed 时返回空串）
+    ///   实测 2026-11-01：gz-sim 的 air-speed 系统插件挂模型级即可，无需改世界文件。
+    static std::string MakeSensorSystemsSDF(const SensorConfig &_cfg);
+
     static void SetStructVisualEnabled(bool _on) { sStructVisualEnabled_ = _on; }
     static bool StructVisualEnabled() { return sStructVisualEnabled_; }
 

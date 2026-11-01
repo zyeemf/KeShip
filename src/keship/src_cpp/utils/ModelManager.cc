@@ -2210,6 +2210,8 @@ bool ModelManager::RebuildModelWithBuoyancy(
   AppendDeviceVisualSDF(sdf, _instanceName);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   /// 保留已有推进器配置
   ThrusterConfig thrustCfg;
@@ -2928,6 +2930,8 @@ bool ModelManager::SpawnModelWithBuoyancy(
   AppendDeviceVisualSDF(sdf, _instanceName);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   /// 保留已有推进器配置
   ThrusterConfig thrustCfg;
@@ -3137,6 +3141,8 @@ bool ModelManager::RebuildModelWithThrust(
   AppendDeviceVisualSDF(sdf, _instanceName, &_config);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   sdf << MakeThrustPluginSDF(_config);
 
@@ -3244,6 +3250,8 @@ bool ModelManager::SpawnModelWithThrust(
   AppendDeviceVisualSDF(sdf, _instanceName, &_config);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   HydroConfig hydroCfg;
   bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
@@ -3558,6 +3566,7 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
 ///   文件其余部分是**全局作用域**，而声明在 keship 内 ⇒ 不包会链接期 undefined。
 namespace keship
 {
+
 CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
 {
   CameraSpec s;
@@ -3650,6 +3659,21 @@ bool GzTypeToSensorType(const std::string &_gz, SensorType &_out)
   return false;
 }
 }  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-11-01 模型级系统插件：\`air_speed\` 传感器**必须**由 gz-sim 的 AirSpeed 系统喂数据。
+///   实测（2026-11-01）：该插件挂**模型级**即可（<model><plugin>），不需要改世界文件，
+///   也不影响已存档的 ksw —— 故只在本模型含 AirSpeed 时才追加这一行。
+std::string ModelManager::MakeSensorSystemsSDF(const SensorConfig &_cfg)
+{
+  bool needAirSpeed = false;
+  for (const auto &i : _cfg.instances)
+    if (i.type == SensorType::AirSpeed) needAirSpeed = true;
+  if (!needAirSpeed)
+    return "";
+  return "    <plugin filename=\"gz-sim-air-speed-system\""
+         " name=\"gz::sim::systems::AirSpeed\"/>\n";
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 const PayloadModelDef *ModelManager::FindPayloadDef(SensorType _type)
@@ -4066,6 +4090,8 @@ bool ModelManager::RebuildModelWithHydro(
   AppendDeviceVisualSDF(sdf, _instanceName);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   BuoyancyConfig bCfg;
   bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
@@ -4185,6 +4211,8 @@ bool ModelManager::RebuildModelWithSensors(
   AppendDeviceVisualSDF(sdf, _instanceName);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(_config);
 
   HydroConfig hydroCfg;
   bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
@@ -4445,6 +4473,8 @@ std::string ModelManager::ComposeRebuiltSDF(
     sdf << MakeThrusterVisualSDF(tCfg);
 
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   if (hasThrust)
     sdf << MakeThrustPluginSDF(tCfg);
