@@ -987,6 +987,21 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZU
   if (_srcPath.empty())
     return "";
 
+  /// ★ 2026-11-02 标准模型目录约定：`<模型>/meshes/*.glb` 且同级有 `model.sdf`
+  ///   ⇒ 该网格是 **Z-up**（Blender 用 export_yup=False 导出），不能再转一次。
+  ///   ⚠ 必须放在 sidecar 命中判定**之前** —— 否则命中用的标记与写盘时不一致，
+  ///     会每次 miss 并反复重建缓存。
+  bool zup = _alreadyZUp;
+  if (!zup)
+  {
+    std::error_code ecA;
+    const std::filesystem::path parent = std::filesystem::path(_srcPath).parent_path();
+    if (parent.filename() == "meshes" &&
+        std::filesystem::exists(parent.parent_path() / "model.sdf", ecA))
+      zup = true;
+  }
+
+
   // A 方案：已是规范化缓存产物（models_normalized/ 目录段）且文件存在 →
   // 直接返回原路径（跳过），避免 ksm 载入时把缓存 OBJ 再次当作源规范化，
   // 造成链式版本堆积（载入-保存循环每轮新增 ~22MB）
@@ -1038,7 +1053,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZU
         {
           /// 用 sidecar 里的纹理路径**重算** keyInput（与写盘时同一公式）
           std::string keyInputNow = MeshFileCacheKey(_srcPath)
-              + (_alreadyZUp ? "|gzmap2z" : "|gzmap2");
+              + (zup ? "|gzmap2z" : "|gzmap2");
           if (!texAbsStored.empty())
             keyInputNow += "|" + MeshFileCacheKey(texAbsStored);
           const std::string k8 = Sha1Hex(keyInputNow).substr(0, 8);
@@ -1056,7 +1071,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZU
     }
   }
 
-  MeshDataSimple mesh = LoadMeshFromFile(_srcPath, _alreadyZUp);
+  MeshDataSimple mesh = LoadMeshFromFile(_srcPath, zup);
   if (mesh.vertices.empty() || mesh.triangles.empty())
   {
     std::cerr << "MeshUtils: 规范化失败 — 网格为空或加载失败: "
@@ -1092,7 +1107,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZU
 
   /// 2. 缓存 key：源文件 + 纹理文件（mtime+size），变化即失效
   std::string keyInput = MeshFileCacheKey(_srcPath);
-  keyInput += _alreadyZUp ? "|gzmap2z" : "|gzmap2";
+  keyInput += zup ? "|gzmap2z" : "|gzmap2";
   if (!texAbs.empty())
     keyInput += "|" + MeshFileCacheKey(texAbs);
   std::string key = Sha1Hex(keyInput).substr(0, 8);
@@ -1198,8 +1213,8 @@ MeshCacheCleanupResult CleanupUnusedMeshCache()
 {
   MeshCacheCleanupResult result;
 
-  /// 清空 robot_model 下所有 normalized/ 缓存目录（缓存随源同目录，下次加载自动重建）
-  const std::string robotDir = KeshipRobotModelDir();
+  /// 清空 user_models 下所有 normalized/ 缓存目录（缓存随源同目录，下次加载自动重建）
+  const std::string robotDir = KeshipUserModelsDir();   // ★ 2026-11-02 改名
   std::error_code ec;
   if (!std::filesystem::exists(robotDir, ec))
     return result;

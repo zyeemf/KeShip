@@ -26,19 +26,19 @@ __pycache__/
 compile_commands.json
 CTestTestfile.cmake
 
-# ===== 大模型二进制：keship3 / yanhu 例外（历史上已入库，见 README「模型文件放置」）=====
+# ===== 大模型二进制：keship3 / yanhu 例外（2026-11-02 目录 robot_model → user_models）（历史上已入库，见 README「模型文件放置」）=====
 # 其余子目录（wamv/oil_platform/platform_zjy 等）由用户自行创建并放入，不入库；见 README.md
-models_all/robot_model/*
-!models_all/robot_model/.gitkeep
+models_all/user_models/*
+!models_all/user_models/.gitkeep
 # keship3 / yanhu：源网格 + 贴图入库；normalized 缓存与 assxml 不入库
-!models_all/robot_model/keship3/
-!models_all/robot_model/yanhu/
-models_all/robot_model/keship3/*
-models_all/robot_model/yanhu/*
-!models_all/robot_model/keship3/*.dae
-!models_all/robot_model/keship3/*.png
-!models_all/robot_model/yanhu/*.dae
-!models_all/robot_model/yanhu/*.png
+!models_all/user_models/keship3/
+!models_all/user_models/yanhu/
+models_all/user_models/keship3/*
+models_all/user_models/yanhu/*
+!models_all/user_models/keship3/*.dae
+!models_all/user_models/keship3/*.png
+!models_all/user_models/yanhu/*.dae
+!models_all/user_models/yanhu/*.png
 
 # 模型清单：只入库 ke0812_1.ksm
 models_all/ks_model/*

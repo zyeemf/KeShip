@@ -11,11 +11,6 @@
           </mesh>
         </geometry>
       </visual>
-      <sensor name="wind" type="air_speed">
-        <pose>0 0 0.301 0 0 0</pose>
-        <always_on>true</always_on>
-        <topic>wind/air_speed</topic>
-      </sensor>
       <collision name="collision">
         <pose>0.0 0.0 0.1605 0 0 0</pose>
         <geometry>

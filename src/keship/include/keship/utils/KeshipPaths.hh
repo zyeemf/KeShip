@@ -44,7 +44,7 @@ namespace keship
     return KeshipDataDir() + "/models/";
   }
 
-  /// 统一模型资源根目录（models_all/，含 ks_model/ks_world/robot_model）
+  /// 统一模型资源根目录（models_all/，含 ks_model/ks_world/user_models）
   inline std::string KeshipAllModelsDir()
   {
     return KeshipHomeWsDir() + "/models_all";
@@ -56,8 +56,17 @@ namespace keship
     return KeshipAllModelsDir() + "/ks_model";
   }
 
-  /// 原始模型目录（models_all/robot_model/，原 models_robot/ + models_env/，.dae/.stl）
-  inline std::string KeshipRobotModelDir()
+  /// 用户模型目录（models_all/user_models/，原 robot_model/；.dae/.stl/.glb + 标准模型目录）
+  ///
+  /// ★ 2026-11-02 改名：`robot_model` → `user_models`（张老师要求：地图/船体等**用户自带**
+  ///   的模型都放这里，不只是"机器人"）。代码里只留这一处定义。
+  inline std::string KeshipUserModelsDir()
+  {
+    return KeshipAllModelsDir() + "/user_models";
+  }
+
+  /// 旧目录名（**仅用于兼容老存档**里的 `robot_model/...` 相对路径；不再往里写东西）
+  inline std::string KeshipLegacyRobotModelDir()
   {
     return KeshipAllModelsDir() + "/robot_model";
   }
@@ -123,7 +132,7 @@ namespace keship
     std::filesystem::create_directories(KeshipLogDir(), ec);
     std::filesystem::create_directories(KeshipWorldsDir(), ec);
     std::filesystem::create_directories(KeshipKsmDir(), ec);
-    std::filesystem::create_directories(KeshipRobotModelDir(), ec);
+    std::filesystem::create_directories(KeshipUserModelsDir(), ec);
     std::filesystem::create_directories(KeshipTaskDir(), ec);
   }
 } // namespace keship

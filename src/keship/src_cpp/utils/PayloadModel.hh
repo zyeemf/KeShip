@@ -19,6 +19,17 @@ struct PayloadSensorDef
   double pose[6] = {0, 0, 0, 0, 0, 0};   ///< 量测点相对安装面（link 原点），x y z r p y
 };
 
+/// @brief 模型里声明的命名参考系（`<frame>`）
+///
+/// 用途：某些器件**不该由模型决定"是什么传感器"**，只声明"量测点在哪"。
+///   典型是风杯：模型给出 `<frame name="anemometer">`，传感器由平台生成
+///   （张老师 2026-11-02 定：模型管几何与参考点，平台管传感器）。
+struct PayloadFrameDef
+{
+  std::string name;
+  double pose[6] = {0, 0, 0, 0, 0, 0};
+};
+
 /// @brief 一个标准载荷模型目录的解析结果
 ///
 /// 接口契约（2026-11-01 定，张老师）：平台**只读**这三样，其余一律忽略并由平台覆盖：
@@ -35,6 +46,7 @@ struct PayloadModelDef
   bool meshAlreadyZUp = true;          ///< 目录约定：payload 模型为 Z-up（不做 Y→Z 旋转）
   double visualPose[6] = {0, 0, 0, 0, 0, 0};
   std::vector<PayloadSensorDef> sensors;
+  std::vector<PayloadFrameDef> frames;   ///< <model> 下的命名参考系
 };
 
 /// @brief 解析一个标准模型目录

@@ -163,6 +163,19 @@ bool LoadPayloadModel(const std::string &_dir, PayloadModelDef &_out)
     _out.sensors.push_back(def);
   }
 
+  /// <frame name="..."><pose/></frame>（模型级，不是 link 子元素）
+  for (const tinyxml2::XMLElement *fr = model->FirstChildElement("frame");
+       fr != nullptr; fr = fr->NextSiblingElement("frame"))
+  {
+    const char *fn = fr->Attribute("name");
+    if (fn == nullptr)
+      continue;
+    PayloadFrameDef def;
+    def.name = fn;
+    ParsePose6(PoseTextOf(fr), def.pose);
+    _out.frames.push_back(def);
+  }
+
   _out.valid = true;
   return true;
 }

@@ -294,7 +294,13 @@ std::string ResolveModelBase(const std::string &_modelName)
     return "";
 
   std::vector<std::string> roots;
-  roots.push_back(keship::KeshipRobotModelDir());
+  roots.push_back(keship::KeshipUserModelsDir());
+  /// 兼容：旧目录若还在（未删/未迁完）也作为根，老 model:// 引用仍可解析
+  {
+    std::error_code ec0;
+    if (std::filesystem::exists(keship::KeshipLegacyRobotModelDir(), ec0))
+      roots.push_back(keship::KeshipLegacyRobotModelDir());
+  }
 
   auto addEnv = [&](const char *_envName) {
     const char *v = std::getenv(_envName);
@@ -452,6 +458,17 @@ std::string ResolveMeshUriToPath(const std::string &_uri,
   std::filesystem::path candModel = std::filesystem::path(keship::KeshipAllModelsDir()) / _uri;
   if (std::filesystem::exists(candModel, ec))
     return candModel.lexically_normal().string();
+
+  /// ★ 2026-11-02 兼容：目录已改名 robot_model → user_models，
+  ///   老存档里仍是 `robot_model/xxx/...`，这里自动改写到新目录（存档不必改）。
+  if (_uri.rfind("robot_model/", 0) == 0)
+  {
+    const std::string alt = "user_models/" + _uri.substr(12);
+    std::filesystem::path candAlt =
+        std::filesystem::path(keship::KeshipAllModelsDir()) / alt;
+    if (std::filesystem::exists(candAlt, ec))
+      return candAlt.lexically_normal().string();
+  }
   std::filesystem::path candSdf = std::filesystem::path(_sdfBaseDir) / _uri;
   if (std::filesystem::exists(candSdf, ec))
     return candSdf.lexically_normal().string();
@@ -3706,6 +3723,28 @@ const PayloadModelDef *ModelManager::FindPayloadDef(SensorType _type)
           }
           if (cache.find((int)t) == cache.end())
             cache[(int)t] = def;
+        }
+
+        /// ★ 2026-11-02：风杯模型**只声明 `<frame name="anemometer">`**，传感器由平台生成
+        ///   （张老师定：模型管几何与参考点，平台管"生成什么传感器"）。
+        ///   这样模型换代不会因为我们手补过 <sensor> 而漂移。
+        if (cache.find((int)SensorType::AirSpeed) == cache.end())
+        {
+          for (const auto &fr : def.frames)
+          {
+            if (fr.name != "anemometer")
+              continue;
+            PayloadModelDef synth = def;
+            PayloadSensorDef sd;
+            sd.gzType = "air_speed";
+            for (int k = 0; k < 6; k++) sd.pose[k] = fr.pose[k];
+            synth.sensors.clear();
+            synth.sensors.push_back(sd);
+            cache[(int)SensorType::AirSpeed] = synth;
+            std::cout << "FindPayloadDef: 风杯量测点取自 <frame name=\"anemometer\"> ("
+                      << def.modelName << " z=" << fr.pose[2] << ")" << std::endl;
+            break;
+          }
         }
       }
     }
