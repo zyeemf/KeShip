@@ -35,6 +35,10 @@ struct MeshMaterial
   float kd[3] = {0.7f, 0.7f, 0.7f};       ///< 漫反射（glTF baseColorFactor）
   float ks[3] = {0.05f, 0.05f, 0.05f};    ///< 高光
   float ns = 10.0f;                       ///< 光泽度
+  /// ★ 2026-11-02 逐材质贴图（glb 常把贴图**内嵌**在 bufferView 里，assimp 记为 "*<idx>"）
+  std::string texFile;                    ///< 外部贴图路径（相对源模型目录或绝对）；空=无
+  std::vector<unsigned char> texBlob;     ///< 内嵌贴图的原始字节（mHeight==0 的压缩数据）
+  std::string texExt;                     ///< 内嵌贴图扩展名（png/jpg/…）
 };
 
 /// @brief 从文件加载的网格数据
