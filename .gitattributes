@@ -1,0 +1,20 @@
+# 源码/文本文件统一 LF（2026-11-02 加）
+#
+# 起因：多次用 Windows 侧脚本改 WSL 里的文件，把 LF 转成了 CRLF，
+# 提交里出现整文件级别的假改动（ModelManager.cc 曾一次 1.1 万行）。
+# 这里让 git 在入库时强制归一化，避免同样的事再污染历史。
+# 二进制（.glb/.dae/.png 等）不受影响 —— git 自动识别为 binary。
+*.cc    text eol=lf
+*.cpp   text eol=lf
+*.hh    text eol=lf
+*.hpp   text eol=lf
+*.h     text eol=lf
+*.qml   text eol=lf
+*.txt   text eol=lf
+*.md    text eol=lf
+*.sdf   text eol=lf
+*.config text eol=lf
+*.py    text eol=lf
+*.sh    text eol=lf
+*.toml  text eol=lf
+CMakeLists.txt text eol=lf

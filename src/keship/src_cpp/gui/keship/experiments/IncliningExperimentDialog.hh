@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-03 初稳性倾斜实验对话框 — 矩形驳船 + 移动压载 */
+/* HS-04 初稳性倾斜实验对话框 — 矩形驳船 + 移动压载 */
 /// 2026.5.28 创建
 
 #ifndef INCLINING_EXPERIMENT_DIALOG_HH_
@@ -11,7 +11,6 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
-#include <QSlider>
 #include <QTableWidget>
 #include <QTimer>
 #include <QWidget>
@@ -24,6 +23,8 @@
 
 #include <gz/transport/Node.hh>
 #include <gz/msgs/pose_v.pb.h>
+
+#include "../shared/WaveInertiaIO.hh"
 
 /// 回调与对话框之间共享的位姿数据，独立于对话框生命周期
 struct IncliningPoseState
@@ -81,7 +82,10 @@ public:
 
 private slots:
   void onSpawn();
-  void onSliderChanged(int _value);
+  /// ★ 2026-10-29（D5）：压载位置控件由 QSlider 改为 QDoubleSpinBox ——
+  /// 滑条无程序化写入口，离屏演练驱动 --spin 写不进去，倾斜试验取不到多组数据。
+  /// 语义与原 onSliderChanged 相同：防抖 300 ms 后才真正下发（见 onMoveDebounced）。
+  void onBallastSpinChanged(double _value);
   /// ★ 2026-09-21 新增：「移动压载」确认按钮 —— 输入位置后**点它才真正下发**
   /// （原设计是输入框一改就下发，而下发走的是阻塞 RPC，见下方 commitMove 注释）
   void onApplyWeight();
@@ -91,6 +95,8 @@ private slots:
   void onDeleteSelected();
   void onResetWeight();
   void onClearAll();
+  /// ★ 2026-10-16 新增：导出 HS-04 GM 交付物（L3 链机器可读出口）
+  void onExportGm();
   void onUpdatePose();
 
 private:
@@ -136,7 +142,9 @@ private:
   QLabel *gmTheoryLabel_;
 
   /// 压载控制
-  QSlider *weightSlider_;
+  /// ★ 2026-10-29（D5）：QSlider 改为 QDoubleSpinBox（滑条无程序化写入口，驱动写不进）。
+  /// 键盘精确输入仍走下方 QLineEdit（2026-09-21 教训：SpinBox 固定小数位会吞按键）。
+  QDoubleSpinBox *weightSpin_;
   /// ★ 2026-09-21：**由 QDoubleSpinBox 改为 QLineEdit**。
   /// 原因：QDoubleSpinBox 会把值**自动格式化成固定小数位**（`setDecimals(3)` → "0.000"），
   /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被 validate 判非法 → **按键被吞**
@@ -144,7 +152,6 @@ private:
   /// 配合 QDoubleValidator（小数位放宽到 6）即可自由编辑，范围仍受控。
   QLineEdit *weightEdit_;
   QPushButton *applyBtn_;          ///< 「移动压载」确认按钮（输入后点击才生效）
-  QLabel *sliderValueLabel_;
   QLabel *heelLabel_;
   QLabel *deltaYLabel_;
   QLabel *wDyLabel_;
@@ -154,6 +161,9 @@ private:
   QPushButton *recordBtn_;
   QPushButton *resetBtn_;
   QPushButton *clearBtn_;
+  QPushButton *exportGmBtn_ = nullptr;  ///< 「导出 GM 交付物」（L3 链）
+
+  double gmExp_ = 0.0;  ///< GM 实验值（updateChart 计算后留存，供导出）
 
   /// 数据
   QTableWidget *dataTable_;
@@ -162,7 +172,7 @@ private:
 
   /// 定时器
   QTimer *poseTimer_;
-  QTimer *moveDebounce_ = nullptr;   ///< ★ 2026-09-21：滑条防抖（300 ms），见 onSliderChanged
+  QTimer *moveDebounce_ = nullptr;   ///< ★ 2026-09-21：压载移动防抖（300 ms），见 onBallastSpinChanged
 
   /// 状态
   uint32_t bargeEntityId_ = 0;

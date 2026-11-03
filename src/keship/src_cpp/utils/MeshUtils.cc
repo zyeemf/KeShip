@@ -13,12 +13,14 @@
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
+#include <assimp/material.h>
 #include <assimp/postprocess.h>
 
 #include <filesystem>
 #include <iomanip>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <set>
 #include <map>
 
@@ -30,7 +32,30 @@
 namespace keship
 {
 
-MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
+namespace
+{
+/// OBJ 的 `usemtl` / `newmtl` 名不能带空格与特殊字符（否则 MTL 解析会断）
+std::string SanitizeMatName(const std::string &_in, int _idx)
+{
+  std::string out;
+  out.reserve(_in.size());
+  for (char c : _in)
+  {
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') || c == '_' || c == '-')
+      out += c;
+    else
+      out += '_';
+  }
+  const bool allUnderscore =
+      !out.empty() && out.find_first_not_of('_') == std::string::npos;
+  if (out.empty() || allUnderscore)
+    out = "material_" + std::to_string(_idx + 1);   // 纯中文名脱敏后无信息，退回序号
+  return out;
+}
+}  // namespace
+
+MeshDataSimple LoadMeshFromFile(const std::string &_filePath, bool _alreadyZUp)
 {
   MeshDataSimple result;
 
@@ -50,11 +75,87 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
 
   std::cout << "MeshUtils: 网格数量 " << scene->mNumMeshes << std::endl;
 
+  /// ★ 2026-10-31 多材质：ai 材质索引 → 本结构材质表槽位（同名/同索引复用）
+  std::map<unsigned, int> aiMatToSlot;
+
+  /// ★ 2026-11-02 UV 对齐：只要**任一**网格带 UV，就必须给所有顶点补 vt，
+  ///   否则 v/vt 索引错位（OBJ 里 f v/vt 用同一套索引）。
+  bool anyUV = false;
+  for (unsigned m = 0; m < scene->mNumMeshes; ++m)
+    if (scene->mMeshes[m]->HasTextureCoords(0)) { anyUV = true; break; }
+
   /// 遍历所有网格，合并数据
   for (unsigned m = 0; m < scene->mNumMeshes; m++)
   {
     aiMesh *mesh = scene->mMeshes[m];
     unsigned vertexOffset = result.vertices.size();
+
+    /// ★ 2026-10-31 解析该图元的材质（glTF 里每个 primitive 带一个材质；
+    ///   原实现丢掉了 mMaterialIndex ⇒ 橙/钢/玻璃全被抹成一种灰）
+    int matSlot = 0;
+    {
+      const unsigned mi = mesh->mMaterialIndex;
+      auto slotIt = aiMatToSlot.find(mi);
+      if (slotIt != aiMatToSlot.end())
+      {
+        matSlot = slotIt->second;
+      }
+      else if (mi < scene->mNumMaterials)
+      {
+        const aiMaterial *am = scene->mMaterials[mi];
+        MeshMaterial mm;
+        aiString nm;
+        if (am->Get(AI_MATKEY_NAME, nm) == AI_SUCCESS)
+          mm.name = SanitizeMatName(nm.C_Str(), (int)result.materials.size());
+        else
+          mm.name = "material_" + std::to_string(result.materials.size() + 1);
+        aiColor3D kd(0.7f, 0.7f, 0.7f);
+        if (am->Get(AI_MATKEY_COLOR_DIFFUSE, kd) == AI_SUCCESS)
+        {
+          mm.kd[0] = kd.r; mm.kd[1] = kd.g; mm.kd[2] = kd.b;
+        }
+        aiColor3D ks(0.05f, 0.05f, 0.05f);
+        if (am->Get(AI_MATKEY_COLOR_SPECULAR, ks) == AI_SUCCESS)
+        {
+          mm.ks[0] = ks.r; mm.ks[1] = ks.g; mm.ks[2] = ks.b;
+        }
+        float ns = 10.0f;
+        if (am->Get(AI_MATKEY_SHININESS, ns) == AI_SUCCESS && ns > 0.0f)
+          mm.ns = ns;
+
+        /// ★ 2026-11-02 贴图：外部文件路径，或 glb 内嵌（assimp 用 "*<idx>" 表示，
+        ///   数据在 scene->mTextures[idx]，mHeight==0 表示是压缩文件字节流）
+        aiString tpath;
+        if (am->GetTexture(aiTextureType_DIFFUSE, 0, &tpath) == AI_SUCCESS &&
+            tpath.length > 0)
+        {
+          const std::string ts = tpath.C_Str();
+          if (!ts.empty() && ts[0] == '*')
+          {
+            const aiTexture *tex = scene->GetEmbeddedTexture(ts.c_str());
+            if (tex != nullptr && tex->mHeight == 0 && tex->pcData != nullptr)
+            {
+              const auto *raw = reinterpret_cast<const unsigned char *>(tex->pcData);
+              mm.texBlob.assign(raw, raw + tex->mWidth);   // 压缩字节数在 mWidth
+              mm.texExt = (tex->achFormatHint[0] != '\0') ? tex->achFormatHint : "png";
+              std::cout << "MeshUtils: 材质 " << mm.name << " 贴图为内嵌 "
+                        << mm.texExt << "（" << mm.texBlob.size() << " 字节）" << std::endl;
+            }
+            else
+            {
+              std::cerr << "MeshUtils: 内嵌贴图无法取出，忽略: " << ts << std::endl;
+            }
+          }
+          else
+          {
+            mm.texFile = ts;
+          }
+        }
+        result.materials.push_back(mm);
+        matSlot = (int)result.materials.size() - 1;
+        aiMatToSlot[mi] = matSlot;
+      }
+    }
 
     /// 提取顶点位置
     for (unsigned v = 0; v < mesh->mNumVertices; v++)
@@ -65,13 +166,18 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
           mesh->mVertices[v].z);
     }
 
-    /// 提取 UV 坐标
+    /// 提取 UV 坐标（无 UV 的网格在 anyUV 时补 (0,0)，保证与顶点一一对应）
     if (mesh->HasTextureCoords(0))
     {
       for (unsigned v = 0; v < mesh->mNumVertices; v++)
         result.texCoords.emplace_back(
             mesh->mTextureCoords[0][v].x,
             mesh->mTextureCoords[0][v].y);
+    }
+    else if (anyUV)
+    {
+      for (unsigned v = 0; v < mesh->mNumVertices; v++)
+        result.texCoords.emplace_back(0.0, 0.0);
     }
 
     /// 提取顶点法线（如果存在）
@@ -102,6 +208,8 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
           result.vertices[i1],
           result.vertices[i2]});
       result.triangleIndices.push_back({i0, i1, i2});
+      /// ★ 2026-10-31 与 triangleIndices 逐项对齐的材质索引
+      result.triangleMaterial.push_back(matSlot);
     }
 
     /// 提取 diffuse 纹理路径（仅取第一个有纹理的 mesh）
@@ -109,7 +217,8 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
     {
       const aiMaterial *mat = scene->mMaterials[mesh->mMaterialIndex];
       aiString path;
-      if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS)
+      if (mat->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS &&
+          path.length > 0 && path.C_Str()[0] != '*')   // 内嵌贴图走逐材质通道，不进 legacy
         result.texturePath = path.C_Str();
     }
   }
@@ -146,6 +255,51 @@ MeshDataSimple LoadMeshFromFile(const std::string &_filePath)
                   << ", hasXZSwap=" << info.hasXZSwap
                   << ") â è½¬æ¢å° Z_UP" << std::endl;
         result = ConvertToZUp(result, effective);
+      }
+    }
+  }
+
+  /// ★ 2026-10-30 传感器结构模型（.glb/.gltf）：glTF 规范为 **Y-UP**，Assimp 原样
+  /// 输出（实测底面落在 y=0 平面、高度沿 +y），而平台其余链路统一 Z-UP。
+  /// 这里做**真旋转** (x,y,z) → (x,-z,y)（绕 X 轴 +90°，行列式 +1），
+  /// 不用 ConvertToZUp(Y_UP)：后者是纯轴交换（反射，行列式 −1），会把模型镜像；
+  /// 且它只对 signZ<0 的反射补绕序 ⇒ glb 走那条路会变成内表面（正面被剔除）。
+  {
+    std::string ext;
+    auto dot = _filePath.rfind('.');
+    if (dot != std::string::npos)
+    {
+      ext = _filePath.substr(dot);
+      for (auto &c : ext)
+        c = (char)std::tolower((unsigned char)c);
+    }
+    if (ext == ".glb" || ext == ".gltf")
+    {
+      /// ★ 2026-11-01 标准载荷模型（`export_yup=False`）本来就是 Z-up，
+      ///   再转一次会躺倒 90° ⇒ 由调用方显式声明 _alreadyZUp 跳过。
+      if (_alreadyZUp)
+      {
+        std::cout << "MeshUtils: glTF/GLB 声明为已 Z-UP，跳过轴向旋转" << std::endl;
+      }
+      else
+      {
+      auto yUpToZUp = [](gz::math::Vector3d &_p)
+      {
+        const double y = _p.Y();
+        _p.Y() = -_p.Z();
+        _p.Z() = y;
+      };
+      for (auto &v : result.vertices)
+        yUpToZUp(v);
+      for (auto &t : result.triangles)
+      {
+        yUpToZUp(t.v0);
+        yUpToZUp(t.v1);
+        yUpToZUp(t.v2);
+      }
+      for (auto &n : result.normals)
+        yUpToZUp(n);
+      std::cout << "MeshUtils: glTF/GLB Y-UP → Z-UP（绕 X +90° 真旋转）" << std::endl;
       }
     }
   }
@@ -411,7 +565,7 @@ namespace
   std::string SourceKey8(const std::string &_srcPath)
   {
     /// 注意：本函数在匿名 namespace 内，MeshFileCacheKey 属于 keship ⇒ 必须限定
-    return Sha1Hex(keship::MeshFileCacheKey(_srcPath) + "|gzmap1").substr(0, 8);
+    return Sha1Hex(keship::MeshFileCacheKey(_srcPath) + "|gzmap2").substr(0, 8);
   }
 
   /// ★ 2026-09-25 性能修复（④）：写 sidecar（供下次**免解析**命中缓存）。
@@ -445,7 +599,14 @@ namespace
     file << "# Normalized mesh generated by keship (Z-UP right-handed)\n";
     file << "mtllib " << _mtlBase << ".mtl\n";
     file << "o ke_mesh_normalized\n";
-    file << "usemtl material_1\n";
+
+    /// ★ 2026-10-31 多材质：材质表与逐三角形索引都齐才按材质分段写 usemtl；
+    ///   否则退回单材质（与改动前逐字节一致，老资产零影响）。
+    const bool multiMat = !_mesh.materials.empty()
+        && _mesh.triangleMaterial.size() == _mesh.triangleIndices.size();
+
+    if (!multiMat)
+      file << "usemtl material_1\n";
 
     for (const auto &v : _mesh.vertices)
       file << "v " << v.X() << " " << v.Y() << " " << v.Z() << "\n";
@@ -457,8 +618,7 @@ namespace
     int vBase = 1;
     const bool hasVT = !_mesh.texCoords.empty();
     const bool hasVN = !_mesh.normals.empty();
-    for (const auto &tri : _mesh.triangleIndices)
-    {
+    auto writeFace = [&](const std::array<unsigned, 3> &tri) {
       file << "f ";
       for (unsigned k = 0; k < 3; ++k)
       {
@@ -473,6 +633,31 @@ namespace
           file << "//" << (tri[k] + vBase);
       }
       file << "\n";
+    };
+
+    if (!multiMat)
+    {
+      for (const auto &tri : _mesh.triangleIndices)
+        writeFace(tri);
+    }
+    else
+    {
+      /// 按材质槽位分组写出（段序 = 材质表顺序，视觉上无影响）
+      for (size_t slot = 0; slot < _mesh.materials.size(); ++slot)
+      {
+        bool headerWritten = false;
+        for (size_t t = 0; t < _mesh.triangleIndices.size(); ++t)
+        {
+          if (_mesh.triangleMaterial[t] != (int)slot)
+            continue;
+          if (!headerWritten)
+          {
+            file << "usemtl " << _mesh.materials[slot].name << "\n";
+            headerWritten = true;
+          }
+          writeFace(_mesh.triangleIndices[t]);
+        }
+      }
     }
 
     file.close();
@@ -481,7 +666,9 @@ namespace
 
   /// 写 MTL（漫反射纹理按相对文件名引用，与 OBJ 同目录）
   bool WriteNormalizedMtl(const std::string &_mtlPath,
-                          const std::string &_texFileName)
+                          const std::string &_texFileName,
+                          const std::vector<keship::MeshMaterial> &_mats,
+                          const std::vector<std::string> &_matTex)
   {
     std::ofstream file(_mtlPath);
     if (!file.is_open())
@@ -489,12 +676,39 @@ namespace
       std::cerr << "MeshUtils: 无法写入缓存 MTL " << _mtlPath << std::endl;
       return false;
     }
-    file << "newmtl material_1\n";
-    file << "Kd 0.7 0.7 0.7\n";
-    file << "Ks 0.05 0.05 0.05\n";
-    file << "Ns 10.0\n";
-    if (!_texFileName.empty())
-      file << "map_Kd " << _texFileName << "\n";
+
+    /// ★ 2026-10-31 多材质：每个源材质写一条 newmtl，Kd 取 glTF baseColorFactor。
+    ///   材质表为空 ⇒ 旧行为（单条 material_1 灰），老资产输出逐字节不变。
+    if (_mats.empty())
+    {
+      file << "newmtl material_1\n";
+      file << "Kd 0.7 0.7 0.7\n";
+      file << "Ks 0.05 0.05 0.05\n";
+      file << "Ns 10.0\n";
+      if (!_texFileName.empty())
+        file << "map_Kd " << _texFileName << "\n";
+    }
+    else
+    {
+      for (size_t i = 0; i < _mats.size(); ++i)
+      {
+        const auto &m = _mats[i];
+        file << "newmtl " << m.name << "\n";
+        file << "Kd " << m.kd[0] << " " << m.kd[1] << " " << m.kd[2] << "\n";
+        file << "Ks " << m.ks[0] << " " << m.ks[1] << " " << m.ks[2] << "\n";
+        file << "Ns " << m.ns << "\n";
+        /// ★ 2026-11-02 逐材质贴图：只有**该材质**带图时才写 map_Kd。
+        ///   多材质模型若统一塞一张图，会把船名糊到甲板/钢件上。
+        std::string tex;
+        if (i < _matTex.size() && !_matTex[i].empty())
+          tex = _matTex[i];
+        else if (_mats.size() == 1)
+          tex = _texFileName;          // 单材质老资产：沿用整体贴图（行为不变）
+        if (!tex.empty())
+          file << "map_Kd " << tex << "\n";
+        file << "\n";
+      }
+    }
     file.close();
     return true;
   }
@@ -820,10 +1034,25 @@ std::string GenerateConvexHullCache(const std::string &_srcPath)
 }
 
 /////////////////////////////////////////////////
-std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
+std::string NormalizeMeshToSDFCache(const std::string &_srcPath, bool _alreadyZUp)
 {
   if (_srcPath.empty())
     return "";
+
+  /// ★ 2026-11-02 标准模型目录约定：`<模型>/meshes/*.glb` 且同级有 `model.sdf`
+  ///   ⇒ 该网格是 **Z-up**（Blender 用 export_yup=False 导出），不能再转一次。
+  ///   ⚠ 必须放在 sidecar 命中判定**之前** —— 否则命中用的标记与写盘时不一致，
+  ///     会每次 miss 并反复重建缓存。
+  bool zup = _alreadyZUp;
+  if (!zup)
+  {
+    std::error_code ecA;
+    const std::filesystem::path parent = std::filesystem::path(_srcPath).parent_path();
+    if (parent.filename() == "meshes" &&
+        std::filesystem::exists(parent.parent_path() / "model.sdf", ecA))
+      zup = true;
+  }
+
 
   // A 方案：已是规范化缓存产物（models_normalized/ 目录段）且文件存在 →
   // 直接返回原路径（跳过），避免 ksm 载入时把缓存 OBJ 再次当作源规范化，
@@ -848,7 +1077,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
   /// 修法：把"算 key 所需输入"落盘成 sidecar（`<stem>_<srcKey8>.key`，两行：
   ///   第 1 行 = 当时的 keyInput 原文；第 2 行 = 纹理绝对路径 texAbs）。
   /// 命中判定只需 **读这个小文件 + stat**，无需解析网格：
-  ///   keyInput' = MeshFileCacheKey(源) + "|gzmap1" [+ "|" + MeshFileCacheKey(texAbs)]
+  ///   keyInput' = MeshFileCacheKey(源) + "|gzmap2" [+ "|" + MeshFileCacheKey(texAbs)]
   /// 再校验 `<stem>_<sha1(keyInput')[0..8]>.obj/.mtl` 存在。
   ///
   /// ⚠ **失效语义与原来严格一致**（本修法的关键）：
@@ -875,9 +1104,24 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
         if (!keyInputStored.empty())
         {
           /// 用 sidecar 里的纹理路径**重算** keyInput（与写盘时同一公式）
-          std::string keyInputNow = MeshFileCacheKey(_srcPath) + "|gzmap1";
+          std::string keyInputNow = MeshFileCacheKey(_srcPath)
+              + (zup ? "|gzmap3z" : "|gzmap3");
+          /// ★ 2026-11-02：贴图清单用 ';' 分隔（老 sidecar 只有一条，等价单元素）
           if (!texAbsStored.empty())
-            keyInputNow += "|" + MeshFileCacheKey(texAbsStored);
+          {
+            size_t st = 0;
+            while (st <= texAbsStored.size())
+            {
+              const size_t sc = texAbsStored.find(';', st);
+              const std::string one = texAbsStored.substr(
+                  st, sc == std::string::npos ? std::string::npos : sc - st);
+              if (!one.empty())
+                keyInputNow += "|" + MeshFileCacheKey(one);
+              if (sc == std::string::npos)
+                break;
+              st = sc + 1;
+            }
+          }
           const std::string k8 = Sha1Hex(keyInputNow).substr(0, 8);
           const std::string objHit = cdir + srcStem + "_" + k8 + ".obj";
           const std::string mtlHit = cdir + srcStem + "_" + k8 + ".mtl";
@@ -893,7 +1137,7 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     }
   }
 
-  MeshDataSimple mesh = LoadMeshFromFile(_srcPath);
+  MeshDataSimple mesh = LoadMeshFromFile(_srcPath, zup);
   if (mesh.vertices.empty() || mesh.triangles.empty())
   {
     std::cerr << "MeshUtils: 规范化失败 — 网格为空或加载失败: "
@@ -927,11 +1171,56 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     }
   }
 
-  /// 2. 缓存 key：源文件 + 纹理文件（mtime+size），变化即失效
+  /// 1b. ★ 2026-11-02 逐材质贴图：外部文件 → 绝对路径；内嵌 blob → 直接带字节
+  struct MatTexRes
+  {
+    std::string srcAbs;
+    std::vector<unsigned char> blob;
+    std::string ext;
+  };
+  std::vector<MatTexRes> matTex(mesh.materials.size());
+  for (size_t i = 0; i < mesh.materials.size(); ++i)
+  {
+    const auto &mm = mesh.materials[i];
+    if (!mm.texBlob.empty())
+    {
+      matTex[i].blob = mm.texBlob;
+      matTex[i].ext = mm.texExt.empty() ? "png" : mm.texExt;
+      continue;
+    }
+    if (mm.texFile.empty())
+      continue;
+    std::string tp2 = mm.texFile;
+    if (tp2.rfind("file://", 0) == 0)
+      tp2 = tp2.substr(7);
+    std::filesystem::path tp(tp2);
+    if (!tp.is_absolute())
+      tp = std::filesystem::path(_srcPath).parent_path() / tp;
+    std::error_code e2;
+    if (std::filesystem::exists(tp, e2))
+    {
+      matTex[i].srcAbs = tp.lexically_normal().string();
+      std::string ex = tp.extension().string();
+      if (!ex.empty() && ex[0] == '.')
+        ex = ex.substr(1);
+      matTex[i].ext = ex.empty() ? "png" : ex;
+    }
+    else
+    {
+      std::cerr << "MeshUtils: 材质贴图缺失，该材质退化为纯色: " << mm.name
+                << " -> " << tp.string() << std::endl;
+    }
+  }
+
+  /// 2. 缓存 key：源文件 + 所有贴图（含逐材质）的 mtime+size，变化即失效
+  ///    ★ 标签升到 gzmap3：贴图结构变了（逐材质），旧缓存必须重建
   std::string keyInput = MeshFileCacheKey(_srcPath);
-  keyInput += "|gzmap1";
+  keyInput += zup ? "|gzmap3z" : "|gzmap3";
   if (!texAbs.empty())
     keyInput += "|" + MeshFileCacheKey(texAbs);
+  for (const auto &mt : matTex)
+    if (!mt.srcAbs.empty())
+      keyInput += "|" + MeshFileCacheKey(mt.srcAbs);
   std::string key = Sha1Hex(keyInput).substr(0, 8);
 
   /// 3. 缓存路径（源模型目录下 normalized/，与源同生命周期，可整体删除重建）
@@ -959,7 +1248,19 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
       /// 老缓存（本次改动前生成的）没有 sidecar；若只在本函数末尾的"生成"分支写，
       /// 那么命中路径永远走不到那里 ⇒ 快速路径永不生效（探针实测过这个缺陷）。
       /// 这里没有清理风险（不经过 CleanupOldCaches）。
-      WriteCacheSidecar(cacheDir, srcName, _srcPath, keyInput, texAbs);
+      {
+    /// ★ 2026-11-02：sidecar 记录**全部**贴图路径（';' 分隔），供下次免解析命中
+    std::string texAll = texAbs;
+    for (const auto &mt : matTex)
+    {
+      if (mt.srcAbs.empty())
+        continue;
+      if (!texAll.empty())
+        texAll += ";";
+      texAll += mt.srcAbs;
+    }
+    WriteCacheSidecar(cacheDir, srcName, _srcPath, keyInput, texAll);
+  }
       return objPath;
     }
   }
@@ -995,7 +1296,14 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     return "";
 
   std::string texDestName;
-  if (!texAbs.empty())
+  /// ★ 2026-11-02：已有逐材质贴图时不再复制 legacy 整体贴图（否则同一张图存两份）
+  const bool havePerMatTex = [&]() {
+    for (const auto &mt : matTex)
+      if (!mt.blob.empty() || !mt.srcAbs.empty())
+        return true;
+    return false;
+  }();
+  if (!texAbs.empty() && !havePerMatTex)
   {
     std::filesystem::path texP(texAbs);
     texDestName = base + "_tex" + texP.extension().string();
@@ -1010,7 +1318,43 @@ std::string NormalizeMeshToSDFCache(const std::string &_srcPath)
     }
   }
 
-  if (!WriteNormalizedMtl(mtlPath, texDestName))
+  /// ★ 2026-11-02 逐材质贴图落盘：内嵌 blob 写文件 / 外部文件复制到 normalized/
+  std::vector<std::string> matTexDest(mesh.materials.size());
+  for (size_t i = 0; i < matTex.size(); ++i)
+  {
+    if (matTex[i].blob.empty() && matTex[i].srcAbs.empty())
+      continue;
+    const std::string dest = base + "_m" + std::to_string(i) + "." + matTex[i].ext;
+    const std::string destAbs = cacheDir + dest;
+    std::error_code ec2;
+    if (!matTex[i].blob.empty())
+    {
+      std::ofstream of(destAbs, std::ios::binary);
+      if (of.is_open())
+      {
+        of.write(reinterpret_cast<const char *>(matTex[i].blob.data()),
+                 (std::streamsize)matTex[i].blob.size());
+        of.close();
+        matTexDest[i] = dest;
+        std::cout << "MeshUtils: 内嵌贴图已落盘 " << destAbs << std::endl;
+      }
+      else
+      {
+        std::cerr << "MeshUtils: 内嵌贴图写盘失败: " << destAbs << std::endl;
+      }
+    }
+    else
+    {
+      std::filesystem::copy_file(matTex[i].srcAbs, destAbs,
+                                 std::filesystem::copy_options::overwrite_existing, ec2);
+      if (!ec2)
+        matTexDest[i] = dest;
+      else
+        std::cerr << "MeshUtils: 材质贴图复制失败: " << matTex[i].srcAbs << std::endl;
+    }
+  }
+
+  if (!WriteNormalizedMtl(mtlPath, texDestName, mesh.materials, matTexDest))
   {
     std::filesystem::remove(objPath);
     return "";
@@ -1035,8 +1379,8 @@ MeshCacheCleanupResult CleanupUnusedMeshCache()
 {
   MeshCacheCleanupResult result;
 
-  /// 清空 robot_model 下所有 normalized/ 缓存目录（缓存随源同目录，下次加载自动重建）
-  const std::string robotDir = KeshipRobotModelDir();
+  /// 清空 user_models 下所有 normalized/ 缓存目录（缓存随源同目录，下次加载自动重建）
+  const std::string robotDir = KeshipUserModelsDir();   // ★ 2026-11-02 改名
   std::error_code ec;
   if (!std::filesystem::exists(robotDir, ec))
     return result;

@@ -1,0 +1,25 @@
+{
+  "version": "0.0.4",
+  "attributes": {
+    "name": "indoor_lab",
+    "pose": [0,0,0,0,0,0]
+  },
+  "models": {
+    "Room": {
+      "attributes": {
+        "file": "Room.ksm",
+        "pose": [0,0,0,0,0,0],
+        "isStatic": true
+      }
+    },
+    "car": {
+      "attributes": {
+        "file": "car.ksm",
+        "pose": [0,0,0,0,0,0],
+        "isStatic": false
+      }
+    }
+  },
+  "waters": {},
+  "subWorlds": {}
+}

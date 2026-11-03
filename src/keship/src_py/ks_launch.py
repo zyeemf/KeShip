@@ -26,7 +26,7 @@ from .ks_model import Model_Keship
 
 
 ##########################################################################################################
-def simulation(world_name:str, headless:bool = False, gz_paused:bool = False, extra_gz_args:str = ''):
+def simulation(world_name:str, headless:bool = False, gz_paused:bool = False, extra_gz_args:str = '', gz_verbose:int = 4):
     ''' 
     启动仿真 
     '''
@@ -35,7 +35,8 @@ def simulation(world_name:str, headless:bool = False, gz_paused:bool = False, ex
     # 设置Gazebo窗口标题
     os.environ['GZ_SIM_WINDOW_TITLE'] = 'keship - Gazebo Simulator'
     #
-    gz_args = ['-v 4'] # 日志等级
+    # 日志等级：默认 4（与 2026-10-24 之前行为一致）；可用 launch 参数 gz_verbose 调低以减少刷屏
+    gz_args = [f'-v {gz_verbose}']
     if headless: # 无头模式
         gz_args.append('-s')
     if not gz_paused: # 非暂停模式

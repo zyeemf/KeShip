@@ -28,9 +28,11 @@ class SelectKsmDialog : public QDialog
 public:
   /// @param _dir 初始父目录（默认 ks_model）
   /// @param _browseUrls 浏览对话框侧栏快捷路径
+  /// @param _ksmOnly true = 只列 .ksm（隐藏"从其他目录选择原始模型"通道）
   explicit SelectKsmDialog(const QString &_dir,
                            const QList<QUrl> &_browseUrls,
-                           QWidget *parent = nullptr);
+                           QWidget *parent = nullptr,
+                           bool _ksmOnly = false);
 
   /// 选中的 .ksm 完整路径（列表通道；未选中返回空）
   QString selectedFile() const;
@@ -51,6 +53,8 @@ private:
   QList<QUrl> browseUrls_;
   QString parentDir_;
   QString rawFilePath_;
+  /// true = 仅 .ksm 入口（2026-10-25 菜单拆分）
+  bool ksmOnly_ = false;
 };
 
 #endif

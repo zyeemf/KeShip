@@ -22,6 +22,7 @@
 #include "FossenModel.hh"
 #include <assimp/scene.h>
 
+#include "PayloadModel.hh"
 #include "Tetrahedron.hh"
 #include "PrimitiveMeshGenerator.hh"
 #include "ShipHullGenerator.hh"
@@ -79,7 +80,8 @@ namespace keship
 
   /////////////////////////////////////////////////
   /// 传感器类型枚举
-  enum class SensorType { IMU, NavSat, Magnetometer, Camera, Lidar };
+  /// ★ 2026-11-01：新增 AirSpeed（风杯）—— gz-sim 8 的 air_speed 传感器
+  enum class SensorType { IMU, NavSat, Magnetometer, Camera, Lidar, AirSpeed };
   inline const char *sensorTypeName(SensorType _t)
   {
     switch (_t) {
@@ -88,6 +90,7 @@ namespace keship
       case SensorType::Magnetometer: return "Magnetometer";
       case SensorType::Camera:       return "Camera";
       case SensorType::Lidar:        return "Lidar";
+      case SensorType::AirSpeed:     return "AirSpeed";
     }
     return "Unknown";
   }
@@ -98,6 +101,7 @@ namespace keship
     if (_s == "Magnetometer") return SensorType::Magnetometer;
     if (_s == "Camera")       return SensorType::Camera;
     if (_s == "Lidar")        return SensorType::Lidar;
+    if (_s == "AirSpeed")     return SensorType::AirSpeed;
     return SensorType::IMU; // fallback
   }
 
@@ -216,6 +220,11 @@ namespace keship
     std::string linkName = "base_link";
     std::vector<SensorInstance> instances;
 
+    /// ★ 2026-11-01 pose 语义开关（写进 ksm 的 `pose_semantics=mount`）：
+    ///   true  = instance.pose 是**安装点**，sensor 的实际 pose = 安装点 × 模型内偏移
+    ///   false = 旧语义，instance.pose 就是量测点（老 ksm 无标记 ⇒ false，行为不变）
+    bool mountSemantics = false;
+
     bool empty() const { return instances.empty(); }
     bool has(SensorType _t) const {
       for (auto &i : instances) if (i.type == _t) return true;
@@ -226,6 +235,53 @@ namespace keship
       for (auto &i : instances) if (i.type == _t) n++;
       return n;
     }
+  };
+
+  ///////////////////////////////////////////////////////////////////////////////
+  /// ★ 2026-10-30 设备外观装饰（纯视觉，无传感器数据，无物理量）
+  ///
+  /// 用途：电池、电机这类"只该看得见、不该产生数据"的器件。与 SensorType 分开，
+  ///   因为给它们套传感器语义会凭空多出 topic 与噪声数据，教学上反而误导。
+  /// 推进器**不在此列** —— 它有自己的 ThrusterConfig（含 pose 与推力），
+  ///   外观直接用那份 pose，不重复录一遍。
+  ///
+  /// 模型文件：<keship_ws>/models_all/device_model/<类型>.glb（缺文件则不显示，只告警一次）
+  /// 约定：1 BU = 1 m、原点在安装面中心、导出 Y-UP（平台内部转 Z-UP）。
+  enum class DeviceType { Battery, Motor, Controller };
+
+  inline const char *deviceTypeName(DeviceType _t)
+  {
+    switch (_t)
+    {
+      case DeviceType::Battery:    return "Battery";
+      case DeviceType::Motor:      return "Motor";
+      case DeviceType::Controller: return "Controller";
+    }
+    return "Unknown";
+  }
+
+  /// @brief 由名字反查类型；未知名字返回 false（ksm 前向兼容：新类型由老版本忽略）
+  inline bool deviceTypeFromName(const std::string &_s, DeviceType &_out)
+  {
+    if (_s == "Battery")    { _out = DeviceType::Battery;    return true; }
+    if (_s == "Motor")      { _out = DeviceType::Motor;      return true; }
+    if (_s == "Controller") { _out = DeviceType::Controller; return true; }
+    return false;
+  }
+
+  struct DeviceItem
+  {
+    DeviceType type = DeviceType::Battery;
+    std::string name;
+    double pose[6] = {0, 0, 0, 0, 0, 0};   // x y z roll pitch yaw（相对 link）
+  };
+
+  struct DeviceDecorConfig
+  {
+    std::string linkName = "base_link";
+    std::vector<DeviceItem> items;
+
+    bool empty() const { return items.empty(); }
   };
 
   /////////////////////////////////////////////////
@@ -272,6 +328,11 @@ namespace keship
     double damping[3] = {0, 0, 0};   ///< <linear_damping> 的 Zw / Kp / Mq（全 0 = 不写该段）
     bool hasDamping() const
     { return damping[0] > 0.0 || damping[1] > 0.0 || damping[2] > 0.0; }
+    /// ★ 2026-10-25：完整水动力配置（线性 8 项 + 可选二次项 + 附加质量）。
+    ///   非空时 SDF 走与圆柱体/网格模型**同一套**标签
+    ///   （`<damping>` / `<linear_damping>` / `<fluid_added_mass>`）；
+    ///   为空时退回上面的 3 项 `<linear_damping>`（`keship_ctl --damping` 行为不变）。
+    const HydroConfig *hydro = nullptr;
   };
 
   /////////////////////////////////////////////////
@@ -335,6 +396,18 @@ namespace keship
                        const ShipHullSpec &_spec,
                        double _pos[6],
                        const MathHullPluginOpts &_opts = MathHullPluginOpts{});
+
+    /// \brief 按船型与尺寸估算默认水动力系数（2026-10-25，GUI 与无头共用）
+    /// \param _full false=轻量（线性 8 项）；true=完整（+Morison 二次项 + 势流附加质量）
+    /// 口径：c = 2ζ√(k·I)，ζ 垂荡 0.15 / 转动 0.10 —— 与 DisplacementVerifyDialog 一致
+    static HydroConfig EstimateMathHullHydro(const ShipHullSpec &_spec, bool _full);
+
+    /// 数学船型 SDF 组装（纯函数，不写文件/不触 gz；供离线单测，2026-10-25）
+    static std::string MakeMathHullSDF(const std::string &_instanceName,
+                                       const ShipHullSpec &_spec,
+                                       const MathHullPluginOpts &_opts,
+                                       const std::string &_visPath,
+                                       const std::string &_buoyPath);
 
     /// @brief 从有效文件类型生成SDF字符串
     /// @param _instanceName 实例名称
@@ -411,6 +484,10 @@ namespace keship
     bool SetModelPoseByIDInGazebo(uint32_t _id, double _pose[6]);
 
     /// @brief 重建模型并应用浮力体配置（保存pose → 删除 → 生成新SDF → spawn → 恢复pose）
+    /// 用给定 SDF 原文重放模型（自包含插件模型的编辑重建用，2026-10-25）
+    bool RespawnSdf(const std::string &_name, const std::string &_sdf,
+                    const double _pose[6], const SensorConfig &_sc);
+
     bool RebuildModelWithBuoyancy(const std::string &_instanceName,
                                   const BuoyancyConfig &_config);
 
@@ -419,6 +496,16 @@ namespace keship
                                 const ThrusterConfig &_config);
 
     /// @brief 生成合并的浮力-水动力插件 SDF（BuoyancyConfig + 可选 HydroConfig）
+    /// 重建用 SDF 组装（纯函数，不触网络/文件；供离线单测，2026-10-25）
+    static std::string ComposeRebuiltSDF(
+        const std::string &_baseSdf, const std::string &_instanceName,
+        const std::string &_worldName,
+        bool _hasSensor, const SensorConfig &_sensor,
+        bool _hasThrust, const ThrusterConfig &_thrust,
+        bool _hasHydro, const HydroConfig &_hydro,
+        bool _haveBuoy, const BuoyancyConfig &_buoy,
+        const DeviceDecorConfig &_decor = DeviceDecorConfig());
+
     static std::string MakeBuoyancyPluginSDF(const BuoyancyConfig &_config,
         const HydroConfig *_hydro = nullptr);
 
@@ -429,6 +516,22 @@ namespace keship
     static std::string MakeSensorSDF(const SensorConfig &_config,
                                       const std::string &_modelName,
                                       const std::string &_worldName = "keship_world");
+
+    /// @brief **结构模型**（传感器 + 设备装饰）在 3D 场景中的显示开关，默认开。
+    ///        ★ 推进器外观**不受此开关控制**（常显）：推进器代表动力源，
+    ///        藏掉会出现「没装推进器却有推力」的错觉，而且它的模型本身就是推力方向指示。
+    ///        改后需对已带传感器/装饰的模型重建才生效（GUI「视图」菜单调用）。
+    /// @brief 风杯所需的**模型级**系统插件（无 AirSpeed 时返回空串）
+    ///   实测 2026-11-01：gz-sim 的 air-speed 系统插件挂模型级即可，无需改世界文件。
+    static std::string MakeSensorSystemsSDF(const SensorConfig &_cfg);
+
+    static void SetStructVisualEnabled(bool _on) { sStructVisualEnabled_ = _on; }
+    static bool StructVisualEnabled() { return sStructVisualEnabled_; }
+
+    /// @brief 设备外观装饰（电池/电机）配置的缓存与取用
+    bool GetCachedDeviceDecor(const std::string &_name, DeviceDecorConfig &_out) const;
+    void CacheDeviceDecor(const std::string &_name, const DeviceDecorConfig &_cfg)
+    { deviceDecorCache_[_name] = _cfg; }
 
     /// @brief 重建模型并应用流体动力配置（保留已有浮力体/推进器）
     bool RebuildModelWithHydro(const std::string &_instanceName,
@@ -540,12 +643,15 @@ namespace keship
     ///
     /// ★ 2026-09-28（D2）：`_outCollisionMode` 非空时回填 `===COLLISION===` 段的值；
     ///   **文件缺该段则不改动**（由调用方保持初值）⇒ 老 ksm 零影响（向后兼容）。
+    /// ★ 2026-10-30：`_deviceCfg` 回填 `===DEVICES===` 段（设备外观装饰，电池/电机）；
+    ///   文件缺该段 ⇒ items 为空（与 COLLISION 同策，老 ksm 零影响）。
     static bool ParseKSMFile(const std::string &_filepath,
                              std::string &_baseSDF,
                              BuoyancyConfig &_buoyCfg,
                              ThrusterConfig &_thrustCfg,
                              HydroConfig &_hydroCfg,
                              SensorConfig &_sensorCfg,
+                             DeviceDecorConfig &_deviceCfg,
                              CollisionMode *_outCollisionMode = nullptr);
 
     /// @brief **从 .ksm 文件加载模型**（解析 → 缓存 → 分派 spawn → 登记来源）
@@ -701,6 +807,9 @@ namespace keship
         double &_radius, double &_length, std::string &_meshPath) const;
 
     /// @brief 获取模型静态标记（优先查缓存，未命中则从 SDF 解析）
+    /// 切换 静止/动态（改缓存 SDF 后整段重放，保留全部插件；2026-10-25）
+    bool SetModelStatic(const std::string &_name, bool _isStatic);
+
     bool GetCachedModelStatic(const std::string &_name, bool &_isStatic) const;
 
     /// spawn 后调用，计算并缓存模型的 2D 局部包围盒
@@ -732,6 +841,33 @@ namespace keship
     std::map<std::string, HydroConfig> hydroConfigCache_;
     /// \brief 传感器配置缓存，用于编辑器还原
     std::map<std::string, SensorConfig> sensorConfigCache_;
+
+    /// ★ 2026-10-30 结构模型（传感器 + 设备装饰）场景显示开关，进程级全局。
+    static bool sStructVisualEnabled_;
+
+    /// @brief 为单个传感器生成 <visual> 片段（结构模型）；关闭或无模型文件时返回空串
+    /// @param _mountSemantics true = _inst.pose 是安装点，视觉 = 安装点 × <visual><pose>
+    static std::string MakeSensorVisualSDF(const SensorInstance &_inst, bool _mountSemantics);
+
+    /// @brief 按平台传感器类型查找标准载荷模型（<models_all>/payload_model/，整目录懒解析一次）
+    /// @return 找不到返回 nullptr（该类型无模型 ⇒ 传感器照跑、不画外观）
+    static const PayloadModelDef *FindPayloadDef(SensorType _type);
+
+    /// @brief 为单个设备装饰项生成 <visual>（电池/电机）；缺模型文件时返回空串
+    static std::string MakeDeviceItemVisualSDF(const DeviceItem &_item);
+
+    /// @brief 为推进器配置生成 <visual> 片段（常显，不受结构模型开关控制）
+    static std::string MakeThrusterVisualSDF(const ThrusterConfig &_config);
+
+    /// @brief 把「设备装饰 + 推进器外观」两段视觉拼进 <link> 内。
+    ///        ★ 每个注入传感器的位置都必须紧跟调用本函数，否则重建后外观会丢。
+    /// @param _thrustOverride 非空时用它代替缓存里的推进器配置 —— 重建流程在 Respawn
+    ///        成功前不会更新缓存，若不显式传入就会用**旧 pose** 画装配体。
+    void AppendDeviceVisualSDF(std::ostringstream &_sdf, const std::string &_name,
+                              const ThrusterConfig *_thrustOverride = nullptr) const;
+
+    /// \brief 设备外观装饰配置缓存
+    std::map<std::string, DeviceDecorConfig> deviceDecorCache_;
     /// \brief 静态模型标记缓存
     mutable std::map<std::string, bool> staticCache_;
     /// ★ 2026-09-28 碰撞体积计算方式缓存（缺省 = Mesh，保持既有行为）

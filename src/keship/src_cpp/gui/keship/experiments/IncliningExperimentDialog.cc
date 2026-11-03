@@ -1,10 +1,13 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-03 初稳性倾斜实验对话框实现 */
+/* HS-04 初稳性倾斜实验对话框实现 */
 /// 2026.5.28
 
 #include "IncliningExperimentDialog.hh"
+#include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
+#include "../shared/BargeFactory.hh"
 #include "../shared/UiTheme.hh"
 #include "keship/utils/LinearDamping.hh"
 #include "../shared/UiTheme.hh"
@@ -16,6 +19,8 @@
 #include <QHeaderView>
 #include <QPainter>
 #include <QPainterPath>
+#include <QDateTime>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QFrame>
 /// ★ 2026-09-21 新增：压载位置输入由 QDoubleSpinBox 改为 QLineEdit（自由编辑），
@@ -238,7 +243,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
       transportNode_(_transportNode),
       worldName_(_worldName)
 {
-  setWindowTitle("SP-03 初稳性倾斜实验");
+  setWindowTitle("HS-04 初稳性倾斜实验");
   setModal(false);
   resize(960, 720);
 
@@ -254,7 +259,7 @@ IncliningExperimentDialog::IncliningExperimentDialog(
 
   updateTheoryDisplay();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -262,11 +267,10 @@ IncliningExperimentDialog::IncliningExperimentDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(_transportNode).Publish(msg);
   }
 
-  std::cout << "SP-03: 初稳性倾斜实验对话框已创建" << std::endl;
+  std::cout << "HS-04: 初稳性倾斜实验对话框已创建" << std::endl;
 }
 
 IncliningExperimentDialog::~IncliningExperimentDialog()
@@ -280,17 +284,9 @@ IncliningExperimentDialog::~IncliningExperimentDialog()
   poseTimer_->stop();
   doDeleteBoth();
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
-  {
-    gz::msgs::Param msg; auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void IncliningExperimentDialog::setupUI()
@@ -300,7 +296,7 @@ void IncliningExperimentDialog::setupUI()
   auto *descLabel = new QLabel(
       "<b>实验目的：</b>通过移动压载测量横倾角，反算初稳性高度 GM。<br>"
       "<b>原理：</b>GM = w·Δy / (Δ·tanφ)<br>"
-      "<b>操作：</b>①点击[生成驳船] → ②拖动滑块移动压载 → "
+      "<b>操作：</b>①点击[生成驳船] → ②在「压载位置 y」数值框改值（停 0.3 s 生效）或输入框＋「移动压载」按钮 → "
       "③等待横倾角稳定 → ④记录数据 → ⑤重复多组 → 观察拟合线。",
       this);
   descLabel->setWordWrap(true);
@@ -366,11 +362,17 @@ void IncliningExperimentDialog::setupUI()
   auto *ctlGroup = new QGroupBox("压载控制", this);
   auto *ctlForm = new QFormLayout(ctlGroup);
 
-  weightSlider_ = new QSlider(Qt::Horizontal, this);
-  weightSlider_->setRange(0, 500);
-  weightSlider_->setValue(250);
-  sliderValueLabel_ = new QLabel("0.000 m", this);
-  sliderValueLabel_->setStyleSheet("font-weight: bold;");
+  /// ★ 2026-10-29（D5）：滑条改数值框 —— 滑条无程序化写入口，离屏演练驱动
+  ///   --spin 写不进去，倾斜试验（5 组横倾）取不到数据；且拖拽难以精确定位。
+  ///   键盘精确输入仍走下方 QLineEdit（2026-09-21 教训见头文件注释）。
+  weightSpin_ = new QDoubleSpinBox(this);
+  weightSpin_->setRange(-0.25, 0.25);
+  weightSpin_->setValue(0.0);
+  weightSpin_->setDecimals(3);
+  weightSpin_->setSingleStep(0.005);
+  weightSpin_->setSuffix(" m");
+  weightSpin_->setToolTip(
+      "压载横向位置（m），范围 −0.25 ~ 0.25；步进 0.005 m，停 0.3 s 后移动压载");
 
   /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**。
   /// 为什么换掉 QDoubleSpinBox：
@@ -392,14 +394,13 @@ void IncliningExperimentDialog::setupUI()
   applyBtn_->setToolTip("把压载移动到左侧输入框指定的位置（只有点这里才会真正移动）");
 
   auto *weightRow = new QHBoxLayout();
-  weightRow->addWidget(weightSlider_, 3);
+  weightRow->addWidget(weightSpin_, 3);
   weightRow->addWidget(weightEdit_, 1);
   weightRow->addWidget(new QLabel("m", this));
   weightRow->addWidget(applyBtn_);
-  ctlForm->addRow("压载位置 y:", sliderValueLabel_);
   ctlForm->addRow(weightRow);
 
-  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可直接拖动滑条（松手 0.3 s 后移动）",
+  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可用数值框步进（停 0.3 s 后移动）",
                                this);
   applyHint->setStyleSheet("color: #666; font-size: 11px;");
   applyHint->setWordWrap(true);
@@ -430,11 +431,14 @@ void IncliningExperimentDialog::setupUI()
   auto *deleteBtn = new QPushButton("删除选中", this);
   UiTheme::setButtonIcon(deleteBtn, UiTheme::Icon::kDelete);
   clearBtn_ = new QPushButton("清除全部", this);
+  exportGmBtn_ = new QPushButton("导出 GM 交付物", this);
   btnRow->addWidget(recordBtn_);
   btnRow->addWidget(resetBtn_);
   btnRow->addWidget(deleteBtn);
   btnRow->addWidget(clearBtn_);
-  for (QPushButton *b : {recordBtn_, resetBtn_, deleteBtn, clearBtn_}) b->setMinimumHeight(30);
+  btnRow->addWidget(exportGmBtn_);
+  for (QPushButton *b : {recordBtn_, resetBtn_, deleteBtn, clearBtn_, exportGmBtn_})
+    b->setMinimumHeight(30);
   btnRow->addStretch();
   mainLayout->addLayout(btnRow);
 
@@ -456,8 +460,8 @@ void IncliningExperimentDialog::setupUI()
   /// 信号连接
   connect(spawnBtn_, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onSpawn);
-  connect(weightSlider_, &QSlider::valueChanged,
-          this, &IncliningExperimentDialog::onSliderChanged);
+  connect(weightSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &IncliningExperimentDialog::onBallastSpinChanged);
   /// ★ 2026-09-21 新增：确认按钮 —— 输入压载位置后**点它才真正移动**
   connect(applyBtn_, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onApplyWeight);
@@ -469,9 +473,11 @@ void IncliningExperimentDialog::setupUI()
           this, &IncliningExperimentDialog::onClearAll);
   connect(deleteBtn, &QPushButton::clicked,
           this, &IncliningExperimentDialog::onDeleteSelected);
+  connect(exportGmBtn_, &QPushButton::clicked,
+          this, &IncliningExperimentDialog::onExportGm);
 
   /// ★ 2026-09-21：删掉原「spinbox ↔ 滑条双向同步、各自直接 moveWeight」的两条连接。
-  /// 现在**只有一条**滑条连接（onSliderChanged，内部防抖 300 ms 后才真正下发）；
+  /// 现在**只有一条**压载数值框连接（onBallastSpinChanged，内部防抖 300 ms 后才真正下发）；
   /// 输入框**不再**触发任何下发 —— 必须由用户点「移动压载」（onApplyWeight）确认。
   /// 原因：moveWeight 走 `/world/<w>/set_pose/**blocking**`（同步阻塞 RPC，超时 2000 ms，
   /// 见 moveWeight 实现）→ 逐键 / 逐格触发会把 UI 线程冻住，
@@ -574,82 +580,10 @@ constexpr double kGravity = 9.81;
 std::string IncliningExperimentDialog::makeBargeSDF(
     double _L, double _B, double _H, double _density) const
 {
-  double mass = _density * _L * _B * _H;
-  double ixx = mass / 12.0 * (_B * _B + _H * _H);
-  double iyy = mass / 12.0 * (_L * _L + _H * _H);
-  double izz = mass / 12.0 * (_L * _L + _B * _B);
-
-  /// ── 线性阻尼（2026-09-19 新增，与 SP-01 的 7.5 ① 同一修法）──────────────
-  /// 本实验要求"等待横倾角稳定"才能记录（判据 |Δheel|<0.05°/帧 × 15 帧，见 cc:973-979），
-  /// 而**长方体走不了插件的 pose_based 分支**（该分支需 hasCylinderGeometry_）→
-  /// 原先 `<enable_hydro>false</enable_hydro>` 等于零阻尼 → 横摇 60 s 不衰减 →
-  /// 判据永不满足、"记录数据"永远点不了。
-  /// 详见 doc/plans/headless_ctl_plan.md §14。
-  /// 长方体水线面恒为矩形 → A_wp = L·B **精确**（且 A_wp·B²/12 = L·B³/12 正是其水线面惯性矩）
-  const double A_wp = _L * _B;
-  const keship::LinearDampingCoeffs damp = keship::MakeLinearDamping(
-      A_wp, _L, _B, mass, ixx, iyy, 0.15, 0.10, kFluidDensity, kGravity);
-
-  std::ostringstream sdf;
-  sdf << "<?xml version=\"1.0\"?>\n"
-      << "<sdf version=\"1.6\">\n"
-      << "  <model name=\"" << bargeName_ << "\">\n"
-      << "    <pose>0 0 0 0 0 0</pose>\n"
-      << "    <static>false</static>\n"
-      << "    <link name=\"base_link\">\n"
-      << "      <inertial>\n"
-      << "        <mass>" << mass << "</mass>\n"
-      << "        <inertia>\n"
-      << "          <ixx>" << ixx << "</ixx>\n"
-      << "          <ixy>0</ixy>\n"
-      << "          <ixz>0</ixz>\n"
-      << "          <iyy>" << iyy << "</iyy>\n"
-      << "          <iyz>0</iyz>\n"
-      << "          <izz>" << izz << "</izz>\n"
-      << "        </inertia>\n"
-      << "      </inertial>\n"
-      << "      <visual name=\"visual\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "        <material>\n"
-      << "          <ambient>0.7 0.5 0.3 1.0</ambient>\n"
-      << "          <diffuse>0.7 0.5 0.3 1.0</diffuse>\n"
-      << "        </material>\n"
-      << "      </visual>\n"
-      << "      <collision name=\"collision\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "      </collision>\n"
-      << "    </link>\n"
-      << "    <plugin filename=\"libKSPlugin_HydroBuoyancy.so\""
-      << " name=\"keship::KSPlugin_HydroBuoyancy\">\n"
-      << "      <link_name>base_link</link_name>\n"
-      << "      <enable_buoyancy>true</enable_buoyancy>\n"
-      << "      <enable_hydro>true</enable_hydro>\n"
-      << "      <linear_damping>\n"
-      << "        <Zw>" << damp.Zw << "</Zw>\n"
-      << "        <Kp>" << damp.Kp << "</Kp>\n"
-      << "        <Mq>" << damp.Mq << "</Mq>\n"
-      << "      </linear_damping>\n"
-      << "      <fluid_density>" << kFluidDensity << "</fluid_density>\n"
-      << "      <fluid_level>0.0</fluid_level>\n"
-      << "      <buoyancy name=\"barge_hull\">\n"
-      << "        <geometry>\n"
-      << "          <box>\n"
-      << "            <size>" << _L << " " << _B << " " << _H << "</size>\n"
-      << "          </box>\n"
-      << "        </geometry>\n"
-      << "      </buoyancy>\n"
-      << "    </plugin>\n"
-      << "  </model>\n"
-      << "</sdf>\n";
-  return sdf.str();
+  /// 2026-10-16：抽取到 shared/BargeFactory（MS-03/MS-06 交付物导入时
+  /// 需按同一参数重建同一对象），此处委托调用，行为不变。
+  return keship::MakeBargeSDF(bargeName_, _L, _B, _H, _density,
+                              kFluidDensity, kGravity);
 }
 
 std::string IncliningExperimentDialog::makeWeightSDF(double _y) const
@@ -819,7 +753,7 @@ bool IncliningExperimentDialog::doSpawnBoth()
         "/world/" + worldName_ + "/create/blocking", req, 20000, rep, result);
     if (!ok || !result)
     {
-      std::cerr << "SP-03: 驳船生成失败" << std::endl;
+      std::cerr << "HS-04: 驳船生成失败" << std::endl;
       return false;
     }
 
@@ -831,7 +765,7 @@ bool IncliningExperimentDialog::doSpawnBoth()
     }
     if (bargeEntityId_ == 0)
     {
-      std::cerr << "SP-03: 无法解析驳船 entity ID" << std::endl;
+      std::cerr << "HS-04: 无法解析驳船 entity ID" << std::endl;
       return false;
     }
   }
@@ -858,18 +792,17 @@ bool IncliningExperimentDialog::doSpawnBoth()
   /// 重置状态
   weightY_ = 0.0;
   if (moveDebounce_) moveDebounce_->stop();
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(250);
-  weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(0.0);
+  weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true);
   weightEdit_->setText("0");
   weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText("0.000 m");
   quiescent_ = false;
   settleCounter_ = 0;
   spawned_ = true;
 
-  std::cout << "SP-03: 驳船 + 压载块已生成 — L=" << L
+  std::cout << "HS-04: 驳船 + 压载块已生成 — L=" << L
             << ", B=" << B << ", H=" << H << ", ρ=" << rho << std::endl;
   return true;
 }
@@ -885,16 +818,15 @@ void IncliningExperimentDialog::onSpawn()
   updateStatusDisplay();
 }
 
-void IncliningExperimentDialog::onSliderChanged(int _value)
+void IncliningExperimentDialog::onBallastSpinChanged(double _value)
 {
-  double y = (_value / 500.0 - 0.5) * 0.5;  // -0.25 to +0.25
+  const double y = _value;
 
-  /// 纯 UI 更新：输入框与读数**立即**跟随（不下发任何 RPC）
+  /// 纯 UI 更新：输入框**立即**跟随（不下发任何 RPC；数值框自身即读数）
   weightY_ = y;
   weightEdit_->blockSignals(true);
   weightEdit_->setText(QString::number(y, 'f', 3));
   weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText(QString::number(y, 'f', 3) + " m");
 
   if (spawned_)
   {
@@ -914,7 +846,9 @@ void IncliningExperimentDialog::onSliderChanged(int _value)
 void IncliningExperimentDialog::commitMove(double _y)
 {
   weightY_ = _y;
-  sliderValueLabel_->setText(QString::number(_y, 'f', 3) + " m");
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(_y);
+  weightSpin_->blockSignals(false);
 
   if (spawned_)
   {
@@ -956,11 +890,10 @@ void IncliningExperimentDialog::onApplyWeight()
   if (moveDebounce_) moveDebounce_->stop();
   pendingY_ = y;
 
-  /// 同步滑条位置（blockSignals 防回环触发 onSliderChanged）
-  const int v = std::clamp(static_cast<int>((y / 0.5 + 0.5) * 500.0), 0, 500);
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(v);
-  weightSlider_->blockSignals(false);
+  /// 同步数值框显示（blockSignals 防回环触发 onBallastSpinChanged）
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(y);
+  weightSpin_->blockSignals(false);
 
   /// 规范化显示（"0.1000" → "0.100"），便于阅读
   weightEdit_->blockSignals(true);
@@ -1015,7 +948,7 @@ void IncliningExperimentDialog::onRecord()
 
   updateChart();
 
-  std::cout << "SP-03: 记录数据 — y=" << weightY_
+  std::cout << "HS-04: 记录数据 — y=" << weightY_
             << ", φ=" << currentHeelDeg_
             << "°, tanφ=" << tanPhi << std::endl;
 }
@@ -1025,9 +958,9 @@ void IncliningExperimentDialog::onResetWeight()
   if (moveDebounce_) moveDebounce_->stop();
   commitMove(0.0);   ///< 统一入口：记录 y、重置判稳、下发、刷新面板
 
-  weightSlider_->blockSignals(true);
-  weightSlider_->setValue(250);
-  weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true);
+  weightSpin_->setValue(0.0);
+  weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true);
   weightEdit_->setText("0");
   weightEdit_->blockSignals(false);
@@ -1057,7 +990,7 @@ void IncliningExperimentDialog::onDeleteSelected()
     recordedData_.push_back({y, dy, phi, tanPhi, wDy});
   }
   updateChart();
-  std::cout << "SP-03: 已删除 " << selected.size() << " 行" << std::endl;
+  std::cout << "HS-04: 已删除 " << selected.size() << " 行" << std::endl;
 }
 
 void IncliningExperimentDialog::onClearAll()
@@ -1065,7 +998,7 @@ void IncliningExperimentDialog::onClearAll()
   dataTable_->setRowCount(0);
   recordedData_.clear();
   chartWidget_->clearData();
-  std::cout << "SP-03: 已清除全部数据" << std::endl;
+  std::cout << "HS-04: 已清除全部数据" << std::endl;
 }
 
 void IncliningExperimentDialog::onUpdatePose()
@@ -1115,10 +1048,67 @@ void IncliningExperimentDialog::updateChart()
   double d = computeTheoryDraft(densitySpin_->value(), heightSpin_->value());
   double displacement = kFluidDensity * kGravity * L * B * d;
   double gmExp = (std::abs(slope) > 1e-12) ? 1.0 / (displacement * slope) : 0.0;
+  gmExp_ = gmExp;   ///< 留存供「导出 GM 交付物」使用
   double gmTh = computeTheoryGM(L, B, heightSpin_->value(),
                                  densitySpin_->value());
 
   chartWidget_->setData(recordedData_, gmExp, gmTh);
+}
+
+void IncliningExperimentDialog::onExportGm()
+{
+  if (recordedData_.size() < 2) {
+    QMessageBox::information(this, "导出 GM 交付物",
+        "请先记录至少两组「压载—横倾」数据（点「记录数据」）——\n"
+        "GM 实验值由线性拟合得到，至少需要两组数据。");
+    return;
+  }
+  const double L = lengthSpin_->value();
+  const double B = breadthSpin_->value();
+  const double H = heightSpin_->value();
+  const double rho = densitySpin_->value();
+  const double draft = computeTheoryDraft(rho, H);
+
+  keship::GmDeliverable d;
+  d.model = "";   ///< 数学船型驳船（本实验场景无加载模型）
+  d.exportedAt =
+      QDateTime::currentDateTime().toString(Qt::ISODate).toStdString();
+  d.gmExperiment = gmExp_;
+  d.gmTheory = computeTheoryGM(L, B, H, rho);
+  d.displacementM3 = L * B * draft;
+  d.displacementKg = kFluidDensity * L * B * draft;
+  d.massKg = rho * L * B * H;
+  /// 长方体近似（与 makeBargeSDF 的 ixx 公式一致）
+  d.ixxKgM2 = d.massKg / 12.0 * (B * B + H * H);
+  d.cogZM = H / 2.0;
+  d.lengthM = L; d.breadthM = B; d.heightM = H;
+  d.densityKgM3 = rho;
+  d.waterDensity = kFluidDensity;
+  d.ballastOffsetY = weightY_;
+  d.notes = "HS-04 移动压载法（数学船型驳船，Ixx 为长方体近似）";
+  /// 船模信息（2026-10-16 张老师方案）：导入方据此重建同一对象
+  d.object.type = "math_hull";
+  d.object.name = bargeName_;
+  d.object.lengthM = L;
+  d.object.breadthM = B;
+  d.object.heightM = H;
+  d.object.densityKgM3 = rho;
+
+  QString path = QFileDialog::getSaveFileName(this, "导出 GM 交付物",
+      "hs04_gm.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+  std::string err;
+  if (!keship::WriteGmDeliverable(path.toStdString(), d, &err)) {
+    QMessageBox::warning(this, "导出 GM 交付物",
+        QString::fromStdString("导出失败：" + err));
+    return;
+  }
+  std::cout << "HS-04: GM 交付物已导出 -> " << path.toStdString()
+            << "（GM实验 " << d.gmExperiment << " m，Ixx "
+            << d.ixxKgM2 << " kg·m²）" << std::endl;
+  QMessageBox::information(this, "导出 GM 交付物",
+      "已导出。可在 MS-03「横摇 RAO 测量」中点「导入 GM 交付物」，\n"
+      "用 T₀ = 2π√(Ixx/(Δ·GM)) 与实测峰值周期对照。");
 }
 
 double IncliningExperimentDialog::computeTheoryGM(

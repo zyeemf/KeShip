@@ -9,6 +9,8 @@
 #include "KSPlugin_HydroBuoyancy.hh"
 
 #include <gz/sim/Model.hh>
+#include <gz/sim/Util.hh>
+#include <gz/msgs/any.pb.h>
 #include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/Geometry.hh>
 #include <gz/sim/components/ExternalWorldWrenchCmd.hh>
@@ -27,6 +29,7 @@
 #include "../utils/CylinderMeshGenerator.hh"
 #include "../utils/PrimitiveMeshGenerator.hh"
 #include "../utils/WaterAreaSerializer.hh"
+#include "../utils/PlanarMooring.hh"
 #include "keship/utils/KeshipPaths.hh"
 #include <gz/msgs/double.pb.h>
 #include <gz/sim/components/Name.hh>
@@ -351,6 +354,51 @@ void KSPlugin_HydroBuoyancy::Configure(
     }
   }
 
+  /// ── 软系泊：订阅 world 级命令话题并准备状态发布 ──────────────
+  /// 只对本模型生效（完整 scoped 名过滤），不影响其他模型与既有物理。
+  {
+    this->scopedName_ = gz::sim::scopedName(this->entity_, _ecm, "::", false);
+    const auto sep = this->scopedName_.find("::");
+    const std::string world = (sep == std::string::npos)
+        ? std::string("keship_world")
+        : this->scopedName_.substr(0, sep);
+    const std::string cmdTopic =
+        "/world/" + world + "/keship/experiment/mooring";
+    const std::string statusTopic =
+        "/world/" + world + "/keship/experiment/mooring_status";
+
+    this->dataPtr->mooringStatusPub =
+        this->dataPtr->node.Advertise<gz::msgs::Param>(statusTopic);
+    this->dataPtr->mooringStatusPubReady = true;
+
+    auto *mailbox = &this->dataPtr->mooringMailbox;
+    this->dataPtr->node.Subscribe<gz::msgs::Param>(cmdTopic,
+        [mailbox](const gz::msgs::Param &_msg) {
+          const auto &params = _msg.params();
+          auto itModel = params.find("target_model_scoped");
+          auto itEnabled = params.find("enabled");
+          auto itSession = params.find("session_id");
+          if (itModel == params.end() || itEnabled == params.end() ||
+              itSession == params.end())
+            return;
+          if (itModel->second.type() != gz::msgs::Any_ValueType_STRING ||
+              itEnabled->second.type() != gz::msgs::Any_ValueType_BOOLEAN ||
+              itSession->second.type() != gz::msgs::Any_ValueType_STRING)
+            return;
+          PlanarMooringCommand cmd;
+          cmd.targetModelScoped = itModel->second.string_value();
+          cmd.enabled = itEnabled->second.bool_value();
+          try {
+            cmd.sessionId = std::stoull(itSession->second.string_value());
+          } catch (...) {
+            return;
+          }
+          mailbox->Update(cmd);
+        });
+    gzmsg << "KSPlugin_HydroBuoyancy: 软系泊命令话题 " << cmdTopic
+          << " (scoped=" << this->scopedName_ << ")" << std::endl;
+  }
+
   gzmsg << "KSPlugin_HydroBuoyancy: 配置完成 — "
         << "buoyancy=" << (enableBuoyancy_?"on":"off")
         << ", hydro=" << (enableHydro_?"on":"off")
@@ -369,9 +417,23 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     return;
   if (this->linkEntity_ == gz::sim::kNullEntity)
     return;
-  if (!this->enableBuoyancy_ && !this->enableHydro_)
+  /// 软系泊命令在浮力/水动力关闭时仍需生效（RAO 边界条件）：
+  /// 因此早退条件必须把「本模型被指定为系泊目标」纳入判断。
+  const auto mooringSnapshot = this->dataPtr->mooringMailbox.Snapshot();
+  const bool mooringLeaseFresh = mooringSnapshot.found &&
+      (std::chrono::steady_clock::now() - mooringSnapshot.receivedAt) <
+          std::chrono::milliseconds(1500);
+  const auto targetLeafName = [](const std::string &_s) {
+    const auto p = _s.rfind("::");
+    return p == std::string::npos ? _s : _s.substr(p + 2);
+  };
+  const bool mooringWanted = mooringLeaseFresh &&
+      mooringSnapshot.command.enabled &&
+      targetLeafName(mooringSnapshot.command.targetModelScoped) == this->modelName_;
+
+  if (!this->enableBuoyancy_ && !this->enableHydro_ && !mooringWanted)
     return;
-  if (this->enableHydro_
+  if (this->enableHydro_ && !mooringWanted
       && this->dataPtr->dampingMode_ != "pose_based"
       && (!this->dataPtr->fossen || !this->dataPtr->fossen->valid()))
     return;
@@ -663,6 +725,40 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         "ERKNS_4math2v77Matrix6IdEE") != nullptr;
   }();
 
+  /// ── [DIAG-MA] S2 决策诊断（2026-10-13）──────────────────────────────
+  ///   背景：S2 只在"出水↔入水"翻转时下发并打印 ⇒ 单看日志分不清"未生效"与"无翻转"。
+  ///   做法：把每次判定的关键量限频落盘（每 25 帧）到 <logPrefix>_diag_ma.log，
+  ///         供验收/排障直接判读（文件在 data/log 下，不入库）。
+  ///   开销：≈2 Hz、约 6 KB·min⁻¹·会话⁻¹。
+  ///   开关：`KESHIP_MA_DIAG=0` 关闭（默认开）。
+  static const bool maDiagEnabled = []() {
+    const char *e = std::getenv("KESHIP_MA_DIAG");
+    return !(e && std::string(e) == "0");
+  }();
+  /// 6×6 矩阵取对角 6 元的紧凑输出（诊断用）
+  static const auto maDiag6 = [](const gz::math::Matrix6d &_m) {
+    std::string s;
+    for (int i = 0; i < 6; ++i)
+    { s += std::to_string(_m(i, i)); if (i < 5) s += "|"; }
+    return s;
+  };
+  {
+    static long maGateCount = 0;
+    if (maDiagEnabled && (++maGateCount % 25) == 0)
+    {
+      DiagnosticLog::write(this->logPrefix_ + "_diag_ma.log",
+          "[KSMa-gate] simT,inWater,subVol,outOfWater,hasMA,symAvail,cancelEn",
+          std::string("[gate],")
+          + std::to_string(std::chrono::duration<double>(this->dataPtr->simTime_).count())
+          + "," + std::to_string(inWater ? 1 : 0)
+          + "," + std::to_string(totalSubVol)
+          + "," + std::to_string(((!inWater) || (totalSubVol < 1e-9)) ? 1 : 0)
+          + "," + std::to_string(this->dataPtr->hasAddedMass_ ? 1 : 0)
+          + "," + std::to_string(maSymAvailable ? 1 : 0)
+          + "," + std::to_string(maCancelEnabled ? 1 : 0));
+    }
+  }
+
   if (maSymAvailable && maCancelEnabled && this->dataPtr->hasAddedMass_)
   {
     const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
@@ -701,6 +797,8 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     /// ★ S3′（2026-10-07）：目标 M_A —— 出水 ⇒ 0；
     ///   入水 ⇒ 按**解析平衡浸没比 tau0** 的几何值（S3 开）或 ECM 原值（S3 关，= 现状）。
     gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
+    double maOrigMax = -1.0;    // [DIAG-MA] ECM 回读的最大元（-1 = 无值）
+    int    maOrigHas = 0;       // [DIAG-MA] ECM 是否回读到值
     if (!outStable)
     {
       if (this->dataPtr->maDraftEnabled_ && !this->dataPtr->bodies.empty()
@@ -715,9 +813,20 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       }
       else
       {
+        /// ★ 2026-10-23：**入水 ⇒ ECM 原值；出水 ⇒ 零**（离散两态，S2 原设计）。
+        ///   不做浸没比缩放：连续插值会让 target 每帧都变 ⇒ 阈值门控每帧触发
+        ///   ⇒ 每帧调 SetFluidAddedMass ⇒ 每步 setSpatialTensor（与修 S1 Clear 前等效）。
+        ///   保持恒定值，命令才只在状态翻转时下发一次。
+        ///   ⚠ 不能用 `ShipGeometricAddedMass()`：它与 SDF 标定值不是同一个数，实测 RAO −10%。
         auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
         if (orig)
+        {
           target = *orig;
+          maOrigHas = 1;
+          for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 6; ++j)
+              maOrigMax = std::max(maOrigMax, std::abs((*orig)(i, j)));
+        }
       }
     }
 
@@ -726,6 +835,9 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
     ///     之后不再因目标值随帧变化而下发 ⇒ 不破坏动量守恒。
     ///   S3 关（默认，KESHIP_MA_DRAFT≠1）：沿用「相对上次下发值变化超阈值」门控，
     ///     行为与改动前逐位一致。
+    /// ⚠ 门控依赖 target **恒定**：若 target 每帧变（如加浸没比插值），
+    ///   needSend 会每帧为真 ⇒ 每帧 SetFluidAddedMass ⇒ 每步 setSpatialTensor。
+    ///   2026-10-23 已因此踩坑（连续插值版本 RAO −10%），改动前务必确认。
     bool needSend = false;
     /// ★ S3′（2026-10-07 最终形态）：状态翻转（出水↔入水）**且静止**时下发；
     ///   保持 S2 的"完全出水 ⇒ 归零"语义。
@@ -746,6 +858,28 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
                          - this->dataPtr->lastMaSent_(i, j)));
           }
         needSend = (dmax > std::max(1e-6, MaRelEps() * scale));
+      }
+    }
+    /// ── [DIAG-MA] 下发判定落盘（每次下发 + 每 25 帧）──────────────────
+    {
+      static long maDecCount = 0;
+      if (maDiagEnabled && (needSend || (++maDecCount % 25) == 0))
+      {
+        DiagnosticLog::write(this->logPrefix_ + "_diag_ma.log",
+            "[KSMa-dec] simT,outOfWater,outStable,needSend,sentValid,s3Mode,v,"
+            "origHas,origMax,targetDiag,lastSentDiag",
+            std::string("[dec],")
+            + std::to_string(std::chrono::duration<double>(this->dataPtr->simTime_).count())
+            + "," + std::to_string(outOfWater ? 1 : 0)
+            + "," + std::to_string(outStable ? 1 : 0)
+            + "," + std::to_string(needSend ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maSentValid_ ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maDraftEnabled_ ? 1 : 0)
+            + "," + std::to_string(this->dataPtr->maLastVn_)
+            + "," + std::to_string(maOrigHas)
+            + "," + std::to_string(maOrigMax)
+            + "," + maDiag6(target)
+            + "," + maDiag6(this->dataPtr->lastMaSent_));
       }
     }
     if (needSend)
@@ -786,6 +920,30 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
   {
     if (inWater && this->enableHydro_)
     {
+      /// ★ 阻尼按浸没比连续缩放（2026-10-23）—— **默认关闭**（张老师定）。
+      ///   false：f ≡ 1，与 2026-10-23 之前**逐位一致**（当前选择）
+      ///   true ：f = Σbody.subVol / Σbody.totalVolume（完全出水 0 / 全浸 1）
+      ///   ⚠ 开启会使 MS-03 RAO 10.8754 → 10.7648（−1.0%），需先更新基线。
+      ///   开关：Implementation::dampImmersionScaleEnabled_（.hh）。
+      double fDamp = 1.0;
+      if (this->dataPtr->dampImmersionScaleEnabled_)
+      {
+        double cap = 0.0;
+        for (const auto &b : this->dataPtr->bodies)
+          cap += b.totalVolume;
+        if (cap > 1e-12)
+          fDamp = std::min(1.0, std::max(0.0, totalSubVol / cap));
+      }
+
+      /// ★ 阻尼力作用点 = 质心（2026-10-14 修复，见 doc/audit/hydro_damping_arm_2026-10-14.md）
+      /// 原填 linkWorldPos（link 原点＝船体角点，距质心 1.6 m/0.99 m），而引擎按 link 原点解释力
+      /// ⇒ 绕质心多出 (linkOrigin − CoM) × F_damping 的**寄生偏航力矩**
+      /// ⇒ 两桨等推力下船仍持续回转（无头实测 ω→−0.36 rad/s；改为质心后 ω→0，直航）。
+      /// 阻尼为分布水动力，物理上作用于质心（Fossen 广义力约定）⇒ 力项无力臂，力矩全部来自 pureTorque。
+      /// 与 §14.2 流速/风力“虚假偏航力矩”同源缺陷，本次一并修正。
+      auto dampComPose = this->linkObj_.WorldInertialPose(_ecm);
+      const gz::math::Vector3d dampApplyPoint =
+          dampComPose ? dampComPose->Pos() : linkWorldPos;
       if (this->dataPtr->dampingMode_ == "pose_based"
           && this->dataPtr->hasCylinderGeometry_
           && !this->dataPtr->bodies.empty())
@@ -795,9 +953,10 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
         computePoseBasedDamping(
             _ecm, modelPose, totalSubVol, effectiveFluidLevel,
             dampForce, dampTorque, totalMass);
-        /// 阻尼的**力项无力臂**（既有口径：隐含作用于 link 原点）⇒ applyPoint 填 linkWorldPos，
-        /// 叉乘恒为 0，力矩全部来自 pureTorque。**本次重构不改这一口径、不改数值**。
-        acc.Add({"damping/pose_based", dampForce, linkWorldPos, dampTorque});
+        /// 阻尼的**力项无力臂**（作用于质心）⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+        dampForce *= fDamp;   ///< 按浸没比缩放（2026-10-23）
+        dampTorque *= fDamp;
+        acc.Add({"damping/pose_based", dampForce, dampApplyPoint, dampTorque});
       }
       else if (this->dataPtr->fossen && this->dataPtr->fossen->valid())
       {
@@ -822,12 +981,14 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
           gz::math::Vector3d torqueWorld = modelPose.Rot() * gz::math::Vector3d(
               tauBody(3), tauBody(4), tauBody(5));
 
-          /// 同上：Fossen 阻尼的力项无力臂（隐含作用于 link 原点）
-          /// ⇒ applyPoint 填 linkWorldPos，叉乘恒为 0，力矩全部来自 pureTorque。
-          acc.Add({"damping/fossen", forceWorld, linkWorldPos, torqueWorld});
+          /// 同上：Fossen 阻尼的力项无力臂（作用于质心）
+          /// ⇒ applyPoint 填质心，叉乘恒为 0，力矩全部来自 pureTorque。
+          forceWorld *= fDamp;   ///< 按浸没比缩放（2026-10-23）
+          torqueWorld *= fDamp;
+          acc.Add({"damping/fossen", forceWorld, dampApplyPoint, torqueWorld});
 
           auto &d = this->dataPtr->hydroDiag;
-          for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i);
+          for (int i = 0; i < 6; ++i) d.tauD[i] = tauBody(i) * fDamp;
           d.hydroActive = true;
           d.waterFrameCount++;
         }
@@ -1007,6 +1168,10 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
       + std::to_string(d.tauD[3]) + "," + std::to_string(d.tauD[4]) + "," + std::to_string(d.tauD[5]));
   }
   this->dataPtr->logWriteCounter++;
+
+  /// 7.5 软系泊（MS-02/03/06）：只约束水平位置与世界航向，
+  ///     保留 roll/pitch/heave 自由；力作用于质心，力矩为世界 Z 纯力矩。
+  this->ApplyMooring(_ecm, _info, linkWorldPose, acc);
 
   /// 8. 汇总写入 ECM（wrench 每步被物理系统 Clear，多插件共存无顺序依赖）
   this->ApplyForces(_ecm, acc.TotalForce(), acc.TotalTorque());
@@ -1349,6 +1514,164 @@ void KSPlugin_HydroBuoyancy::LoadMultiBuoyancy(
 }
 
 /////////////////////////////////////////////////
+void KSPlugin_HydroBuoyancy::ApplyMooring(
+    gz::sim::EntityComponentManager &_ecm,
+    const gz::sim::UpdateInfo &_info,
+    const gz::math::Pose3d &_linkWorldPose,
+    keship::ForceAccumulator &_acc)
+{
+  (void)_info;
+  auto &d = *this->dataPtr;
+  const auto snap = d.mooringMailbox.Snapshot();
+  const bool leaseFresh = snap.found &&
+      (std::chrono::steady_clock::now() - snap.receivedAt) <
+          std::chrono::milliseconds(1500);
+  // 目标匹配按 leaf 名（world 由话题隔离；ModelManager 保证同一 world 内 leaf 唯一）。
+  // 插件侧 scopedName 在不同 spawn 路径下可能只返回 leaf，故不依赖完整 scoped 串。
+  const auto targetLeaf = [](const std::string &_s) {
+    const auto p = _s.rfind("::");
+    return p == std::string::npos ? _s : _s.substr(p + 2);
+  };
+  const bool active = leaseFresh && snap.command.enabled &&
+      targetLeaf(snap.command.targetModelScoped) == this->modelName_;
+
+  auto publishStatus = [&](bool _force) {
+    if (!d.mooringStatusPubReady) return;
+    if (!_force && ++d.mooringStatusCounter % 100 != 0) return;
+    gz::msgs::Param msg;
+    auto setStr = [&msg](const char *_k, const std::string &_v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_STRING);
+      a.set_string_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setBool = [&msg](const char *_k, bool _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_BOOLEAN);
+      a.set_bool_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setDbl = [&msg](const char *_k, double _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_DOUBLE);
+      a.set_double_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    auto setInt = [&msg](const char *_k, int _v) {
+      gz::msgs::Any a;
+      a.set_type(gz::msgs::Any_ValueType_INT32);
+      a.set_int_value(_v);
+      (*msg.mutable_params())[_k] = a;
+    };
+    setStr("model_scoped", this->scopedName_);
+    setStr("session_id", std::to_string(d.mooringSessionId));
+    setBool("applied", d.mooringApplied);
+    setStr("reason", d.mooringApplied ? "applied"
+                                     : (active ? "capturing" : "inactive"));
+    setDbl("anchor_x", d.mooringReference.x);
+    setDbl("anchor_y", d.mooringReference.y);
+    setDbl("anchor_yaw", d.mooringReference.yaw);
+    /// ★ 2026-10-17 修复：误差必须与锚点同参考点（都是质心水平位置）。
+    ///   原先锚点取质心、误差取 link 原点，两者水平相距约 1.88 m
+    ///   ⇒ 即使完全约束也恒显示 ~1.9 m，误导使用者。
+    gz::math::Vector3d comForStatus = _linkWorldPose.Pos();
+    if (auto ic = _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_))
+      comForStatus = _linkWorldPose.Rot() * ic->Data().Pose().Pos()
+                   + _linkWorldPose.Pos();
+    setDbl("position_error",
+           std::hypot(comForStatus.X() - d.mooringReference.x,
+                      comForStatus.Y() - d.mooringReference.y));
+    setDbl("yaw_error",
+           keship::WrapPlanarMooringAngle(
+               _linkWorldPose.Rot().Euler().Z() - d.mooringReference.yaw));
+    setDbl("force_x", d.mooringLastForce.X());
+    setDbl("force_y", d.mooringLastForce.Y());
+    setDbl("yaw_torque", d.mooringLastTorque);
+    setInt("force_saturated", d.mooringForceSaturated ? 1 : 0);
+    setInt("yaw_saturated", d.mooringYawSaturated ? 1 : 0);
+    d.mooringStatusPub.Publish(msg);
+  };
+
+  if (!active)
+  {
+    if (d.mooringApplied)
+    {
+      d.mooringApplied = false;
+      d.mooringLastForce.Set(0, 0, 0);
+      d.mooringLastTorque = 0.0;
+      d.mooringForceSaturated = false;
+      d.mooringYawSaturated = false;
+      publishStatus(true);
+    }
+    else if (snap.found)
+    {
+      publishStatus(false);
+    }
+    return;
+  }
+
+  const auto inerOpt =
+      _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_);
+  if (!inerOpt)
+  {
+    d.mooringApplied = false;
+    publishStatus(true);
+    return;
+  }
+  const auto &inertial = inerOpt->Data();
+  const double mass = inertial.MassMatrix().Mass();
+  const gz::math::Pose3d inertialPose = inertial.Pose();
+  const gz::math::Vector3d comWorld =
+      _linkWorldPose.Rot() * inertialPose.Pos() + _linkWorldPose.Pos();
+
+  /// 世界系惯量垂直分量：I_world = R · I · Rᵀ，取 (2,2)
+  const gz::math::Matrix3d rLink(_linkWorldPose.Rot());
+  const gz::math::Matrix3d rInertial(inertialPose.Rot());
+  const gz::math::Matrix3d rTotal = rLink * rInertial;
+  const gz::math::Matrix3d iWorld =
+      rTotal * inertial.MassMatrix().Moi() * rTotal.Transposed();
+  const double izzWorld = iWorld(2, 2);
+
+  /// 新 session：只捕获一次锚点（COM 水平位置 + link 航向）
+  if (d.mooringSessionId != snap.command.sessionId)
+  {
+    d.mooringSessionId = snap.command.sessionId;
+    d.mooringReference.x = comWorld.X();
+    d.mooringReference.y = comWorld.Y();
+    d.mooringReference.yaw = _linkWorldPose.Rot().Euler().Z();
+    d.mooringApplied = mass > 0.0 && izzWorld > 0.0;
+    publishStatus(true);
+    if (!d.mooringApplied) return;
+  }
+
+  PlanarMooringState state;
+  state.x = comWorld.X();
+  state.y = comWorld.Y();
+  state.yaw = _linkWorldPose.Rot().Euler().Z();
+  const auto linVel =
+      this->linkObj_.WorldLinearVelocity(_ecm, inertialPose.Pos());
+  if (linVel) { state.vx = linVel->X(); state.vy = linVel->Y(); }
+  const auto angVel = this->linkObj_.WorldAngularVelocity(_ecm);
+  if (angVel) state.yawRate = angVel->Z();
+
+  const auto out = keship::ComputePlanarMooring(
+      true, d.mooringReference, state, mass, izzWorld);
+
+  d.mooringApplied = true;
+  d.mooringLastForce = out.force;
+  d.mooringLastTorque = out.yawTorque;
+  d.mooringForceSaturated = out.forceSaturated;
+  d.mooringYawSaturated = out.yawSaturated;
+
+  /// 水平力作用于质心 ⇒ 不直接产生 roll/pitch 力矩；
+  /// 偏航力矩为世界 Z 纯力矩（applyPoint 取 link 原点，叉乘为 0）。
+  _acc.Add({"mooring/planar", out.force, comWorld});
+  _acc.Add({"mooring/yaw", gz::math::Vector3d::Zero,
+            _linkWorldPose.Pos(), gz::math::Vector3d(0.0, 0.0, out.yawTorque)});
+
+  publishStatus(false);
+}
+
 void KSPlugin_HydroBuoyancy::ApplyForces(
     gz::sim::EntityComponentManager &_ecm,
     const gz::math::Vector3d &_force,

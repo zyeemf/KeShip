@@ -24,6 +24,23 @@ struct Triangle3D
   gz::math::Vector3d v0, v1, v2;
 };
 
+/// @brief 源模型的一个材质（★ 2026-10-31：保留每材质颜色，规范化 OBJ 时写成多段 usemtl）
+///
+/// 背景：此前加载器把 2~4 个 aiMesh（每个对应一个 glTF primitive/材质）合并成
+///   一份顶点表，材质索引直接丢掉 ⇒ 写出的 OBJ 只有一个 `usemtl material_1`
+///   + `Kd 0.7 灰`，于是橙色阳极氧化、钢、玻璃统统变白模。
+struct MeshMaterial
+{
+  std::string name;                       ///< 材质名（已脱敏，可安全用于 OBJ/MTL）
+  float kd[3] = {0.7f, 0.7f, 0.7f};       ///< 漫反射（glTF baseColorFactor）
+  float ks[3] = {0.05f, 0.05f, 0.05f};    ///< 高光
+  float ns = 10.0f;                       ///< 光泽度
+  /// ★ 2026-11-02 逐材质贴图（glb 常把贴图**内嵌**在 bufferView 里，assimp 记为 "*<idx>"）
+  std::string texFile;                    ///< 外部贴图路径（相对源模型目录或绝对）；空=无
+  std::vector<unsigned char> texBlob;     ///< 内嵌贴图的原始字节（mHeight==0 的压缩数据）
+  std::string texExt;                     ///< 内嵌贴图扩展名（png/jpg/…）
+};
+
 /// @brief 从文件加载的网格数据
 struct MeshDataSimple
 {
@@ -33,6 +50,10 @@ struct MeshDataSimple
   std::vector<std::pair<double,double>> texCoords;     // 每顶点 UV
   std::string texturePath;                             // diffuse 纹理路径
   std::vector<std::array<unsigned, 3>> triangleIndices; // 三角形顶点索引
+  /// ★ 2026-10-31 多材质：材质表 + 与 triangleIndices 对齐的每三角形材质索引。
+  ///   两者任一为空 ⇒ 走旧行为（单材质 material_1 灰），保证老资产输出不变。
+  std::vector<MeshMaterial> materials;
+  std::vector<int> triangleMaterial;
 };
 
 /// @brief 源模型的"朝上"约定。6 种，完整覆盖所有建模工具。
@@ -62,8 +83,10 @@ MeshDataSimple ConvertToZUp(const MeshDataSimple &_mesh, UpAxis _source);
 
 /// @brief 使用 Assimp 加载网格文件，返回 Z_UP 坐标系下的网格数据
 /// @param _filePath 模型文件路径（支持 DAE, STL, OBJ, GLTF 等）
+/// @param _alreadyZUp ★ 2026-11-01：源文件**已经是 Z-up**（标准载荷模型约定）⇒ 跳过
+///        glb/gltf 的 Y-UP→Z-UP 旋转。默认 false（保持既有行为）。
 /// @return 加载的网格数据（已校正为 Z_UP），加载失败时 vertices 为空
-MeshDataSimple LoadMeshFromFile(const std::string &_filePath);
+MeshDataSimple LoadMeshFromFile(const std::string &_filePath, bool _alreadyZUp = false);
 
 /// @brief 计算文件的缓存键（SHA1(绝对路径+修改时间+文件大小)）
 /// @param _filePath 文件路径
@@ -82,7 +105,10 @@ std::string MeshFileCacheKey(const std::string &_filePath);
 ///
 /// @param _srcPath 模型文件绝对路径（DAE/OBJ/STL/glTF 等，assimp 可读）
 /// @return 缓存 OBJ 的绝对路径（可直接写入 SDF <uri>），失败返回空串
-std::string NormalizeMeshToSDFCache(const std::string &_srcPath);
+/// @param _alreadyZUp ★ 2026-11-01：源文件已经是 Z-up（标准载荷模型）⇒ 不转轴；
+///        同时进入缓存 key（`|gzmap2z`），与 Y-up 版本互不串用。
+std::string NormalizeMeshToSDFCache(const std::string &_srcPath,
+                                    bool _alreadyZUp = false);
 
 /// @brief 只读规范化 OBJ 的顶点（**不做 Assimp 全量解析**）
 ///
@@ -137,7 +163,7 @@ MeshCacheCleanupResult CleanupUnusedMeshCache();
 /// （默认船型约 240 KB），故需在安全时机回收。
 ///
 /// ⚠️ **调用前提（硬约束，违反会删掉活模型的网格）**：
-///    1. 目标目录由**单一所有者独占**（如 `KeshipDispDir()` 仅 SP-01 对话框使用）；
+///    1. 目标目录由**单一所有者独占**（如 `KeshipDispDir()` 仅 HS-02 对话框使用）；
 ///    2. 该所有者的模型**已被删除**（网格已无人引用）。
 ///    安全放置点示例：实验对话框"生成模型"流程中 `doDeleteHull()` 之后、
 ///    写新网格之前 —— 此时旧模型确已从场景移除。

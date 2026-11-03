@@ -29,6 +29,17 @@ enum class SectionType {
   LEWIS_U,     // S(ζ) = √(1 - ζ²)
   LEWIS_V,     // S(ζ) = 1 - ζ
 };
+// ═══════════════════════════════════════════════════════════
+// 型值数据 (供型线图和学生编程)
+// ═══════════════════════════════════════════════════════════
+
+struct LinesData {
+  std::vector<double> stations;    // 站位 x [Nx+1]
+  std::vector<double> waterlines;  // 水线 z [Nz+1]
+  // 半宽表 halfBreadth[stationIdx][waterlineIdx]
+  std::vector<std::vector<double>> halfBreadths;
+};
+
 
 /// 统一数学船型规格
 struct ShipHullSpec {
@@ -50,6 +61,22 @@ struct ShipHullSpec {
   int visNx = 40, visNz = 20;    // 视觉网格
   int buoyNx = 20, buoyNz = 10;  // 浮力网格
 
+  // === 外部型值表（SD-10，可选）===
+  /// useOffsets=true 且 offsets 非空时，半宽改由 offsets 双线性插值给出
+  /// （见 HullOffsets::SampleOffsetsBilinear）；useOffsets=false（默认）时
+  /// **完全走原解析式，行为逐位不变** —— 老路径零影响由此保证。
+  LinesData offsets;
+  bool useOffsets = false;
+
+  // === 资料船型公式（Journée 1992, TU Delft Report 0909）===
+  /// 0 = 不用（走下面的 W(ξ)·S(ζ) 分离式，**默认**，老路径零影响）
+  /// 1 = α=1.0 → Model I/II，Cm=0.909
+  /// 2 = α=0.0 → Model III/IV，Cm=0.667
+  ///
+  /// 为什么需要单独分支：资料公式的 α 项 z²(1−z⁸)(1−x²)⁴ **耦合了 x 与 z**，
+  /// 无法写成 W(ξ)·S(ζ) 的分离形式，故不能复用 wlExponent/secExponent。
+  int docModel = 0;
+
   // === 工厂方法 ===
   static ShipHullSpec WigleyClassic(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec WigleyFlat(double L, double B, double D, double rho = 500.0);
@@ -57,6 +84,10 @@ struct ShipHullSpec {
   static ShipHullSpec WigleyFine(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec LewisU(double L, double B, double D, double rho = 500.0);
   static ShipHullSpec LewisV(double L, double B, double D, double rho = 500.0);
+
+  /// 资料公式族（Journée 1992）：_cm909=true → Model I/II；false → Model III/IV
+  static ShipHullSpec WigleyDoc(double L, double B, double D, bool _cm909,
+                                 double rho = 500.0);
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -66,7 +97,9 @@ struct ShipHullSpec {
 struct HydroProperties {
   // 设计吃水参数
   double draft = 0.0;       // 吃水 [m]
-  double volume = 0.0;      // 排水体积 [m³]
+  double volume = 0.0;      // 全船体积 [m³] —— ★ 2026-10-24 更正：原注「排水体积」有误
+                            //   本字段被 4 处 `m = rho*volume` 当「均质船体体积」用；
+                            //   设计吃水处的排水体积请用下方 volumeD
   double KB = 0.0;          // 浮心垂向位置 [m]
   double BM = 0.0;          // 稳心半径 [m]
   double GM = 0.0;          // 初稳性高度 [m]
@@ -90,17 +123,6 @@ struct HydroProperties {
   // 排水量曲线 (不同吃水)
   std::vector<double> draftCurve;       // 吃水采样值 [m]
   std::vector<double> volumeCurve;      // 对应排水体积 [m³]
-};
-
-// ═══════════════════════════════════════════════════════════
-// 型值数据 (供型线图和学生编程)
-// ═══════════════════════════════════════════════════════════
-
-struct LinesData {
-  std::vector<double> stations;    // 站位 x [Nx+1]
-  std::vector<double> waterlines;  // 水线 z [Nz+1]
-  // 半宽表 halfBreadth[stationIdx][waterlineIdx]
-  std::vector<std::vector<double>> halfBreadths;
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -151,6 +173,11 @@ class ShipHullGenerator {
 
   // === 型值 ===
   const LinesData &lines() const { return lines_; }
+
+  /// 单点半宽（供说明文档画剖面曲线；与生成网格用的是同一个函数）
+  double sampleHalfBreadthForHelp(double _x, double _z) const {
+    return halfBreadthFunc(_x, _z);
+  }
 
   // === Catto 验证 ===
   double cattoTotalVolume() const { return cattoVolume_; }

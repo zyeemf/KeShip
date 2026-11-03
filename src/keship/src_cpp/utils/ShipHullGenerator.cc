@@ -4,6 +4,7 @@
 /* 数学船型生成器 v2 实现 — Gazebo Z_UP 直接生成 */
 
 #include "ShipHullGenerator.hh"
+#include "HullOffsets.hh"   // SD-10：外部型值表插值
 
 #include <algorithm>
 #include <cmath>
@@ -19,6 +20,18 @@ namespace keship {
 
 // ═══════════════════════════════════════════════════════════
 // ShipHullSpec 工厂方法
+//
+// ★ 指数口径（2026-10-28 张老师拍板：**以界面为准**）
+//   本组默认值必须与 ParametricHullDialog::onFamilyChanged（GUI 选族时重置的
+//   名义值）**逐项相同**。原先两者 5 族中有 4 族不一致，导致
+//   「GUI 选平底生成的船」与「keship_ctl spawn-hull --type wigley-flat」不是同一条船。
+//
+//   约束（改动前务必看）：
+//   ① GUI 路径 refresh() 会用 spin 值**覆盖** spec 指数，故本处默认值对 GUI 无影响，
+//      只影响无头路径（keship_ctl.cc:486-491）与 HS-09 的船型下拉；
+//   ② 改这里必须同步改 onFamilyChanged 的 case 分支，反之亦然——两处是同一个口径；
+//   ③ Lewis U/V 走 secType 分支（sectionShape 第 72-78 行），**不读 secExponent**，
+//      故界面给这两族显示的 sec 指数实际不参与计算（见 doc/SL-03/复核/06_全面复查 §6.5）。
 // ═══════════════════════════════════════════════════════════
 
 ShipHullSpec ShipHullSpec::WigleyClassic(double L, double B, double D, double rho) {
@@ -29,19 +42,19 @@ ShipHullSpec ShipHullSpec::WigleyClassic(double L, double B, double D, double rh
 }
 ShipHullSpec ShipHullSpec::WigleyFlat(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
-  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
-  s.secType=SectionType::PARABOLIC; s.secExponent=4.0;
+  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=3.0;
+  s.secType=SectionType::PARABOLIC; s.secExponent=2.0;
   return s;
 }
 ShipHullSpec ShipHullSpec::WigleySharp(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
   s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
-  s.secType=SectionType::PARABOLIC; s.secExponent=1.5;
+  s.secType=SectionType::PARABOLIC; s.secExponent=1.0;
   return s;
 }
 ShipHullSpec ShipHullSpec::WigleyFine(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
-  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=3.0;
+  s.wlType=WaterlineType::PARABOLIC; s.wlExponent=1.2;
   s.secType=SectionType::PARABOLIC; s.secExponent=2.0;
   return s;
 }
@@ -51,6 +64,18 @@ ShipHullSpec ShipHullSpec::LewisU(double L, double B, double D, double rho) {
   s.secType=SectionType::LEWIS_U;
   return s;
 }
+ShipHullSpec ShipHullSpec::WigleyDoc(double L, double B, double D, bool _cm909,
+                                      double rho)
+{
+  ShipHullSpec s;
+  s.L = L;
+  s.B = B;
+  s.D = D;
+  s.rho = rho;
+  s.docModel = _cm909 ? 1 : 2;
+  return s;
+}
+
 ShipHullSpec ShipHullSpec::LewisV(double L, double B, double D, double rho) {
   ShipHullSpec s; s.L=L; s.B=B; s.D=D; s.rho=rho;
   s.wlType=WaterlineType::PARABOLIC; s.wlExponent=2.0;
@@ -81,6 +106,34 @@ double ShipHullGenerator::sectionShape(double _zeta) const {
 }
 
 double ShipHullGenerator::halfBreadthFunc(double _x, double _z) const {
+  /// ★ SD-10（2026-10-30）：外部型值表优先。
+  ///   useOffsets=false（默认）时本分支不执行 ⇒ 老路径行为逐位不变。
+  ///   这是本次改动的**唯一内核接入点** —— 静水力 / 排水量 / GM / 网格 / 浮力
+  ///   均经本函数采样，故改此一处即全链跟随。
+  if (spec_.useOffsets && spec_.offsets.stations.size() >= 2 &&
+      spec_.offsets.waterlines.size() >= 2) {
+    return SampleOffsetsBilinear(spec_.offsets, _x, _z);
+  }
+
+  /// ★ 2026-10-31：资料公式族（Journée 1992, TU Delft Report 0909）
+  ///   y = (1−ζ²)(1−ξ²)(1+a₂ξ²+a₄ξ⁴) + α·ζ²(1−ζ⁸)(1−ξ²)⁴
+  ///   其中 ξ=2x/L−1 ∈[−1,1]（资料 x）、ζ=−z/D ∈[0,1]（资料 z，向下为正）、
+  ///   a₂=0.2、a₄=0.0；α=1 → Model I/II（Cm=0.909）、α=0 → Model III/IV（Cm=0.667）。
+  ///   自检：α=1 时舯剖面 y(0,ζ)=1−ζ¹⁰，∫₀¹=10/11 ⇒ Cm=0.909，与资料表 1 一致。
+  ///   docModel==0 时不进此分支，老路径行为不变。
+  if (spec_.docModel == 1 || spec_.docModel == 2) {
+    const double xi = 2.0 * _x / spec_.L - 1.0;
+    const double zt = -_z / spec_.D;
+    if (xi < -1.0 || xi > 1.0 || zt < 0.0 || zt > 1.0) return 0.0;
+    const double a2 = 0.2, a4 = 0.0;
+    const double alpha = (spec_.docModel == 1) ? 1.0 : 0.0;
+    const double base = (1.0 - zt * zt) * (1.0 - xi * xi) *
+                        (1.0 + a2 * xi * xi + a4 * xi * xi * xi * xi);
+    const double t1 = 1.0 - xi * xi;
+    const double bump = alpha * zt * zt * (1.0 - std::pow(zt, 8.0)) *
+                        t1 * t1 * t1 * t1;
+    return spec_.B * 0.5 * (base + bump);
+  }
   double xi = 2.0 * (_x / spec_.L) - 1.0;  // ∈ [-1, 1]
   double wl = waterlineShape(xi);
   if (wl <= 0.0) return 0.0;

@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
+#include <QPushButton>
 
 #include "keship/utils/WaterArea.hh"
 
@@ -29,17 +30,26 @@ private slots:
   void onWaveDirAutoToggled(bool _checked);
   void onParamEdited();
   void onSeaStateSelected(int _index);
+  void onSeaConfirmYes();
+  void onSeaConfirmNo();
 
 private:
   void setupUi();
   void loadFrom(const keship::WaterArea &_area);
   void updateSeaStateLabel();
+  void showSeaConfirm(int _level);
+  void applySeaStateLevel(int _level);
 
   keship::WaterArea area_;
 
   // 海况
   QLabel      *seaStateLabel_;
   QComboBox   *seaStateCombo_;
+  int          pendingSeaLevel_{-1};
+  QWidget     *seaConfirmBar_{nullptr};
+  QLabel      *seaConfirmLabel_{nullptr};
+  QPushButton *seaConfirmYes_{nullptr};
+  QPushButton *seaConfirmNo_{nullptr};
 
   // 风
   QDoubleSpinBox *windSpeedSpin_;

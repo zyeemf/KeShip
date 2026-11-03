@@ -1,10 +1,12 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-02 漂浮圆柱体初稳性实验对话框实现 */
+/* HS-03 漂浮圆柱体初稳性实验对话框实现 */
 /// 2026.5.27 重构
 
 #include "StabilityExperimentDialog.hh"
+#include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 #include "../shared/UiTheme.hh"
 #include "../shared/UiTheme.hh"
 
@@ -263,7 +265,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
       worldName_(_worldName),
       cylinderName_("SP01_cylinder")
 {
-  setWindowTitle("SP-02 漂浮圆柱体初稳性实验");
+  setWindowTitle("HS-03 漂浮圆柱体初稳性");
   setModal(false);
   resize(920, 720);
 
@@ -280,7 +282,7 @@ StabilityExperimentDialog::StabilityExperimentDialog(
   /// 初始理论显示
   updateTheoryDisplay();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -288,11 +290,10 @@ StabilityExperimentDialog::StabilityExperimentDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(_transportNode).Publish(msg);
   }
 
-  std::cout << "SP-02: 初稳性实验对话框已创建" << std::endl;
+  std::cout << "HS-03: 初稳性实验对话框已创建" << std::endl;
 }
 
 StabilityExperimentDialog::~StabilityExperimentDialog()
@@ -306,17 +307,9 @@ StabilityExperimentDialog::~StabilityExperimentDialog()
   poseTimer_->stop();
   doDeleteCylinder();
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
-  {
-    gz::msgs::Param msg; auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void StabilityExperimentDialog::setupUI()
@@ -668,7 +661,7 @@ bool StabilityExperimentDialog::doDeleteCylinder()
 
   if (!ok || !result)
   {
-    std::cout << "SP-02: 删除旧圆柱体失败" << std::endl;
+    std::cout << "HS-03: 删除旧圆柱体失败" << std::endl;
     return false;
   }
 
@@ -705,11 +698,11 @@ bool StabilityExperimentDialog::doSpawnCylinder(
 
   if (!ok || !result)
   {
-    std::cout << "SP-02: 生成圆柱体失败" << std::endl;
+    std::cout << "HS-03: 生成圆柱体失败" << std::endl;
     return false;
   }
 
-  std::cout << "SP-02: 圆柱体已生成 — D=" << _diameter
+  std::cout << "HS-03: 圆柱体已生成 — D=" << _diameter
             << ", L=" << _length << ", ρ=" << _density
             << ", roll=" << _rollDeg << "°" << std::endl;
   return true;
@@ -793,7 +786,7 @@ void StabilityExperimentDialog::onRecord()
     unstablePts_.push_back({s, DL});
   chartWidget_->setData(stablePts_, unstablePts_);
 
-  std::cout << "SP-02: 记录数据 — D=" << D << ", L=" << L
+  std::cout << "HS-03: 记录数据 — D=" << D << ", L=" << L
             << ", ρ=" << rho << ", s=" << s << ", D/L=" << DL
             << ", GM=" << gm << ", " << stableStr.toStdString() << std::endl;
 }
@@ -827,7 +820,7 @@ void StabilityExperimentDialog::onDeleteSelected()
       unstablePts_.push_back({s, dl});
   }
   chartWidget_->setData(stablePts_, unstablePts_);
-  std::cout << "SP-02: 已删除 " << selected.size() << " 行" << std::endl;
+  std::cout << "HS-03: 已删除 " << selected.size() << " 行" << std::endl;
 }
 
 void StabilityExperimentDialog::onClearAll()
@@ -840,7 +833,7 @@ void StabilityExperimentDialog::onClearAll()
   observing_ = false;
   observeCounter_ = 0;
 
-  std::cout << "SP-02: 已清除全部数据" << std::endl;
+  std::cout << "HS-03: 已清除全部数据" << std::endl;
 }
 
 void StabilityExperimentDialog::onUpdatePose()

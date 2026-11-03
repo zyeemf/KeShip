@@ -137,10 +137,14 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/editors/ThrusterEditorDialog.cc
   src_cpp/gui/keship/editors/HydrodynamicsEditorDialog.cc
   src_cpp/gui/keship/editors/SensorEditorDialog.cc
+  src_cpp/gui/keship/editors/DeviceDecorDialog.cc
   src_cpp/gui/keship/editors/WorldSettingsDialog.cc
   src_cpp/gui/keship/shared/Buoyancy3DView.cc
   src_cpp/gui/keship/shared/FlowLayout.cc
   src_cpp/gui/keship/shared/UiTheme.cc
+  src_cpp/gui/keship/shared/BargeFactory.cc
+  src_cpp/gui/keship/shared/WaveInertiaIO.cc
+  src_cpp/gui/keship/shared/WaveInertiaIO.cc
   src_cpp/gui/keship/viewers/CameraViewerDialog.cc
   src_cpp/gui/keship/viewers/LidarViewerDialog.cc
   src_cpp/gui/keship/experiments/StabilityExperimentDialog.cc
@@ -152,10 +156,34 @@ add_library(MenuPluginKeship SHARED
   src_cpp/gui/keship/tasks/MapWidget.cc
   src_cpp/gui/keship/tasks/TaskSetDialog.cc
   src_cpp/gui/keship/experiments/CodeRunnerDialog.cc
+  src_cpp/gui/keship/experiments/TurningCircleDialog.cc
+  src_cpp/gui/keship/experiments/ZigzagDialog.cc
+  src_cpp/gui/keship/experiments/WaveResponseDialog.cc
+  src_cpp/gui/keship/shared/StudentAlgorithmPanel.cc
+  src_cpp/gui/keship/shared/RaoCurveWidget.cc
+  src_cpp/gui/keship/shared/StudentCodeRunner.cc
+  src_cpp/gui/keship/experiments/SensorEstimationDialog.cc
+  src_cpp/gui/keship/experiments/ParametricHullDialog.cc
+  src_cpp/gui/keship/experiments/OffsetsHullDialog.cc
+  src_cpp/gui/keship/experiments/OperabilityDialog.cc
+  src_cpp/gui/keship/experiments/ResistanceDialog.cc
+  src_cpp/gui/keship/experiments/PropellerDialog.cc
+  src_cpp/gui/keship/experiments/CompartmentDialog.cc
+  src_cpp/gui/keship/experiments/BuoyancyLayoutDialog.cc
+  src_cpp/gui/keship/experiments/GzStabilityDialog.cc
+  src_cpp/gui/keship/experiments/DamageStabilityDialog.cc
+  src_cpp/gui/keship/experiments/ControlExpDialog.cc
+  src_cpp/gui/keship/experiments/LargeAngleStabilityDialog.cc
+  src_cpp/gui/keship/experiments/LinesReadingDialog.cc
+  src_cpp/gui/keship/experiments/StructureCognitionDialog.cc
+  src_cpp/gui/keship/experiments/MidshipSectionDialog.cc
+  src_cpp/gui/keship/experiments/LongitudinalStrengthDialog.cc
+  src_cpp/gui/keship/shared/ExpDeliverable.cc
   src_cpp/gui/keship/tasks/TaskMonitorDialog.cc
   src_cpp/gui/keship/water/WaterAreaDrawDialog.cc
   src_cpp/gui/keship/editors/EnvironmentParamsDialog.cc
   src_cpp/gui/keship/editors/InertiaCalculatorDialog.cc
+  src_cpp/gui/keship/editors/ProxyGeometryDialog.cc
   src_cpp/gui/keship/editors/LoadWorldDialog.cc
   src_cpp/gui/keship/editors/SaveWorldDialog.cc
   src_cpp/gui/keship/editors/SelectWorldDialog.cc
@@ -192,6 +220,12 @@ install(FILES
 ############### 物理插件 - 批量进行编译/链接/安装 ###############
 # 工具类静态库（只编译一次，链接到所有物理插件）
 add_library(keship_utils STATIC
+  src_cpp/utils/ResistanceCore.cc
+  src_cpp/utils/PropellerCore.cc
+  src_cpp/utils/StabilityGzCore.cc
+  src_cpp/utils/DamageStabilityCore.cc
+  src_cpp/utils/ControlExpCore.cc
+  src_cpp/utils/MidshipSectionCore.cc
   src_cpp/utils/Buoyancy.cc
   src_cpp/utils/MeshUtils.cc
   src_cpp/utils/Tetrahedron.cc
@@ -200,13 +234,20 @@ add_library(keship_utils STATIC
   src_cpp/utils/FossenModel.cc
   src_cpp/utils/DiagnosticLog.cc
   src_cpp/utils/ShipHullGenerator.cc
+  src_cpp/utils/HullOffsets.cc
   src_cpp/utils/WaterAreaManager.cc
   src_cpp/utils/WaterAreaVisualManager.cc
   src_cpp/utils/WaterAreaSerializer.cc
   src_cpp/utils/StbImageLoader.cc
   src_cpp/utils/MeshInertiaCalculator.cc
   src_cpp/utils/ModelManager.cc
+  src_cpp/utils/PayloadModel.cc
   src_cpp/utils/ForceAccumulator.cc
+  src_cpp/utils/TurningExperimentCore.cc
+  src_cpp/utils/ZigzagExperimentCore.cc
+  src_cpp/utils/WaveResponseCore.cc
+  src_cpp/utils/HiddenCaseGenerator.cc
+  src_cpp/utils/SensorEstimationCore.cc
 )
 # ★ 2026-09-28：碰撞体积"凸包"模式需要 3D 凸包 ⇒ 用系统自带的 qhull（重入版）
 find_package(PkgConfig REQUIRED)
@@ -219,6 +260,7 @@ target_link_libraries(keship_utils PUBLIC
   gz-common5::gz-common5
   assimp::assimp
   Eigen3::Eigen
+  tinyxml2                     # ★ 2026-11-01 标准载荷模型（model.sdf）解析
   ${QHULL_R_LIBRARIES}          # ★ 2026-09-28 qhull（凸包）
 )
 target_include_directories(keship_utils PUBLIC ${QHULL_R_INCLUDE_DIRS})
@@ -281,72 +323,233 @@ target_link_libraries(KSPlugin_WavesModel PUBLIC
 install(TARGETS KSPlugin_WavesModel DESTINATION lib)
 
 
-############### 测试插件 - 编译/链接/安装 ###############
-# 测试源码不入库（.gitignore 排除 src_cpp/test/），仅本地存在时编译
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/test)
-add_library(TestBuoyancy SHARED
-  src_cpp/test/test_buoyancy.cc
-)
-target_link_libraries(TestBuoyancy PUBLIC
-  gz-sim8::core
-  gz-math7
-  keship_utils
-)
-install(TARGETS TestBuoyancy DESTINATION lib)
+############### 回归测试（2026-10-24 入库）###############
+# 背景：此前测试源码不入库（.gitignore 排除 src_cpp/test/），仅"本地存在时编译"。
+#   2026-10-24 核查发现：该目录当时并不存在，块内 5 个目标的源码也已丢失
+#   ⇒ 干净 clone 无法构建任何测试，历史验证结论不可复现。
+# 现状：甲类回归测试源码随仓库分发（src_cpp/test/），默认不构建，不影响生产。
+# 用法：colcon build --cmake-args -DKESHIP_BUILD_TESTS=ON && ctest --output-on-failure
+option(KESHIP_BUILD_TESTS "构建 KeShip 回归测试（默认 OFF，不影响生产构建）" OFF)
 
-# 独立浮力测试程序（待修复 Server API 访问）
-# add_executable(test_buoy
-#   src_cpp/test/standalone_test_buoy.cc
-# )
-# target_link_libraries(test_buoy ...)
-# install(TARGETS test_buoy DESTINATION lib/${PROJECT_NAME})
+if(KESHIP_BUILD_TESTS)
+  enable_testing()
+  find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
-# 浮力算法单元测试（独立可执行，无需 Gazebo Server）
-add_executable(test_buoyancy_unit
-  src_cpp/test/test_buoyancy_unit.cc
-)
-target_link_libraries(test_buoyancy_unit PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_buoyancy_unit DESTINATION lib/${PROJECT_NAME})
+  # ---- 甲-1：无 Qt 依赖（只链 keship_utils）----
+  add_executable(hidden_cases_test src_cpp/test/hidden_cases_test.cc)
+  target_include_directories(hidden_cases_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(hidden_cases_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(hidden_cases_test rclcpp ament_index_cpp)
+  add_test(NAME hidden_cases COMMAND hidden_cases_test)
 
-# 规范化缓存单元测试（验证缓存 OBJ 与源模型标准系一致）
-add_executable(test_mesh_normalize
-  src_cpp/test/test_mesh_normalize.cc
-)
-target_link_libraries(test_mesh_normalize PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_mesh_normalize DESTINATION lib/${PROJECT_NAME})
+  add_executable(verify_f3_enable_buoy src_cpp/test/verify_f3_enable_buoy.cc)
+  target_include_directories(verify_f3_enable_buoy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(verify_f3_enable_buoy gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(verify_f3_enable_buoy rclcpp ament_index_cpp)
+  add_test(NAME f3_enable_buoy COMMAND verify_f3_enable_buoy)
 
-# 海况等级（WMO/Douglas）与风级（Beaufort）换算单元测试
-add_executable(test_sea_state
-  src_cpp/test/test_sea_state.cc
-)
-target_link_libraries(test_sea_state PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS test_sea_state DESTINATION lib/${PROJECT_NAME})
+  # 需命令行参数，不进 ctest（用法：batch1_verify_probe <源文件>...）
+  add_executable(batch1_verify_probe src_cpp/test/batch1_verify_probe.cc)
+  target_include_directories(batch1_verify_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(batch1_verify_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(batch1_verify_probe rclcpp ament_index_cpp)
 
-# 测试世界生成工具（KSM → 世界 SDF，供自动化验证）
-add_executable(gen_test_world
-  src_cpp/test/gen_test_world.cc
-)
-target_link_libraries(gen_test_world PUBLIC
-  gz-math7
-  keship_utils
-)
-install(TARGETS gen_test_world DESTINATION lib/${PROJECT_NAME})
+  # ---- 甲-2：Qt Widgets（离屏 GUI 测试）----
+  # 直接编译所需的 GUI 源文件，不链接整个 MenuPluginKeship 插件。
+  set(KS_GUI_TEST_SRCS
+    src_cpp/gui/keship/experiments/WaveResponseDialog.cc
+    src_cpp/gui/keship/shared/StudentAlgorithmPanel.cc
+    src_cpp/gui/keship/shared/RaoCurveWidget.cc
+    src_cpp/gui/keship/shared/StudentCodeRunner.cc
+    src_cpp/gui/keship/shared/UiTheme.cc
+    src_cpp/gui/keship/shared/BargeFactory.cc
+    src_cpp/gui/keship/shared/WaveInertiaIO.cc)
+
+  # 注：ms06_ui_offscreen_test.cc 未纳入 —— 它引用 MS06CodePracticeDialog（v1，已删除），
+  #     属过时测试；原件仍在 data/test/，但测的类已不存在，故降为丙类。
+  foreach(_t ms06_v2_offscreen_test ms06_v2_extra_test ms06_p3_modal_test ms06_layout_shot)
+    add_executable(${_t} src_cpp/test/${_t}.cc ${KS_GUI_TEST_SRCS})
+    target_include_directories(${_t} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+      ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(${_t} gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+    ament_target_dependencies(${_t} rclcpp ament_index_cpp)
+  endforeach()
+  add_test(NAME ms06_v2 COMMAND ms06_v2_offscreen_test)
+  add_test(NAME ms06_v2_extra COMMAND ms06_v2_extra_test)
+  add_test(NAME ms06_p3_modal COMMAND ms06_p3_modal_test)
+  add_test(NAME ms06_layout_shot COMMAND ms06_layout_shot)
+
+  # ---- 甲-3：SL-02 数学船型对话框（离屏 Qt，2026-10-25）----
+  # 只编译该对话框用到的 GUI 源（不链整插件），断言默认档位/系数/恢复默认/名称位姿/排布
+  add_executable(sl02_hull_dialog_test
+    src_cpp/test/sl02_hull_dialog_test.cc
+    src_cpp/gui/keship/shared/ShipHullDialog.cc
+    src_cpp/gui/keship/shared/LinesPlanDialog.cc
+    src_cpp/gui/keship/shared/UiTheme.cc)
+  target_include_directories(sl02_hull_dialog_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sl02_hull_dialog_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(sl02_hull_dialog_test rclcpp ament_index_cpp)
+  add_test(NAME sl02_hull_dialog COMMAND sl02_hull_dialog_test)
+
+  # ---- 甲-4：数学船型"改质量→重建"回归探针（2026-10-25）
+  # 需要一套运行中的世界，故**不进 ctest**；用法见 tools/gui_test/run_rebuild_probe.sh
+  add_executable(mathhull_rebuild_probe src_cpp/test/mathhull_rebuild_probe.cc)
+  target_include_directories(mathhull_rebuild_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(mathhull_rebuild_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(mathhull_rebuild_probe rclcpp ament_index_cpp)
+
+  # ---- 甲-5：SDF 组装纯函数单测（2026-10-25）----
+  # 覆盖 MakeMathHullSDF / ComposeRebuiltSDF / MakeBuoyancyPluginSDF /
+  #      InjectFluidAddedMass / EstimateMathHullHydro
+  add_executable(sdf_assembly_test src_cpp/test/sdf_assembly_test.cc)
+  target_include_directories(sdf_assembly_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sdf_assembly_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(sdf_assembly_test rclcpp ament_index_cpp)
+  add_test(NAME sdf_assembly COMMAND sdf_assembly_test)
+
+  # ---- 甲-7：SD-08 参数化型线设计（2026-10-27）
+  # 覆盖：Cb 口径自洽 / 静水力恒等式 / Cb 对 p 单调（反解前提）/ 型值表自洽 /
+  #       交付物写→读→校验往返 + 串号负例
+  add_executable(sd08_lines_test src_cpp/test/sd08_lines_test.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(sd08_lines_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd08_lines_test gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(sd08_lines_test rclcpp ament_index_cpp)
+  add_test(NAME sd08_lines COMMAND sd08_lines_test)
+
+  # ---- 甲-9：SD-10 型值表编程生成可浮船型（2026-10-30）
+  # 覆盖：乱序 CSV 归位 / 六条判据各配负例（缺格/重复/负半宽/超 B/2/缺端点/端部未趋零/体积偏差/网格过疏）
+  #       / 插值端点与区间外必须为 0（保证封闭）/ 21x11 体积对拍 / 三角数上限
+  add_executable(sd10_offsets_test src_cpp/test/sd10_offsets_test.cc)
+  target_include_directories(sd10_offsets_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_offsets_test keship_utils)
+  add_test(NAME sd10_offsets COMMAND sd10_offsets_test)
+
+  # SD-10 对话框：离屏回归（四要素的机器证据：可构造 + 无交互入口 + 导出）
+  add_executable(sd10_dialog_test
+    src_cpp/test/sd10_dialog_test.cc
+    src_cpp/gui/keship/experiments/OffsetsHullDialog.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc
+    src_cpp/gui/keship/shared/StudentCodeRunner.cc)
+  target_include_directories(sd10_dialog_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/experiments
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_dialog_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(sd10_dialog_test rclcpp ament_index_cpp)
+  add_test(NAME sd10_dialog COMMAND sd10_dialog_test)
+  set_tests_properties(sd10_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  # SD-10 探针：离线复算网格浮力的浸水体积曲线（排查用，不入 ctest）
+  add_executable(sd10_buoy_probe src_cpp/test/sd10_buoy_probe.cc)
+  target_include_directories(sd10_buoy_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(sd10_buoy_probe keship_utils)
+
+  # ---- 甲-8：L8 阻力/推进计算内核（2026-10-27）
+  add_executable(rp_core_test src_cpp/test/rp_core_test.cc
+    src_cpp/utils/ResistanceCore.cc src_cpp/utils/PropellerCore.cc)
+  target_include_directories(rp_core_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME rp_core COMMAND rp_core_test)
+
+  # ---- 甲-9：L2 稳性计算内核（2026-10-27）
+  add_executable(l2_stability_test src_cpp/test/l2_stability_test.cc
+    src_cpp/utils/StabilityGzCore.cc src_cpp/utils/DamageStabilityCore.cc)
+  target_include_directories(l2_stability_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME l2_stability COMMAND l2_stability_test)
+
+  # ---- 甲-10：L6/L7 控制链纯算法（2026-10-27）
+  add_executable(control_core_test src_cpp/test/control_core_test.cc)
+  target_include_directories(control_core_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils)
+  add_test(NAME control_core COMMAND control_core_test)
+
+  # ---- 甲-12：HS-06 大倾角稳性 + SD-02 型线图识读（2026-10-28）
+  add_executable(hs06_sd02_test
+    src_cpp/test/hs06_sd02_test.cc
+    src_cpp/gui/keship/experiments/LargeAngleStabilityDialog.cc
+    src_cpp/gui/keship/experiments/LinesReadingDialog.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(hs06_sd02_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(hs06_sd02_test gz-gui8::gz-gui8 Qt5::Widgets keship_utils)
+  ament_target_dependencies(hs06_sd02_test rclcpp ament_index_cpp)
+  add_test(NAME hs06_sd02 COMMAND hs06_sd02_test)
+
+  # ---- 甲-13：结构设计链 SD-01 → SD-03 → SD-09（2026-10-28）
+  add_executable(structure_chain_test
+    src_cpp/test/structure_chain_test.cc
+    src_cpp/utils/MidshipSectionCore.cc
+    src_cpp/gui/keship/shared/ExpDeliverable.cc)
+  target_include_directories(structure_chain_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship)
+  target_compile_definitions(structure_chain_test PRIVATE KESHIP_CHAIN_QT)
+  target_link_libraries(structure_chain_test keship_utils Qt5::Core)
+  add_test(NAME structure_chain COMMAND structure_chain_test)
+
+  # ---- 甲-6：状态迁移探针（位姿/浮力体/水动力/推进器/传感器/碰撞；需要运行中的世界）
+  add_executable(state_transition_probe src_cpp/test/state_transition_probe.cc)
+  target_include_directories(state_transition_probe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(state_transition_probe gz-gui8::gz-gui8 keship_utils)
+  ament_target_dependencies(state_transition_probe rclcpp ament_index_cpp)
+
+  # ---- 甲-13：42 项教学实验统一离屏冒烟（2026-10-28）
+  # 一进程一实验（--exp <id>），崩溃只影响该项；不进 ctest 回归，由 tools/exp_drill 驱动。
+  add_executable(exp_smoke_test src_cpp/test/exp_smoke_test.cc)
+  target_include_directories(exp_smoke_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/gui/keship
+    ${CMAKE_CURRENT_SOURCE_DIR}/src_cpp/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(exp_smoke_test MenuPluginKeship gz-gui8::gz-gui8 Qt5::Widgets)
+  ament_target_dependencies(exp_smoke_test rclcpp ament_index_cpp)
+
+  # 回归判据：ctest -L regression
+  # 注：enable_testing() 同时会让 ament 的 linter（copyright/cpplint/uncrustify…）进入 ctest，
+  #     那些是既有的代码风格检查，与回归结果无关，故用 label 隔离。
+  set_tests_properties(hidden_cases f3_enable_buoy rp_core l2_stability control_core
+                       hs06_sd02 structure_chain sd10_offsets
+                       PROPERTIES LABELS regression)
+  # GUI 测试强制离屏：否则无 DISPLAY 的环境（CI / 纯 headless）会 SIGABRT。
+  set_tests_properties(ms06_v2 ms06_v2_extra ms06_p3_modal ms06_layout_shot
+                       sl02_hull_dialog sdf_assembly sd08_lines sd10_dialog
+                       PROPERTIES LABELS regression
+                                  ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+  message(STATUS "KESHIP_BUILD_TESTS=ON：已启用回归测试目标（11 个可执行 / 8 个 ctest 用例）")
 endif()
 
 ############### 无头指令入口 keship_ctl（2026-09-19）###############
 # 让仿真在没有 GUI（MenuPluginKeship 不加载）时也能被命令行驱动。
 # 直接链接 keship_utils 复用同一个 ModelManager —— 不复制任何模型/水域/SDF 组装逻辑。
-# 注意：必须放在上面 if(EXISTS src_cpp/test) 之外（src_cpp/test 被 .gitignore 排除，
-# 本地不存在时该整块被跳过，放在里面会导致本目标不编译）。
+# 注意：必须放在上面的 if(KESHIP_BUILD_TESTS) 之外——测试默认不构建，
+# 而本目标是生产工具，必须始终编译。
 add_executable(keship_ctl
   src_cpp/headless/keship_ctl.cc
 )

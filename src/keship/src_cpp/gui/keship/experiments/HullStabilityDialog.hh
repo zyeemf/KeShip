@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-04 数学船型稳性对比 — 对话框 */
+/* HS-05 数学船型稳性对比 — 对话框 */
 
 #ifndef HULL_STABILITY_DIALOG_HH_
 #define HULL_STABILITY_DIALOG_HH_
@@ -11,7 +11,6 @@
 #include <QDoubleSpinBox>
 #include <QLabel>
 #include <QPushButton>
-#include <QSlider>
 #include <QTableWidget>
 #include <QTimer>
 #include <QWidget>
@@ -67,12 +66,20 @@ public:
                       QWidget *_parent = nullptr);
   ~HullStabilityDialog() override;
 
+  /// ★ 2026-11-03（D10）：无交互导入 SD-08 型线交付物（测试 / 脚本入口）。
+  /// 与「导入 SD-08」按钮走**同一份实现**，仅跳过 QFileDialog 与模态提示 ——
+  /// 无头环境下弹模态框会让驱动定时器挂起（D2 教训）。
+  /// @return false = 文件不可用（原因见 _err）；true 且 _err 非空 = 导入成功但有警告（复现偏差 >2%）
+  bool importSd08From(const QString &_path, QString *_err = nullptr);
+
 private slots:
   void onSpawn();
-  void onSliderChanged(int _value);
-  /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 SP-03 同一次改造）
+  /// ★ 2026-10-29（D5）：压载位置控件由 QSlider 改为 QDoubleSpinBox（同 HS-04）。
+  /// 语义与原 onSliderChanged 相同：防抖 300 ms 后才真正下发（见 onMoveDebounced）。
+  void onBallastSpinChanged(double _value);
+  /// ★ 2026-09-21 新增：「移动压载」确认按钮（与 HS-04 同一次改造）
   void onApplyWeight();
-  /// ★ 2026-09-21 新增：滑条防抖到期后真正下发
+  /// ★ 2026-09-21 新增：压载移动防抖到期后真正下发
   void onMoveDebounced();
   void onRecord();
   void onDeleteSelected();
@@ -80,6 +87,8 @@ private slots:
   void onClearAll();
   void onUpdatePose();
   void onHullTypeChanged();
+  /// ★ 2026-10-27（L1 链）：导入 SD-08 型线交付物 —— 链判据要求下游真的读上游产出
+  void onImportSd08();
 
 private:
   void setupUI();
@@ -94,7 +103,7 @@ private:
   bool doSpawnAll();
   bool resolveEntityID(const std::string &_name, uint32_t &_id);
   bool moveWeight(double _y);
-  /// ★ 2026-09-21 新增：移动压载的**统一入口**（与 SP-03 同一套写法）
+  /// ★ 2026-09-21 新增：移动压载的**统一入口**（与 HS-04 同一套写法）
   void commitMove(double _y);
   void computeLinearFit(const std::vector<HullDataPoint> &_pts,
                          double &_slope, double &_intercept) const;
@@ -111,17 +120,27 @@ private:
   QComboBox *hullTypeCombo_;
   QDoubleSpinBox *lengthSpin_, *breadthSpin_, *depthSpin_;
 
+  /// ★ 2026-10-27（L1 链）：SD-08 交付物导入状态。
+  /// 存在的意义：SD-08 的船型由「船型族 + 两个形状指数 + 密度」共同决定，
+  /// 只拷 L/B/D 会生成**另一条船**（指数不同 ⇒ 型线不同 ⇒ GM 不同），链就断在"看起来读进去了"。
+  bool sd08Imported_ = false;
+  int sd08FamilyIndex_ = 0;
+  double sd08WlExp_ = 2.0, sd08SecExp_ = 2.0, sd08Density_ = 500.0;
+  QLabel *sd08Label_ = nullptr;
+  QPushButton *importSd08Btn_ = nullptr;
+
   QLabel *awLabel_, *cwpLabel_, *ciLabel_;
   QLabel *volLabel_, *kbLabel_, *bmLabel_, *gmLabel_;
 
-  QSlider *weightSlider_;
-  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 SP-03）。
+  /// ★ 2026-10-29（D5）：QSlider 改为 QDoubleSpinBox（滑条无程序化写入口，驱动写不进）。
+  QDoubleSpinBox *weightSpin_;
+  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（同 HS-04）。
   /// QDoubleSpinBox 会把值格式化成固定小数位（decimals=3 → "0.000"），
   /// 于是"在小数点后插入一个 1"必然产生 4 位小数 → 被判非法 → **按键被吞**。
   /// QLineEdit 保留用户原文 + QDoubleValidator（小数位 6）即可自由编辑。
   QLineEdit *weightEdit_;
   QPushButton *applyBtn_;      ///< 「移动压载」确认按钮
-  QLabel *sliderValueLabel_, *heelLabel_, *deltaYLabel_, *wDyLabel_;
+  QLabel *heelLabel_, *deltaYLabel_, *wDyLabel_;
 
   QPushButton *spawnBtn_, *recordBtn_, *resetBtn_, *clearBtn_;
 

@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QMessageBox>
+#include <QTimer>
 #include <cmath>
 
 #include "keship/utils/SeaState.hh"
@@ -54,6 +55,36 @@ void EnvironmentParamsDialog::setupUi()
   seaStateLabel_->setStyleSheet("background:#f0f0f0; padding:6px;");
   seaStateLabel_->setWordWrap(true);
   seaLayout->addWidget(seaStateLabel_);
+
+  /// 内嵌确认条（2026-10-26）：替代原来的 QMessageBox「按海况设置」，不产生新窗口
+  seaConfirmBar_ = new QWidget(this);
+  {
+    auto *lay = new QVBoxLayout(seaConfirmBar_);
+    lay->setContentsMargins(0, 0, 0, 0);
+    lay->setSpacing(4);
+    seaConfirmLabel_ = new QLabel(seaConfirmBar_);
+    seaConfirmLabel_->setWordWrap(true);
+    seaConfirmLabel_->setStyleSheet(
+        "background:#fff8e1; border:1px solid #e0c060; padding:6px;");
+    lay->addWidget(seaConfirmLabel_);
+    auto *row = new QHBoxLayout();
+    seaConfirmYes_ = new QPushButton("是", seaConfirmBar_);
+    seaConfirmNo_  = new QPushButton("否", seaConfirmBar_);
+    UiTheme::setButtonIcon(seaConfirmYes_, UiTheme::Icon::kOk);
+    UiTheme::setButtonIcon(seaConfirmNo_, UiTheme::Icon::kCancel);
+    for (QPushButton *b : {seaConfirmYes_, seaConfirmNo_}) b->setMinimumHeight(28);
+    row->addStretch();
+    row->addWidget(seaConfirmYes_);
+    row->addWidget(seaConfirmNo_);
+    row->addStretch();
+    lay->addLayout(row);
+    connect(seaConfirmYes_, &QPushButton::clicked,
+            this, &EnvironmentParamsDialog::onSeaConfirmYes);
+    connect(seaConfirmNo_, &QPushButton::clicked,
+            this, &EnvironmentParamsDialog::onSeaConfirmNo);
+  }
+  seaConfirmBar_->setVisible(false);
+  seaLayout->addWidget(seaConfirmBar_);
 
   mainLayout->addWidget(seaGroup);
 
@@ -188,6 +219,7 @@ void EnvironmentParamsDialog::setupUi()
 
 void EnvironmentParamsDialog::loadFrom(const keship::WaterArea &_area)
 {
+  if (seaConfirmBar_) seaConfirmBar_->setVisible(false);
   windSpeedSpin_->setValue(_area.windParams.speed);
   windDirSpin_->setValue(_area.windParams.direction * 180.0 / M_PI);
 
@@ -259,10 +291,23 @@ void EnvironmentParamsDialog::onSeaStateSelected(int _index)
   if (level < 0)
     return;
 
+  /// 2026-10-26：确认改为**对话框内嵌**的一条，不再弹独立窗口。
+  /// 旧实现用 QMessageBox，它与下拉的弹出层（override-redirect，永远在普通窗口之上）
+  /// 以及父对话框争窗口层级；实测出现"确认框被下拉遮挡 → 下拉消失后又跑到对话框后面"。
+  /// 内嵌后不产生第二个顶层窗口，层级问题从结构上不存在。
+  seaStateCombo_->hidePopup();
+  seaStateCombo_->setCurrentIndex(0);
+  showSeaConfirm(level);
+}
+
+void EnvironmentParamsDialog::showSeaConfirm(int _level)
+{
+  pendingSeaLevel_ = _level;
+
   double tp = 0.0, wind = 0.0, gain = 0.0;
-  keship::SeaState::ParamsFromLevel(level, &tp, &wind, &gain);
-  const double hs = keship::SeaState::MidHs(level);
-  const auto &band = keship::kSeaStateTable[level];
+  keship::SeaState::ParamsFromLevel(_level, &tp, &wind, &gain);
+  const double hs = keship::SeaState::MidHs(_level);
+  const auto &band = keship::kSeaStateTable[_level];
 
   const QString note =
       (hs <= 0.0)
@@ -270,32 +315,45 @@ void EnvironmentParamsDialog::onSeaStateSelected(int _index)
       : (std::sqrt(hs / keship::SeaState::kHsPeriodFactor)
              < keship::SeaState::kMinTp)
         ? QString("（注：该等级理论周期低于渲染下限 2.5s，"
-                  "周期取 2.5s，波高增益自动补偿，等级对应不变）")
+                  "周期取 2.5s，波高增益自动补偿，等级对应不变）\n")
         : QString();
 
-  const QString msg = QString("按“%1级 · %2”设置（Hs≈%3 m）：\n"
-                              "  周期 → %4 s\n"
-                              "  风速 → %5 m/s\n"
-                              "  波高增益 → %6\n"
-                              "%7将覆盖当前风浪参数，是否继续？")
+  seaConfirmLabel_->setText(QString("按“%1级 · %2”设置（Hs≈%3 m）："
+                                    "周期 → %4 s，风速 → %5 m/s，波高增益 → %6。\n"
+                                    "%7将覆盖当前风浪参数，是否继续？")
       .arg(band.level)
       .arg(QString::fromUtf8(band.nameZh.c_str()))
       .arg(hs, 0, 'f', 2)
       .arg(tp, 0, 'f', 1)
       .arg(wind, 0, 'f', 1)
       .arg(gain, 0, 'f', 2)
-      .arg(note.isEmpty() ? QString() : note + "\n");
-  if (QMessageBox::question(this, "按海况设置", msg,
-                            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
-  {
-    seaStateCombo_->setCurrentIndex(0);
-    return;
-  }
+      .arg(note));
+  seaConfirmBar_->setVisible(true);
+}
+
+void EnvironmentParamsDialog::onSeaConfirmYes()
+{
+  const int level = pendingSeaLevel_;
+  pendingSeaLevel_ = -1;
+  seaConfirmBar_->setVisible(false);
+  if (level >= 0)
+    applySeaStateLevel(level);
+}
+
+void EnvironmentParamsDialog::onSeaConfirmNo()
+{
+  pendingSeaLevel_ = -1;
+  seaConfirmBar_->setVisible(false);
+}
+
+void EnvironmentParamsDialog::applySeaStateLevel(int _level)
+{
+  double tp = 0.0, wind = 0.0, gain = 0.0;
+  keship::SeaState::ParamsFromLevel(_level, &tp, &wind, &gain);
 
   windSpeedSpin_->setValue(wind);
   wavePeriodSpin_->setValue(tp);
   waveGainSpin_->setValue(gain);
-  seaStateCombo_->setCurrentIndex(0);
   updateSeaStateLabel();
 }
 

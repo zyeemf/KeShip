@@ -18,6 +18,7 @@
 #include <cmath>
 #include <algorithm>
 #include <filesystem>
+#include <set>
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -42,6 +43,9 @@
 /////////////////////////////////////////////////
 using namespace keship;
 /////////////////////////////////////////////////
+
+/// ★ 2026-10-30 结构模型（传感器 + 设备装饰）场景显示开关，默认开。推进器外观不受它控制。
+bool ModelManager::sStructVisualEnabled_ = true;
 
 namespace {
 
@@ -290,7 +294,13 @@ std::string ResolveModelBase(const std::string &_modelName)
     return "";
 
   std::vector<std::string> roots;
-  roots.push_back(keship::KeshipRobotModelDir());
+  roots.push_back(keship::KeshipUserModelsDir());
+  /// 兼容：旧目录若还在（未删/未迁完）也作为根，老 model:// 引用仍可解析
+  {
+    std::error_code ec0;
+    if (std::filesystem::exists(keship::KeshipLegacyRobotModelDir(), ec0))
+      roots.push_back(keship::KeshipLegacyRobotModelDir());
+  }
 
   auto addEnv = [&](const char *_envName) {
     const char *v = std::getenv(_envName);
@@ -448,6 +458,17 @@ std::string ResolveMeshUriToPath(const std::string &_uri,
   std::filesystem::path candModel = std::filesystem::path(keship::KeshipAllModelsDir()) / _uri;
   if (std::filesystem::exists(candModel, ec))
     return candModel.lexically_normal().string();
+
+  /// ★ 2026-11-02 兼容：目录已改名 robot_model → user_models，
+  ///   老存档里仍是 `robot_model/xxx/...`，这里自动改写到新目录（存档不必改）。
+  if (_uri.rfind("robot_model/", 0) == 0)
+  {
+    const std::string alt = "user_models/" + _uri.substr(12);
+    std::filesystem::path candAlt =
+        std::filesystem::path(keship::KeshipAllModelsDir()) / alt;
+    if (std::filesystem::exists(candAlt, ec))
+      return candAlt.lexically_normal().string();
+  }
   std::filesystem::path candSdf = std::filesystem::path(_sdfBaseDir) / _uri;
   if (std::filesystem::exists(candSdf, ec))
     return candSdf.lexically_normal().string();
@@ -1347,36 +1368,201 @@ bool ModelManager::SpawnCylinderInGazebo(
 }
 
 /////////////////////////////////////////////////
-bool ModelManager::SpawnMathHull(
-    const std::string &_instanceName,
-    const ShipHullSpec &_spec,
-    double _pos[6],
-    const MathHullPluginOpts &_opts)
+
+namespace
 {
-  // 生成 OBJ 文件 (Phase B: 模型加载菜单)
-  std::string dir = keship::KeshipModelsDir();
-  if (std::system(("mkdir -p " + dir).c_str()) != 0)
-    std::cerr << "SpawnMathHull: 创建目录失败 " << dir << std::endl;
+/// 水动力标签的唯一生成处（2026-10-25）：SdfBuilder 与 SpawnMathHull 共用，
+/// 提取 SDF 里所有 `<plugin filename="...">` 的文件名（2026-10-25）
+/// 用于重建后的"插件不丢失"不变量检查。
+std::vector<std::string> PluginFileNamesInSdf(const std::string &_sdf)
+{
+  std::vector<std::string> names;
+  const std::string key = "<plugin filename=\"";
+  size_t pos = 0;
+  while ((pos = _sdf.find(key, pos)) != std::string::npos)
+  {
+    pos += key.size();
+    const size_t end = _sdf.find('"', pos);
+    if (end == std::string::npos) break;
+    names.push_back(_sdf.substr(pos, end - pos));
+    pos = end;
+  }
+  return names;
+}
+
+/// 避免"同一套标签写两遍、改一处漏一处"。
+std::string BuildHydroSdfTags(const keship::HydroConfig &_hc)
+{
+  std::ostringstream hs;
+  if (_hc.dampingMode == "pose_based")
+  {
+    hs << "      <damping_mode>pose_based</damping_mode>\n";
+    return hs.str();
+  }
+  if (!_hc.dampingTerms.empty())
+  {
+    hs << "      <damping>\n";
+    for (const auto &t : _hc.dampingTerms)
+    {
+      hs << "        <term target=\"" << t.target
+         << "\" coefficient=\"" << t.coefficient << "\">\n";
+      for (const auto &f : t.factors)
+        hs << "          <factor dof=\"" << f.dof
+           << "\" order=\"" << f.order << "\"/>\n";
+      hs << "        </term>\n";
+    }
+    hs << "      </damping>\n";
+  }
+  const char *dNames[] = {"Xu","Yv","Zw","Kp","Mq","Nr","Yr","Nv"};
+  hs << "      <linear_damping>\n";
+  for (int i = 0; i < 8; i++)
+    hs << "        <" << dNames[i] << ">" << _hc.damping[i] << "</" << dNames[i] << ">\n";
+  hs << "      </linear_damping>\n";
+  return hs.str();
+}
+}  // namespace
+
+/////////////////////////////////////////////////
+/// 数学船型默认水动力系数（2026-10-25）
+///
+/// 轻量档（_full=false）只给线性 8 项：
+///   Zw/Kp/Mq 用**静水恢复刚度法** c = 2ζ√(k·I)：
+///     A_wp 取自本船型体积曲线 d∇/dT（与 DisplacementVerifyDialog 同源，非矩形粗估）
+///     垂荡 k = ρ·g·A_wp                     → Zw = 2·ζ_h·√(k·m)
+///     横摇 k = ρ·g·(A_wp·B²/12)，I = ixx    → Kp = 2·ζ_r·√(k·ixx)
+///     纵摇 k = ρ·g·(A_wp·L²/12)，I = iyy    → Mq = 2·ζ_r·√(k·iyy)
+///   ζ 取 0.15 / 0.10（与插件 pose_based 同值，全项目一致）
+///   Xu/Yv/Nr 用 m 的比例（与 CylinderTestDialog 的 0.05·m 同风格；无解析式，属工程近似）
+///
+/// 完整档（_full=true）追加：
+///   Morison 二次阻力 0.5·ρ·Cd·A（船体投影面积），以及势流附加质量 6×6 对角阵
+///   （附加质量按排水体积比例，量级参照细长体/圆柱理论，见每行注释）
+///
+/// 所有线性系数下限 1e-3：插件在 enable_hydro=true 而 fossen 无效时会**整体 return**
+/// （连浮力都不施加），退化参数不能把浮力一起弄没。
+HydroConfig ModelManager::EstimateMathHullHydro(const ShipHullSpec &_spec, bool _full)
+{
+  const double rho = 1000.0;
+  const double g = 9.81;
 
   ShipHullGenerator hull(_spec);
-  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与实验对话框同一处错）：
-  /// gz 的 `gz::common::MeshManager` **按文件路径**缓存网格 —— 同路径换内容仍返回旧网格。
-  /// 原先只按实例名命名（`<名>_vis.obj`）→ 同名实例换参数重新生成时，
-  /// 界面里显示的仍是旧船（GUI 进程常驻、缓存永不失效）。
-  /// 典型触发：`keship_ctl model spawn-hull hullA --L 6` → 删除 → `--L 9` 同名重生。
-  /// 加指纹后几何一变 URI 就变；几何相同则命中缓存是正确的（内容本就一致）。
-  const std::string meshTag = hull.meshTag();
-  std::string visPath = dir + _instanceName + "_vis_" + meshTag + ".obj";
-  std::string buoyPath = dir + _instanceName + "_buoy_" + meshTag + ".obj";
-  hull.writeVisualOBJ(visPath);
-  hull.writeBuoyancyOBJ(buoyPath);
+  const auto &hp = hull.hydroProps();
 
-  double L = _spec.L, B = _spec.B, D = _spec.D;
-  double actualVol = hull.hydroProps().volume;
-  double m = _spec.rho * actualVol;
-  double ixx = m / 12.0 * (B * B + D * D);
-  double iyy = m / 12.0 * (L * L + D * D);
-  double izz = m / 12.0 * (L * L + B * B);
+  const double L = _spec.L, B = _spec.B, D = _spec.D;
+  /// 质量口径与 SpawnMathHull 的 <mass> 一致（rho × 均质船体体积）
+  const double m = _spec.rho * hp.volume;
+  const double ixx = m / 12.0 * (B * B + D * D);
+  const double iyy = m / 12.0 * (L * L + D * D);
+  const double izz = m / 12.0 * (L * L + B * B);
+
+  /// 水线面面积：优先用体积曲线的中央差分（= d∇/dT，与船型自洽）
+  double Awp = (hp.AwD > 1e-9) ? hp.AwD : L * B * 0.8;
+  {
+    const auto &dc = hp.draftCurve;
+    const auto &vc = hp.volumeCurve;
+    if (dc.size() >= 2 && vc.size() == dc.size())
+    {
+      const size_t k = dc.size() / 2;
+      double a = 0.0;
+      if (k > 0 && k + 1 < dc.size() && (dc[k + 1] - dc[k - 1]) > 1e-12)
+        a = (vc[k + 1] - vc[k - 1]) / (dc[k + 1] - dc[k - 1]);
+      else if ((dc[1] - dc[0]) > 1e-12)
+        a = (vc[1] - vc[0]) / (dc[1] - dc[0]);
+      if (a > 1e-6)
+        Awp = a;
+    }
+  }
+
+  const double zetaHeave = 0.15;
+  const double zetaRot = 0.10;
+
+  HydroConfig cfg;
+  cfg.dampingMode = "fossen";
+  cfg.damping[0] = std::max(1e-3, 0.05 * m);                 // Xu：漂移线性摩擦（近似）
+  cfg.damping[1] = std::max(1e-3, 0.05 * m);                 // Yv：同上
+  cfg.damping[2] = std::max(1e-3, 2.0 * zetaHeave *
+      std::sqrt(rho * g * Awp * m));                         // Zw：垂荡
+  cfg.damping[3] = std::max(1e-3, 2.0 * zetaRot *
+      std::sqrt(rho * g * (Awp * B * B / 12.0) * ixx));      // Kp：横摇
+  cfg.damping[4] = std::max(1e-3, 2.0 * zetaRot *
+      std::sqrt(rho * g * (Awp * L * L / 12.0) * iyy));      // Mq：纵摇
+  cfg.damping[5] = std::max(1e-3, 0.05 * izz);               // Nr：首摇（近似）
+  cfg.damping[6] = 0.0;                                      // Yr：耦合项不给
+  cfg.damping[7] = 0.0;                                      // Nv：耦合项不给
+
+  if (_full)
+  {
+    const double T = (hp.draft > 1e-6) ? hp.draft : 0.5 * D;
+    const double A_surge = B * T;   ///< 迎流投影（船体横剖面）
+    const double A_sway = L * T;    ///< 侧向投影（船体侧面）
+
+    auto addQuad = [&cfg](int _dof, double _coeff) {
+      if (_coeff <= 0.0)
+        return;
+      DampingTerm t;
+      t.target = _dof;
+      t.coefficient = _coeff;
+      DampingFactor f;
+      f.dof = _dof;
+      f.order = 2;
+      t.factors.push_back(f);
+      cfg.dampingTerms.push_back(t);
+    };
+
+    /// Morison 型二次阻力：0.5·ρ·Cd·A（Cd 取钝体经验值）
+    addQuad(0, 0.5 * rho * 0.80 * A_surge);                 // 纵荡：V 形首尾，Cd≈0.8
+    addQuad(1, 0.5 * rho * 1.00 * A_sway);                  // 横荡：侧面平板，Cd≈1.0
+    addQuad(2, 0.5 * rho * 1.00 * Awp);                     // 垂荡：水线面，Cd≈1.0
+    /// 转动项按"力 × 力臂²"估：横摇力臂 B/2 的等效矩 ≈ A_side·B²/12
+    addQuad(3, 0.5 * rho * 1.00 * A_sway * (B * B / 12.0)); // 横摇
+    addQuad(4, 0.5 * rho * 1.00 * Awp * (L * L / 12.0));    // 纵摇
+    addQuad(5, 0.5 * rho * 1.00 * A_sway * (L * L / 12.0)); // 首摇
+
+    /// 附加质量（势流，6×6 对角；量级参照细长体/圆柱理论）
+    const double rhoV = rho * hp.volume;
+    cfg.addedMass[0 * 6 + 0] = 0.10 * rhoV;                   // 纵荡：细长体轴向小
+    cfg.addedMass[1 * 6 + 1] = 0.90 * rhoV;                   // 横荡：二维绕流 C_a≈1
+    cfg.addedMass[2 * 6 + 2] = 0.90 * rhoV;                   // 垂荡：同上
+    cfg.addedMass[3 * 6 + 3] = 0.20 * rhoV * (B * B / 12.0);  // 横摇
+    cfg.addedMass[4 * 6 + 4] = 0.25 * rhoV * (L * L / 12.0);  // 纵摇
+    cfg.addedMass[5 * 6 + 5] = 0.25 * rhoV * (L * L / 12.0);  // 首摇
+  }
+
+  return cfg;
+}
+
+/////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 数学船型 SDF 组装（纯函数，2026-10-25）
+/// 不写文件、不触 gz：给定 (名称/规格/插件选项/两个网格路径) 即得确定 SDF，
+/// 便于离线单测覆盖"名称/质量/惯性/浮力网格/水动力标签/附加质量"这些易错点。
+std::string ModelManager::MakeMathHullSDF(
+    const std::string &_instanceName, const ShipHullSpec &_spec,
+    const MathHullPluginOpts &_opts,
+    const std::string &visPath, const std::string &buoyPath)
+{
+  ShipHullGenerator hull(_spec);
+  const double L = _spec.L, B = _spec.B, D = _spec.D;
+  const double m = _spec.rho * hull.hydroProps().volume;
+  const double ixx = m / 12.0 * (B * B + D * D);
+  const double iyy = m / 12.0 * (L * L + D * D);
+  const double izz = m / 12.0 * (L * L + B * B);
+
+  /// 水动力标签（2026-10-25）：优先用完整 HydroConfig（与圆柱体/网格模型同一套标签），
+  /// 否则退回旧的 3 项 <linear_damping>（keship_ctl --damping 兼容路径）
+  std::string hydroTags;
+  if (_opts.hydro)
+    hydroTags = BuildHydroSdfTags(*_opts.hydro);
+  else if (_opts.hasDamping())
+  {
+    std::ostringstream hs;
+    hs << "      <linear_damping>\n"
+       << "        <Zw>" << _opts.damping[0] << "</Zw>\n"
+       << "        <Kp>" << _opts.damping[1] << "</Kp>\n"
+       << "        <Mq>" << _opts.damping[2] << "</Mq>\n"
+       << "      </linear_damping>\n";
+    hydroTags = hs.str();
+  }
 
   // SDF (对齐 MakeSDFStringFromValidFileType 和 HullStabilityDialog)
   std::ostringstream sdf;
@@ -1413,13 +1599,7 @@ bool ModelManager::SpawnMathHull(
             : std::string())
       /// 线性阻尼（fossen 路径）：网格船体走不了 pose_based（需 hasCylinderGeometry_），
       /// 不给系数就是零阻尼 → 长时间垂荡
-      << (_opts.hasDamping()
-            ? std::string("      <linear_damping>\n")
-              + "        <Zw>" + std::to_string(_opts.damping[0]) + "</Zw>\n"
-              + "        <Kp>" + std::to_string(_opts.damping[1]) + "</Kp>\n"
-              + "        <Mq>" + std::to_string(_opts.damping[2]) + "</Mq>\n"
-              + "      </linear_damping>\n"
-            : std::string())
+      << hydroTags
       << "      <fluid_density>1000</fluid_density>\n"
       << "      <fluid_level>0.0</fluid_level>\n"
       << "      <buoyancy name=\"hull\">\n"
@@ -1429,6 +1609,51 @@ bool ModelManager::SpawnMathHull(
       << "      </buoyancy>\n"
       << "    </plugin>\n"
       << "  </model>\n</sdf>\n";
+
+  std::string out = sdf.str();
+  if (_opts.hydro)
+  {
+    bool anyAm = false;
+    for (double v : _opts.hydro->addedMass)
+      if (v != 0.0) { anyAm = true; break; }
+    if (anyAm)
+      InjectFluidAddedMass(out, _opts.hydro->addedMass.data());
+  }
+  return out;
+}
+
+bool ModelManager::SpawnMathHull(
+    const std::string &_instanceName,
+    const ShipHullSpec &_spec,
+    double _pos[6],
+    const MathHullPluginOpts &_opts)
+{
+  // 生成 OBJ 文件 (Phase B: 模型加载菜单)
+  std::string dir = keship::KeshipModelsDir();
+  if (std::system(("mkdir -p " + dir).c_str()) != 0)
+    std::cerr << "SpawnMathHull: 创建目录失败 " << dir << std::endl;
+
+  ShipHullGenerator hull(_spec);
+  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与实验对话框同一处错）：
+  /// gz 的 `gz::common::MeshManager` **按文件路径**缓存网格 —— 同路径换内容仍返回旧网格。
+  /// 原先只按实例名命名（`<名>_vis.obj`）→ 同名实例换参数重新生成时，
+  /// 界面里显示的仍是旧船（GUI 进程常驻、缓存永不失效）。
+  /// 典型触发：`keship_ctl model spawn-hull hullA --L 6` → 删除 → `--L 9` 同名重生。
+  /// 加指纹后几何一变 URI 就变；几何相同则命中缓存是正确的（内容本就一致）。
+  const std::string meshTag = hull.meshTag();
+  std::string visPath = dir + _instanceName + "_vis_" + meshTag + ".obj";
+  std::string buoyPath = dir + _instanceName + "_buoy_" + meshTag + ".obj";
+  hull.writeVisualOBJ(visPath);
+  hull.writeBuoyancyOBJ(buoyPath);
+
+  double L = _spec.L, B = _spec.B, D = _spec.D;
+  double actualVol = hull.hydroProps().volume;
+  double m = _spec.rho * actualVol;
+  double ixx = m / 12.0 * (B * B + D * D);
+  double iyy = m / 12.0 * (L * L + D * D);
+  double izz = m / 12.0 * (L * L + B * B);
+
+  const std::string sdfStr = MakeMathHullSDF(_instanceName, _spec, _opts, visPath, buoyPath);
 
   // Spawn via EntityFactory
   std::string service = "/world/" + this->worldName + "/create/blocking";
@@ -1444,7 +1669,7 @@ bool ModelManager::SpawnMathHull(
   pose->mutable_orientation()->set_y(q.Y());
   pose->mutable_orientation()->set_z(q.Z());
   pose->mutable_orientation()->set_w(q.W());
-  req.set_sdf(sdf.str());
+  req.set_sdf(sdfStr);
 
   gz::msgs::Boolean rep;
   bool result = false;
@@ -1463,7 +1688,7 @@ bool ModelManager::SpawnMathHull(
   }
   if (found) {
     this->modelList[_instanceName] = id;
-    this->CacheNormalizedSDF(_instanceName, sdf.str());
+    this->CacheNormalizedSDF(_instanceName, sdfStr);
     SensorConfig scEmpty;
     NotifyModelSpawned(_instanceName, scEmpty);
     this->staticCache_[_instanceName] = false;
@@ -1907,34 +2132,7 @@ std::string ModelManager::MakeBuoyancyPluginSDF(
   }
 
     if (hasHydro)
-  {
-    if (_hydro->dampingMode == "pose_based")
-    {
-      sdf << "      <damping_mode>pose_based</damping_mode>\n";
-    }
-    else
-    {
-      if (!_hydro->dampingTerms.empty())
-      {
-        sdf << "      <damping>\n";
-        for (const auto &t : _hydro->dampingTerms)
-        {
-          sdf << "        <term target=\"" << t.target
-              << "\" coefficient=\"" << t.coefficient << "\">\n";
-          for (const auto &f : t.factors)
-            sdf << "          <factor dof=\"" << f.dof
-                << "\" order=\"" << f.order << "\"/>\n";
-          sdf << "        </term>\n";
-        }
-        sdf << "      </damping>\n";
-      }
-      sdf << "      <linear_damping>\n";
-      const char *dNames[] = {"Xu","Yv","Zw","Kp","Mq","Nr","Yr","Nv"};
-      for (int i = 0; i < 8; i++)
-        sdf << "        <" << dNames[i] << ">" << _hydro->damping[i] << "</" << dNames[i] << ">\n";
-      sdf << "      </linear_damping>\n";
-    }
-  }
+      sdf << BuildHydroSdfTags(*_hydro);
 
   sdf << "    </plugin>\n";
   return sdf.str();
@@ -2024,7 +2222,13 @@ bool ModelManager::RebuildModelWithBuoyancy(
   /// 保留已有传感器配置
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   /// 保留已有推进器配置
   ThrusterConfig thrustCfg;
@@ -2631,6 +2835,60 @@ bool ModelManager::ParseStaticFromSDF(const std::string &_sdf, bool &_out)
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 切换模型 静止/动态（2026-10-25）
+/// 做法：改缓存 SDF 的 <static> 后整段重放 —— 保留全部插件（含数学船型的网格浮力体），
+/// 避免"按配置重拼"丢掉 SDF-only 插件。
+bool ModelManager::SetModelStatic(const std::string &_name, bool _isStatic)
+{
+  auto it = sdfCache_.find(_name);
+  if (it == sdfCache_.end())
+  {
+    std::cerr << "SetModelStatic: 无 SDF 缓存（请先在本进程 spawn）: " << _name << std::endl;
+    return false;
+  }
+
+  double pose[6] = {0, 0, 0, 0, 0, 0};
+  {
+    auto idIt = modelList.find(_name);
+    if (idIt != modelList.end())
+      GetModelPoseByIDFromGazebo(idIt->second, pose);
+  }
+
+  std::string sdf = it->second;
+  const std::string want = _isStatic ? "true" : "false";
+  const std::string t = "<static>true</static>";
+  const std::string f = "<static>false</static>";
+  auto tp = sdf.find(t);
+  auto fp = sdf.find(f);
+  if (tp != std::string::npos)
+    sdf.replace(tp, t.size(), "<static>" + want + "</static>");
+  else if (fp != std::string::npos)
+    sdf.replace(fp, f.size(), "<static>" + want + "</static>");
+  else
+  {
+    auto mp = sdf.find("</model>");
+    if (mp != std::string::npos)
+      sdf.insert(mp, "    <static>" + want + "</static>\n");
+  }
+  it->second = sdf;
+
+  if (!DeleteModelInGazeboByName(_name, true)) return false;
+  { int retries = 20; uint32_t sid = 0;
+    while (retries-- > 0) { std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (!GetModelIDByInstanceNameFromGazebo(_name, sid)) break; } }
+
+  SensorConfig sc;
+  GetCachedSensorConfig(_name, sc);
+  const bool ok = RespawnSdf(_name, sdf, pose, sc);
+  if (ok)
+  {
+    staticCache_[_name] = _isStatic;
+    CacheModelFootprint(_name);
+  }
+  return ok;
+}
+
 bool ModelManager::GetCachedModelStatic(const std::string &_name,
     bool &_isStatic) const
 {
@@ -2684,7 +2942,13 @@ bool ModelManager::SpawnModelWithBuoyancy(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   /// 保留已有推进器配置
   ThrusterConfig thrustCfg;
@@ -2846,6 +3110,30 @@ bool ModelManager::RebuildModelWithThrust(
   auto cacheIt = this->sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型 → 在原文里插入推进器段后重放（不丢浮力）
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    auto m = patched.rfind("</model>");
+    if (m != std::string::npos)
+      patched = patched.substr(0, m) + MakeThrustPluginSDF(_config) + patched.substr(m);
+    /// ★ 2026-10-30：本分支是字符串插入，不走 AppendDeviceVisualSDF 的常规位置 ⇒
+    ///   单独在 </link> 前补设备装饰 + 推进器外观（用新配置，缓存此时未更新）
+    {
+      auto l = patched.rfind("</link>");
+      if (l != std::string::npos)
+      {
+        std::ostringstream dv;
+        AppendDeviceVisualSDF(dv, _instanceName, &_config);
+        patched.insert(l, dv.str());
+      }
+    }
+    SensorConfig sc; GetCachedSensorConfig(_instanceName, sc);
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, sc);
+    if (ok) thrusterConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -2864,7 +3152,14 @@ bool ModelManager::RebuildModelWithThrust(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  ///   本函数是 RebuildModelWithThrust ⇒ 推进器用**新**配置（缓存还没更新）
+  AppendDeviceVisualSDF(sdf, _instanceName, &_config);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   sdf << MakeThrustPluginSDF(_config);
 
@@ -2965,7 +3260,15 @@ bool ModelManager::SpawnModelWithThrust(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  ///   本函数是 SpawnModelWithThrust ⇒ 推进器缓存要等 spawn 成功才写入（3202 行），
+  ///   这里必须显式传 _config，否则首个 spawn 会**没有推进器外观**或沿用旧 pose。
+  AppendDeviceVisualSDF(sdf, _instanceName, &_config);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   HydroConfig hydroCfg;
   bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
@@ -3176,6 +3479,13 @@ bool ModelManager::CreateEntityViaService(const gz::msgs::EntityFactory &_req)
 bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
     const double _addedMass[36])
 {
+  /// 2026-10-25：全零矩阵直接跳过 —— 避免生成无意义的全零 <fluid_added_mass> 块
+  {
+    bool anyNonZero = false;
+    for (int i = 0; i < 36; ++i)
+      if (std::abs(_addedMass[i]) > 1e-12) { anyNonZero = true; break; }
+    if (!anyNonZero) return true;
+  }
   // M_A 注入 DART <fluid_added_mass>（隐式积分，无条件稳定）
   //
   // ⚠ 2026-09-24 审核更正（原文写「空中由 FossenModel::computeAirCorrection 抵消」
@@ -3273,6 +3583,7 @@ bool ModelManager::InjectFluidAddedMass(std::string &_sdf,
 ///   文件其余部分是**全局作用域**，而声明在 keship 内 ⇒ 不包会链接期 undefined。
 namespace keship
 {
+
 CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
 {
   CameraSpec s;
@@ -3304,6 +3615,322 @@ CameraSpec ClampCameraSpec(int _w, int _h, double _rate, bool *_outClamped)
 }
 }  // namespace keship
 
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 传感器结构模型（内置 glb）：类型 → 文件名
+///   放置目录：<keship_ws>/models_all/sensor_model/<file>（KeshipAllModelsDir()/sensor_model）
+///   缺文件 ⇒ 该类型**不生成** <visual>（退回「场景中只有传感器逻辑、看不见」的老行为），
+///   仅告警一次，不影响传感器本身工作。
+///
+///   模型来源（Blender 工程 HF-wamv16 的 payloads 导出，按类型改成稳定名，版本信息见下）：
+///     imu.glb          ← PAY-IMU_v001.glb
+///     navsat.glb       ← PAY-GNSS_v001.glb
+///     magnetometer.glb ← PAY-WIND_v001.glb（暂借风仪外形，磁力计模型待补）
+///     camera.glb       ← PAY-CAM_v001.glb
+///     lidar.glb        ← PAY-LIDAR_v001.glb
+///   约定（见建模文档 units-coordinates / payload 记忆）：1 BU = 1 m、导出 Y-UP、
+///   原点在安装面中心（底座底面中心）⇒ 视觉 pose 与本传感器 pose 同值，模型自安装面向上生长。
+namespace
+{
+const char *SensorMeshFileName(SensorType _t)
+{
+  switch (_t)
+  {
+    case SensorType::IMU:          return "imu.glb";
+    case SensorType::NavSat:       return "navsat.glb";
+    case SensorType::Magnetometer: return "magnetometer.glb";
+    case SensorType::Camera:       return "camera.glb";
+    case SensorType::Lidar:        return "lidar.glb";
+  }
+  return nullptr;
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-11-01 标准载荷模型（安装点/量测点分离）相关工具
+namespace
+{
+/// @brief 刚体组合 _out = _a ∘ _b（SDF 的 ZYX 欧拉约定）
+///        用途：sensor 实际 pose = 用户给的**安装点** × 模型里的**量测点偏移**
+void ComposePose6(const double _a[6], const double _b[6], double _out[6])
+{
+  const gz::math::Pose3d pa(gz::math::Vector3d(_a[0], _a[1], _a[2]),
+                            gz::math::Quaterniond(_a[3], _a[4], _a[5]));
+  const gz::math::Pose3d pb(gz::math::Vector3d(_b[0], _b[1], _b[2]),
+                            gz::math::Quaterniond(_b[3], _b[4], _b[5]));
+  const gz::math::Pose3d pc = pa * pb;
+  _out[0] = pc.Pos().X(); _out[1] = pc.Pos().Y(); _out[2] = pc.Pos().Z();
+  const gz::math::Vector3d e = pc.Rot().Euler();
+  _out[3] = e.X(); _out[4] = e.Y(); _out[5] = e.Z();
+}
+
+/// @brief model.sdf 的 <sensor type> → 平台 SensorType（不认识返回 false ⇒ 跳过并告警）
+bool GzTypeToSensorType(const std::string &_gz, SensorType &_out)
+{
+  if (_gz == "camera" || _gz == "wideanglecamera") { _out = SensorType::Camera; return true; }
+  if (_gz == "gpu_lidar" || _gz == "lidar" || _gz == "ray") { _out = SensorType::Lidar; return true; }
+  if (_gz == "imu")          { _out = SensorType::IMU; return true; }
+  if (_gz == "navsat")       { _out = SensorType::NavSat; return true; }
+  if (_gz == "magnetometer") { _out = SensorType::Magnetometer; return true; }
+  if (_gz == "air_speed")    { _out = SensorType::AirSpeed; return true; }
+  return false;
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// ★ 2026-11-01 模型级系统插件：\`air_speed\` 传感器**必须**由 gz-sim 的 AirSpeed 系统喂数据。
+///   实测（2026-11-01）：该插件挂**模型级**即可（<model><plugin>），不需要改世界文件，
+///   也不影响已存档的 ksw —— 故只在本模型含 AirSpeed 时才追加这一行。
+std::string ModelManager::MakeSensorSystemsSDF(const SensorConfig &_cfg)
+{
+  bool needAirSpeed = false;
+  for (const auto &i : _cfg.instances)
+    if (i.type == SensorType::AirSpeed) needAirSpeed = true;
+  if (!needAirSpeed)
+    return "";
+  return "    <plugin filename=\"gz-sim-air-speed-system\""
+         " name=\"gz::sim::systems::AirSpeed\"/>\n";
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+const PayloadModelDef *ModelManager::FindPayloadDef(SensorType _type)
+{
+  /// 整目录只扫一次：<models_all>/payload_model/<型号>/
+  static std::map<int, PayloadModelDef> cache;
+  static bool scanned = false;
+  if (!scanned)
+  {
+    scanned = true;
+    const std::string root = keship::KeshipAllModelsDir() + "/payload_model";
+    std::error_code ec;
+    if (std::filesystem::exists(root, ec))
+    {
+      for (const auto &e : std::filesystem::directory_iterator(root, ec))
+      {
+        if (!e.is_directory())
+          continue;
+        PayloadModelDef def;
+        if (!LoadPayloadModel(e.path().string(), def))
+          continue;
+        for (const auto &sf : def.sensors)
+        {
+          SensorType t;
+          if (!GzTypeToSensorType(sf.gzType, t))
+          {
+            std::cerr << "FindPayloadDef: 未知传感器类型，已忽略: " << sf.gzType
+                      << " (模型 " << def.modelName << ")" << std::endl;
+            continue;
+          }
+          if (cache.find((int)t) == cache.end())
+            cache[(int)t] = def;
+        }
+
+        /// ★ 2026-11-02：风杯模型**只声明 `<frame name="anemometer">`**，传感器由平台生成
+        ///   （张老师定：模型管几何与参考点，平台管"生成什么传感器"）。
+        ///   这样模型换代不会因为我们手补过 <sensor> 而漂移。
+        if (cache.find((int)SensorType::AirSpeed) == cache.end())
+        {
+          for (const auto &fr : def.frames)
+          {
+            if (fr.name != "anemometer")
+              continue;
+            PayloadModelDef synth = def;
+            PayloadSensorDef sd;
+            sd.gzType = "air_speed";
+            for (int k = 0; k < 6; k++) sd.pose[k] = fr.pose[k];
+            synth.sensors.clear();
+            synth.sensors.push_back(sd);
+            cache[(int)SensorType::AirSpeed] = synth;
+            std::cout << "FindPayloadDef: 风杯量测点取自 <frame name=\"anemometer\"> ("
+                      << def.modelName << " z=" << fr.pose[2] << ")" << std::endl;
+            break;
+          }
+        }
+      }
+    }
+    std::cout << "FindPayloadDef: 已索引 " << cache.size()
+              << " 类标准载荷模型（" << root << "）" << std::endl;
+  }
+  auto it = cache.find((int)_type);
+  return (it == cache.end()) ? nullptr : &it->second;
+}
+
+std::string ModelManager::MakeSensorVisualSDF(const SensorInstance &_inst, bool _mountSemantics)
+{
+  if (!sStructVisualEnabled_)
+    return "";
+
+  /// ★ 2026-11-01 标准载荷模型优先：pose = 安装点 × <visual><pose>，网格来自 payload_model/
+  double visPose[6];
+  for (int i = 0; i < 6; i++) visPose[i] = _inst.pose[i];
+
+  const PayloadModelDef *def = FindPayloadDef(_inst.type);
+  if (def != nullptr && !def->meshPath.empty())
+  {
+    if (_mountSemantics)
+      ComposePose6(_inst.pose, def->visualPose, visPose);
+    const std::string mesh = keship::NormalizeMeshToSDFCache(def->meshPath, def->meshAlreadyZUp);
+    if (mesh.empty())
+    {
+      std::cerr << "MakeSensorVisualSDF: 规范化失败，跳过传感器视觉: "
+                << def->meshPath << std::endl;
+      return "";
+    }
+    std::ostringstream sdf;
+    sdf << "      <visual name=\"" << _inst.name << "_visual\">\n"
+        << "        <pose>" << visPose[0] << " " << visPose[1] << " " << visPose[2]
+        << " " << visPose[3] << " " << visPose[4] << " " << visPose[5] << "</pose>\n"
+        << "        <geometry>\n"
+        << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
+        << "        </geometry>\n"
+        << "      </visual>\n";
+    return sdf.str();
+  }
+
+  /// 回退：旧的扁平模型目录（sensor_model/*.glb，Y-up）—— 老 ksm 仍走这条路
+  const char *fn = SensorMeshFileName(_inst.type);
+  if (fn == nullptr || *fn == '\0')
+    return "";
+
+  const std::string src = keship::KeshipAllModelsDir() + "/sensor_model/" + fn;
+  std::error_code ec;
+  if (!std::filesystem::exists(src, ec))
+  {
+    static std::set<std::string> warned;
+    if (warned.insert(fn).second)
+      std::cerr << "MakeSensorVisualSDF: 结构模型缺失，跳过传感器视觉: "
+                << src << std::endl;
+    return "";
+  }
+
+  /// 与船体走同一条规范化链路：任意格式 → 标准 Z-UP OBJ 缓存（返回绝对路径）
+  const std::string mesh = keship::NormalizeMeshToSDFCache(src);
+  if (mesh.empty())
+  {
+    std::cerr << "MakeSensorVisualSDF: 规范化失败，跳过传感器视觉: " << src << std::endl;
+    return "";
+  }
+
+  std::ostringstream sdf;
+  sdf << "      <visual name=\"" << _inst.name << "_visual\">\n"
+      << "        <pose>" << visPose[0] << " " << visPose[1] << " " << visPose[2]
+      << " " << visPose[3] << " " << visPose[4] << " " << visPose[5] << "</pose>\n"
+      << "        <geometry>\n"
+      << "          <mesh><uri>file://" << mesh << "</uri></mesh>\n"
+      << "        </geometry>\n"
+      /// ★ 2026-10-31：**不再写 <material>** —— visual 级材质会覆盖网格自带材质，
+      ///   把多材质（橙色阳极氧化 / 钢 / 玻璃）又压成一种灰。材质交给 OBJ+MTL 决定。
+      << "      </visual>\n";
+  return sdf.str();
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 设备外观装饰（电池/电机）+ 推进器外观：类型 → 文件名（models_all/device_model/）
+///   缺文件 ⇒ 该件不显示，只告警一次；不影响其余件，也不影响任何物理量。
+namespace
+{
+const char *DeviceMeshFileName(DeviceType _t)
+{
+  switch (_t)
+  {
+    case DeviceType::Battery:    return "battery.glb";
+    case DeviceType::Motor:      return "motor.glb";
+    case DeviceType::Controller: return "controller.glb";
+  }
+  return nullptr;
+}
+
+/// 推进器外观：按类型稳定命名，所有型号共用（2026-10-30 张老师口径：不区分型号）
+const char *kThrusterMeshFile = "thruster.glb";
+
+/// 取 <models_all>/device_model/<file> 的规范化缓存绝对路径；缺失/失败返回空串
+std::string ResolveDeviceMeshFile(const char *_file)
+{
+  if (_file == nullptr || *_file == '\0')
+    return "";
+  const std::string src = keship::KeshipAllModelsDir() + "/device_model/" + _file;
+  std::error_code ec;
+  if (!std::filesystem::exists(src, ec))
+  {
+    static std::set<std::string> warned;
+    if (warned.insert(_file).second)
+      std::cerr << "ResolveDeviceMeshFile: 模型缺失，跳过外观: " << src << std::endl;
+    return "";
+  }
+  const std::string mesh = keship::NormalizeMeshToSDFCache(src);
+  if (mesh.empty())
+    std::cerr << "ResolveDeviceMeshFile: 规范化失败，跳过外观: " << src << std::endl;
+  return mesh;
+}
+
+/// 统一视觉片段（与 MakeSensorVisualSDF 同一外观口径）
+std::string MakeDeviceVisualBlock(const std::string &_visName,
+                                  const double _pose[6],
+                                  const std::string &_mesh)
+{
+  std::ostringstream sdf;
+  sdf << "      <visual name=\"" << _visName << "\">\n"
+      << "        <pose>" << _pose[0] << " " << _pose[1] << " " << _pose[2]
+      << " " << _pose[3] << " " << _pose[4] << " " << _pose[5] << "</pose>\n"
+      << "        <geometry>\n"
+      << "          <mesh><uri>file://" << _mesh << "</uri></mesh>\n"
+      << "        </geometry>\n"
+      /// ★ 2026-10-31：**不再写 <material>** —— visual 级材质会覆盖网格自带材质，
+      ///   把多材质（橙色阳极氧化 / 钢 / 玻璃）又压成一种灰。材质交给 OBJ+MTL 决定。
+      << "      </visual>\n";
+  return sdf.str();
+}
+}  // namespace
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+std::string ModelManager::MakeDeviceItemVisualSDF(const DeviceItem &_item)
+{
+  if (!sStructVisualEnabled_)
+    return "";
+  const std::string mesh = ResolveDeviceMeshFile(DeviceMeshFileName(_item.type));
+  if (mesh.empty())
+    return "";
+  return MakeDeviceVisualBlock("dev_" + _item.name + "_visual", _item.pose, mesh);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+std::string ModelManager::MakeThrusterVisualSDF(const ThrusterConfig &_config)
+{
+  /// ★ 推进器外观**不受**「隐藏结构模型」开关控制（张老师 2026-10-30 口径）
+  if (_config.bodies.empty())
+    return "";
+  const std::string mesh = ResolveDeviceMeshFile(kThrusterMeshFile);
+  if (mesh.empty())
+    return "";
+  std::string out;
+  for (const auto &b : _config.bodies)
+    out += MakeDeviceVisualBlock("thr_" + b.name + "_visual", b.pose, mesh);
+  return out;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+void ModelManager::AppendDeviceVisualSDF(std::ostringstream &_sdf,
+                                         const std::string &_name,
+                                         const ThrusterConfig *_thrustOverride) const
+{
+  /// 1. 设备装饰（电池/电机）—— 受「隐藏结构模型」开关控制
+  DeviceDecorConfig dCfg;
+  if (GetCachedDeviceDecor(_name, dCfg))
+  {
+    for (const auto &it : dCfg.items)
+      _sdf << MakeDeviceItemVisualSDF(it);
+  }
+
+  /// 2. 推进器外观 —— 常显；pose 直接复用推进器配置，不重复录。
+  ///    重建流程里缓存尚未更新 ⇒ 调用方用 _thrustOverride 传入**新**配置。
+  ThrusterConfig tCfg;
+  if (_thrustOverride != nullptr)
+    _sdf << MakeThrusterVisualSDF(*_thrustOverride);
+  else if (GetCachedThrusterConfig(_name, tCfg))
+    _sdf << MakeThrusterVisualSDF(tCfg);
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
                                          const std::string &_modelName,
                                          const std::string &_worldName)
@@ -3316,6 +3943,17 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
         "/world/" + _worldName + "/model/" + _modelName
         + "/link/" + _config.linkName + "/sensor/" + inst.name);
 
+    /// ★ 2026-11-01 安装点语义：sensor 的实际 pose = 安装点 × 模型内偏移（量测点）
+    ///   旧语义（mountSemantics=false）直接用 inst.pose，与改动前逐字节一致。
+    double poseOut[6];
+    for (int k = 0; k < 6; k++) poseOut[k] = inst.pose[k];
+    if (_config.mountSemantics)
+    {
+      const PayloadModelDef *pdef = FindPayloadDef(inst.type);
+      if (pdef != nullptr && !pdef->sensors.empty())
+        ComposePose6(inst.pose, pdef->sensors[0].pose, poseOut);
+    }
+
     switch (inst.type)
     {
     case SensorType::IMU:
@@ -3326,8 +3964,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "          <angular_velocity><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.01</stddev></noise></x></angular_velocity>\n"
           << "          <linear_acceleration><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.1</stddev></noise></x></linear_acceleration>\n"
           << "        </imu>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3336,8 +3974,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "        <always_on>1</always_on>\n"
           << "        <update_rate>10</update_rate>\n"
           << "        <topic>" << sensorPath + "/navsat" << "</topic>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3346,8 +3984,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "        <topic>" << sensorPath + "/magnetometer" << "</topic>\n"
           << "        <update_rate>10</update_rate>\n"
           << "        <magnetometer><x><noise type=\"gaussian\"><mean>0</mean><stddev>0.0001</stddev></noise></x></magnetometer>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
 
@@ -3366,8 +4004,8 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << camSpec.height << "</height></image>\n"
           << "          <clip><near>0.1</near><far>100</far></clip>\n"
           << "        </camera>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
     }
@@ -3380,11 +4018,28 @@ std::string ModelManager::MakeSensorSDF(const SensorConfig &_config,
           << "          <scan><horizontal><samples>360</samples><resolution>1</resolution><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal></scan>\n"
           << "          <range><min>0.1</min><max>50</max></range>\n"
           << "        </ray>\n"
-          << "        <pose>" << inst.pose[0] << " " << inst.pose[1] << " " << inst.pose[2]
-          << " " << inst.pose[3] << " " << inst.pose[4] << " " << inst.pose[5] << "</pose>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
+          << "      </sensor>\n";
+      break;
+
+    case SensorType::AirSpeed:
+      /// ★ 2026-11-01 风杯：gz-sim 8 的 air_speed 传感器。
+      ///   ⚠ 需要世界里有 gz-sim 的 air-speed **系统**插件才会发数据；
+      ///     且该系统只喂实体相对速度、不读风场 ⇒ 静风时读数 = −船速（与真实风杯一致）。
+      sdf << "      <sensor name=\"" << inst.name << "\" type=\"air_speed\">\n"
+          << "        <topic>" << sensorPath + "/air_speed" << "</topic>\n"
+          << "        <update_rate>10</update_rate>\n"
+          << "        <pose>" << poseOut[0] << " " << poseOut[1] << " " << poseOut[2]
+          << " " << poseOut[3] << " " << poseOut[4] << " " << poseOut[5] << "</pose>\n"
           << "      </sensor>\n";
       break;
     }
+
+    /// ★ 2026-10-30 结构模型视觉：与 <sensor> 同 pose，作为 <link> 内的兄弟节点。
+    ///   注意本函数产物是**在 NormalizeMeshUrisInSDF 之后**才拼进 SDF 的，
+    ///   所以 mesh uri 必须在这里自己算成绝对路径（不能指望上层再规范化）。
+    sdf << MakeSensorVisualSDF(inst, _config.mountSemantics);
   }
 
   return sdf.str();
@@ -3425,6 +4080,36 @@ bool ModelManager::RebuildModelWithHydro(
   auto cacheIt = sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型（数学船型，网格浮力体）不能走"截断重拼"，
+  ///   否则浮力插件丢失。改为在原文上替换水动力标签后整段重放。
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    const std::string tags = BuildHydroSdfTags(_config);
+    auto p = patched.find("<linear_damping>");
+    auto q = patched.find("</linear_damping>");
+    if (p != std::string::npos && q != std::string::npos && q > p)
+      patched = patched.substr(0, p) + tags +
+                patched.substr(q + std::string("</linear_damping>").size());
+    else
+    {
+      auto fd = patched.find("<fluid_density>");
+      if (fd != std::string::npos) patched.insert(fd, tags);
+    }
+    const std::string off = "<enable_hydro>false</enable_hydro>";
+    const std::string on = "<enable_hydro>true</enable_hydro>";
+    auto e = patched.find(off);
+    if (e != std::string::npos) patched.replace(e, off.size(), on);
+    bool anyAm = false;
+    for (double v : _config.addedMass) if (v != 0.0) { anyAm = true; break; }
+    if (anyAm) InjectFluidAddedMass(patched, _config.addedMass.data());
+
+    SensorConfig sc; GetCachedSensorConfig(_instanceName, sc);
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, sc);
+    if (ok) hydroConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -3439,7 +4124,13 @@ bool ModelManager::RebuildModelWithHydro(
 
   if (hasSensor)
     sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观（每个注入点都必须带，否则重建后外观丢失）
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
 
   BuoyancyConfig bCfg;
   bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
@@ -3526,6 +4217,24 @@ bool ModelManager::RebuildModelWithSensors(
   auto cacheIt = sdfCache_.find(_instanceName);
 
   std::string base = cacheIt->second;
+  /// ★ 2026-10-25：自包含插件模型 → 在原文 <link> 内插入传感器段后重放（不丢浮力）
+  if (base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+  {
+    std::string patched = base;
+    auto l = patched.rfind("</link>");
+    if (l != std::string::npos)
+    {
+      std::ostringstream extras;
+      extras << MakeSensorSDF(_config, _instanceName, worldName);
+      /// ★ 2026-10-30：本分支是字符串插入，设备装饰/推进器外观要跟着一起补
+      AppendDeviceVisualSDF(extras, _instanceName);
+      patched = patched.substr(0, l) + extras.str() + patched.substr(l);
+    }
+    bool ok = RespawnSdf(_instanceName, patched, savedPose, _config);
+    if (ok) sensorConfigCache_[_instanceName] = _config;
+    return ok;
+  }
+
 
   /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
 
@@ -3536,7 +4245,13 @@ bool ModelManager::RebuildModelWithSensors(
   sdf << base;
 
   sdf << MakeSensorSDF(_config, _instanceName, worldName);
+
+  /// ★ 2026-10-30 设备装饰 + 推进器外观
+  AppendDeviceVisualSDF(sdf, _instanceName);
+
   sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(_config);
 
   HydroConfig hydroCfg;
   bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
@@ -3663,6 +4378,16 @@ bool ModelManager::GetCachedSensorConfig(const std::string &_name, SensorConfig 
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+bool ModelManager::GetCachedDeviceDecor(const std::string &_name,
+                                        DeviceDecorConfig &_out) const
+{
+  auto it = deviceDecorCache_.find(_name);
+  if (it == deviceDecorCache_.end()) return false;
+  _out = it->second;
+  return true;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
 bool ModelManager::ParseInertiaFromSDF(const std::string &_sdf, InertiaParams &_out)
 {
   const std::string &sdf = _sdf;
@@ -3745,6 +4470,141 @@ bool ModelManager::UpdateCachedSDFInertia(const std::string &_name,
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 重建用 SDF 组装（纯函数，2026-10-25）
+///
+/// 为什么不放在 RebuildModelWithAllPlugins 里：那段代码是"有损重建"的高发区
+/// （按配置重拼插件，配置表达力 < SDF），必须能被**离线单测**直接覆盖。
+/// 本函数不触网络/文件/单例：给定输入即确定输出。
+///
+/// 不变量：产物必须保留 `_baseSdf` 里的**全部** `<plugin filename=...>`；
+/// 少一个就整段返回 `_baseSdf`（调用方配合 UpdateCachedSDFInertia 已改好 inertia）。
+std::string ModelManager::ComposeRebuiltSDF(
+    const std::string &_baseSdf, const std::string &_instanceName,
+    const std::string &_worldName,
+    bool hasSensor, const SensorConfig &sensorCfg,
+    bool hasThrust, const ThrusterConfig &tCfg,
+    bool hasHydro, const HydroConfig &hydroCfg,
+    bool haveBuoy, const BuoyancyConfig &bCfg,
+    const DeviceDecorConfig &_decor)
+{
+  std::string base = _baseSdf;
+
+  /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
+
+  bool hasExternalForce = base.find("<external_force>") != std::string::npos
+                     || base.find("<variable_load>") != std::string::npos;
+  auto lpos = base.rfind("</link>");
+  if (lpos != std::string::npos) base = base.substr(0, lpos);
+
+  std::ostringstream sdf;
+  sdf << base;
+
+  if (hasSensor)
+    sdf << MakeSensorSDF(sensorCfg, _instanceName, _worldName);
+
+  /// ★ 2026-10-30 设备装饰（电池/电机）+ 推进器外观 —— 必须在 </link> 之前。
+  ///   注：本函数标称"纯函数"，这两段会读 <models_all>/device_model 的规范化缓存
+  ///   （命中 sidecar 只是 stat，首次才解析网格）；不改变"插件不丢失"不变量。
+  for (const auto &it : _decor.items)
+    sdf << MakeDeviceItemVisualSDF(it);
+  if (hasThrust)
+    sdf << MakeThrusterVisualSDF(tCfg);
+
+  sdf << "    </link>\n";
+  /// ★ 2026-11-01 风杯所需的模型级系统插件（无 AirSpeed 时为空串）
+  sdf << MakeSensorSystemsSDF(sensorCfg);
+
+  if (hasThrust)
+    sdf << MakeThrustPluginSDF(tCfg);
+
+  if (hasHydro)
+  {
+    sdf << MakeBuoyancyPluginSDF(bCfg, &hydroCfg);
+  }
+  else if (haveBuoy)
+  {
+    sdf << MakeBuoyancyPluginSDF(bCfg);
+  }
+
+  sdf << "    <plugin filename=\"libKSPlugin_VariableMass.so\""
+      << " name=\"keship::KSPlugin_VariableMass\">\n"
+      << "      <link_name>base_link</link_name>\n";
+  if (hasExternalForce)
+    sdf << "      <external_force>\n"
+        << "        <link_name>base_link</link_name>\n"
+        << "      </external_force>\n";
+  sdf << "    </plugin>\n  </model>\n</sdf>\n";
+
+  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
+  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+
+  /// ★ 2026-10-25 通用防护：**重建不得丢插件**
+  ///   重建按 BuoyancyConfig/SensorConfig 等**键值配置**重拼插件，
+  ///   而配置能表达的东西比 SDF 少（典型：数学船型的网格浮力体）。
+  ///   对比原缓存 SDF 与重建产物的 plugin 集合；少一个就整段重放 ——
+  ///   宁可放弃"按配置刷新"，也不让模型丢功能（2026-10-25 自由落体事故）。
+  std::string finalSdf = sdf.str();
+  {
+    const std::vector<std::string> before = PluginFileNamesInSdf(_baseSdf);
+    const std::vector<std::string> after = PluginFileNamesInSdf(finalSdf);
+    std::vector<std::string> missing;
+    for (const auto &pname : before)
+      if (std::find(after.begin(), after.end(), pname) == after.end())
+        missing.push_back(pname);
+    if (!missing.empty())
+    {
+      std::cerr << "RebuildModelWithAllPlugins: 重建会丢失插件";
+      for (const auto &mname : missing) std::cerr << " [" << mname << "]";
+      std::cerr << " —— 改用整段重放（缓存 SDF 已含更新后的 inertia）" << std::endl;
+      finalSdf = _baseSdf;   // 注意：base 已被截到 </link>，必须回到完整原文
+    }
+  }
+
+  return finalSdf;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+/// 用给定 SDF 原文重放一个模型（保留原 pose），成功后登记并通知
+/// 供"自包含插件模型"的编辑重建使用（2026-10-25）
+bool ModelManager::RespawnSdf(const std::string &_name, const std::string &_sdf,
+                              const double _pose[6], const SensorConfig &_sc)
+{
+  std::string service = "/world/" + worldName + "/create/blocking";
+  gz::msgs::EntityFactory req;
+  gz::msgs::Boolean rep;
+  bool result = false;
+  req.set_name(_name);
+  req.set_allow_renaming(false);
+  req.set_sdf(_sdf);
+  auto *rp = req.mutable_pose();
+  rp->mutable_position()->set_x(_pose[0]);
+  rp->mutable_position()->set_y(_pose[1]);
+  rp->mutable_position()->set_z(_pose[2]);
+  gz::math::Quaterniond q(_pose[3], _pose[4], _pose[5]);
+  rp->mutable_orientation()->set_x(q.X());
+  rp->mutable_orientation()->set_y(q.Y());
+  rp->mutable_orientation()->set_z(q.Z());
+  rp->mutable_orientation()->set_w(q.W());
+  if (!CreateEntityViaService(req)) return false;
+
+  uint32_t id = 0;
+  bool found = GetModelIDByInstanceNameFromGazebo(_name, id);
+  uint32_t tries = 100;
+  while (!found && tries-- > 0)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    found = GetModelIDByInstanceNameFromGazebo(_name, id);
+  }
+  if (found)
+  {
+    modelList[_name] = id;
+    NotifyModelSpawned(_name, _sc);
+    return true;
+  }
+  return false;
+}
+
 bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
 {
   double savedPose[6] = {0, 0, 0, 0, 0, 0};
@@ -3779,57 +4639,99 @@ bool ModelManager::RebuildModelWithAllPlugins(const std::string &_instanceName)
   auto it = sdfCache_.find(_instanceName);
   std::string base = it->second;
 
-  /// [removed] M_A 现在完全在插件中显式计算，不再注入 DART
+  /// ★ 2026-10-25 修（张老师实测：数学船型改质量 +1kg 后自由落体）：
+  ///   本函数随后会把 SDF 截到最后一个 `</link>`，再按 BuoyancyConfig 重拼插件；
+  ///   而 BuoyancyConfig 只能表达 Box/Cylinder —— 数学船型的 `<buoyancy>` 是**网格**，
+  ///   无法表达 ⇒ 浮力插件整段丢失 ⇒ 模型失去浮力。
+  ///   对「SDF 自含 HydroBuoyancy 插件 **且** 没有缓存浮力配置」的模型改为**整段重放**：
+  ///   调用方（改质量那条路）已用 UpdateCachedSDFInertia 改好 `<inertial>`，
+  ///   重放即可让新质量生效，同时保住网格浮力体。
+  {
+    BuoyancyConfig probeCfg;
+    const bool haveCfgBuoy = GetCachedBuoyancyConfig(_instanceName, probeCfg)
+                             && !probeCfg.bodies.empty();
+    if (!haveCfgBuoy && base.find("libKSPlugin_HydroBuoyancy.so") != std::string::npos)
+    {
+      std::cout << "RebuildModelWithAllPlugins: " << _instanceName
+                << " 为自含插件的模型（网格浮力体无法用 BuoyancyConfig 表达），整段重放"
+                << std::endl;
+      gz::msgs::EntityFactory req;
+      req.set_name(_instanceName);
+      req.set_allow_renaming(false);
+      req.set_sdf(base);
+      auto *rp = req.mutable_pose();
+      rp->mutable_position()->set_x(savedPose[0]);
+      rp->mutable_position()->set_y(savedPose[1]);
+      rp->mutable_position()->set_z(savedPose[2]);
+      gz::math::Quaterniond rq(savedPose[3], savedPose[4], savedPose[5]);
+      rp->mutable_orientation()->set_x(rq.X());
+      rp->mutable_orientation()->set_y(rq.Y());
+      rp->mutable_orientation()->set_z(rq.Z());
+      rp->mutable_orientation()->set_w(rq.W());
 
-  bool hasExternalForce = base.find("<external_force>") != std::string::npos
-                     || base.find("<variable_load>") != std::string::npos;
-  auto lpos = base.rfind("</link>");
-  if (lpos != std::string::npos) base = base.substr(0, lpos);
+      if (!CreateEntityViaService(req))
+      {
+        std::cerr << "RebuildModelWithAllPlugins: 重放失败，用原 SDF 还原: "
+                  << _instanceName << std::endl;
+        gz::msgs::EntityFactory req2;
+        req2.set_name(_instanceName);
+        req2.set_allow_renaming(false);
+        req2.set_sdf(origBaseSdf);
+        auto *rp2 = req2.mutable_pose();
+        rp2->mutable_position()->set_x(savedPose[0]);
+        rp2->mutable_position()->set_y(savedPose[1]);
+        rp2->mutable_position()->set_z(savedPose[2]);
+        rp2->mutable_orientation()->set_x(rq.X());
+        rp2->mutable_orientation()->set_y(rq.Y());
+        rp2->mutable_orientation()->set_z(rq.Z());
+        rp2->mutable_orientation()->set_w(rq.W());
+        CreateEntityViaService(req2);
+        uint32_t rid = 0;
+        if (GetModelIDByInstanceNameFromGazebo(_instanceName, rid))
+          modelList[_instanceName] = rid;
+        return false;
+      }
+
+      uint32_t rid = 0;
+      bool found2 = GetModelIDByInstanceNameFromGazebo(_instanceName, rid);
+      uint32_t tries2 = 100;
+      while (!found2 && tries2-- > 0)
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        found2 = GetModelIDByInstanceNameFromGazebo(_instanceName, rid);
+      }
+      if (found2)
+      {
+        modelList[_instanceName] = rid;
+        SensorConfig scEmpty;
+        NotifyModelSpawned(_instanceName, scEmpty);
+        return true;
+      }
+      return false;
+    }
+  }
 
   SensorConfig sensorCfg;
-  bool hasSensor = GetCachedSensorConfig(_instanceName, sensorCfg);
-
-  std::ostringstream sdf;
-  sdf << base;
-
-  if (hasSensor)
-    sdf << MakeSensorSDF(sensorCfg, _instanceName, worldName);
-  sdf << "    </link>\n";
-
-  HydroConfig hydroCfg;
-  bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
-
-  BuoyancyConfig bCfg;
-  bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
-
+  const bool hasSensor = GetCachedSensorConfig(_instanceName, sensorCfg);
   ThrusterConfig tCfg;
-  if (GetCachedThrusterConfig(_instanceName, tCfg) && !tCfg.bodies.empty())
-    sdf << MakeThrustPluginSDF(tCfg);
+  const bool hasThrust = GetCachedThrusterConfig(_instanceName, tCfg) && !tCfg.bodies.empty();
+  HydroConfig hydroCfg;
+  const bool hasHydro = GetCachedHydroConfig(_instanceName, hydroCfg);
+  BuoyancyConfig bCfg;
+  const bool haveBuoy = GetCachedBuoyancyConfig(_instanceName, bCfg) && !bCfg.bodies.empty();
 
-  if (hasHydro)
-  {
-    sdf << MakeBuoyancyPluginSDF(bCfg, &hydroCfg);
-  }
-  else if (haveBuoy)
-  {
-    sdf << MakeBuoyancyPluginSDF(bCfg);
-  }
+  /// ★ 2026-10-30：设备装饰也必须在重建里带上，否则改推进器/浮力后电池电机会消失
+  DeviceDecorConfig dCfg;
+  GetCachedDeviceDecor(_instanceName, dCfg);
 
-  sdf << "    <plugin filename=\"libKSPlugin_VariableMass.so\""
-      << " name=\"keship::KSPlugin_VariableMass\">\n"
-      << "      <link_name>base_link</link_name>\n";
-  if (hasExternalForce)
-    sdf << "      <external_force>\n"
-        << "        <link_name>base_link</link_name>\n"
-        << "      </external_force>\n";
-  sdf << "    </plugin>\n  </model>\n</sdf>\n";
-
-  /// ★ 2026-09-24 修 P0-1：本路径原先漏了 M_A 注入
-  ApplyAddedMassToSdf(sdf, hasHydro, hydroCfg);
+  const std::string finalSdf = ComposeRebuiltSDF(
+      origBaseSdf, _instanceName, worldName,
+      hasSensor, sensorCfg, hasThrust, tCfg,
+      hasHydro, hydroCfg, haveBuoy, bCfg, dCfg);
 
   std::string service = "/world/" + worldName + "/create/blocking";
   gz::msgs::EntityFactory req; gz::msgs::Boolean rep; bool result;
-  req.set_name(_instanceName); req.set_allow_renaming(false); req.set_sdf(sdf.str());
+  req.set_name(_instanceName); req.set_allow_renaming(false); req.set_sdf(finalSdf);
   auto rp = req.mutable_pose();
   rp->mutable_position()->set_x(savedPose[0]);
   rp->mutable_position()->set_y(savedPose[1]);
@@ -4015,6 +4917,9 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
     const auto &sc = sensorIt->second;
     ofs << "===SENSORS===\n"
         << "link_name=" << sc.linkName << "\n";
+    /// ★ 2026-11-01 pose 语义标记：**只有新语义才写** ⇒ 老 ksm 逐字节不变、读回仍按量测点
+    if (sc.mountSemantics)
+      ofs << "pose_semantics=mount\n";
     for (const auto &inst : sc.instances)
     {
       ofs << "instance=" << sensorTypeName(inst.type) << "," << inst.name << ","
@@ -4034,6 +4939,27 @@ bool ModelManager::SaveModelToKSM(const std::string &_name, const std::string &_
       ofs << "\n";
     }
     ofs << "===END===\n\n";
+  }
+
+  /// ★ 2026-10-30：DEVICES（设备外观装饰，电池/电机）
+  ///   **只在有装饰项时才写段** ⇒ 无装饰的模型与改动前逐字节一致（与 SENSORS/COLLISION 同策）。
+  ///   行格式：`item=<type>,<name>,x,y,z,roll,pitch,yaw`
+  ///   推进器**不写此段** —— 它的 pose 已在 THRUST 段，外观直接复用，不重复存。
+  {
+    auto devIt = deviceDecorCache_.find(_name);
+    if (devIt != deviceDecorCache_.end() && !devIt->second.items.empty())
+    {
+      const auto &dc = devIt->second;
+      ofs << "===DEVICES===\n"
+          << "link_name=" << dc.linkName << "\n";
+      for (const auto &it : dc.items)
+      {
+        ofs << "item=" << deviceTypeName(it.type) << "," << it.name << ","
+            << it.pose[0] << "," << it.pose[1] << "," << it.pose[2] << ","
+            << it.pose[3] << "," << it.pose[4] << "," << it.pose[5] << "\n";
+      }
+      ofs << "===END===\n\n";
+    }
   }
 
   /// ★ 2026-09-28（D2）：碰撞体积计算方式
@@ -4272,7 +5198,18 @@ bool ModelManager::SaveWorldManifest(const std::string &_dirpath,
       wave.obj.emplace_back("amplitude", JvMakeNum(a.waveParams.amplitude));
       wave.obj.emplace_back("scale", JvMakeNum(a.waveParams.scale));
       wave.obj.emplace_back("gain", JvMakeNum(a.waveParams.gain));
-      wave.obj.emplace_back("direction", JvMakeNum(a.waveParams.direction));
+      /// ★ 2026-10-24（张老师拍板方案 A）：directionAuto 为真时：
+      ///   浪向 = 「风速与流速中较大者」的方向；两者都为 0 时保持手动值。
+      ///   **生成期决定**（不依赖运行时联动）⇒ 改风/流方向后需重新生成 world。
+      double waveDirEff = a.waveParams.direction;
+      if (a.waveDirectionAuto)
+      {
+        const double vWind = a.windParams.speed;
+        const double vCur  = a.currentParams.speed;
+        if (vWind > 1e-9 || vCur > 1e-9)
+          waveDirEff = (vWind >= vCur) ? a.windParams.direction : a.currentParams.direction;
+      }
+      wave.obj.emplace_back("direction", JvMakeNum(waveDirEff));
       wave.obj.emplace_back("angle", JvMakeNum(a.waveParams.angle));
       wave.obj.emplace_back("steepness", JvMakeNum(a.waveParams.steepness));
       wave.obj.emplace_back("tau", JvMakeNum(a.waveParams.tau));
@@ -4474,6 +5411,7 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
                                  ThrusterConfig &_thrustCfg,
                                  HydroConfig &_hydroCfg,
                                  SensorConfig &_sensorCfg,
+                                 DeviceDecorConfig &_deviceCfg,
                                  CollisionMode *_outCollisionMode)
 {
   std::ifstream ifs(_filepath);
@@ -4483,7 +5421,7 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     return false;
   }
 
-  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS, COLLISION } section = NONE;
+  enum { NONE, BASE_SDF, BUOYANCY, THRUST, HYDRO, SENSORS, COLLISION, DEVICES } section = NONE;
   std::string line;
   std::ostringstream sdfBuf;
 
@@ -4499,6 +5437,8 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     if (line == "===THRUST===")        { section = THRUST;    continue; }
     if (line == "===HYDRO===")         { section = HYDRO;     continue; }
     if (line == "===SENSORS===")       { section = SENSORS;   continue; }
+    /// ★ 2026-10-30：设备外观装饰（电池/电机）。缺段 ⇒ items 为空，老 ksm 零影响
+    if (line == "===DEVICES===")       { section = DEVICES;   continue; }
     /// ★ 2026-09-28（D2）：碰撞体积计算方式（缺段 ⇒ 调用方保持初值 ⇒ 向后兼容）
     if (line == "===COLLISION===")     { section = COLLISION; continue; }
     if (line == "===END===")           { section = NONE;      continue; }
@@ -4627,6 +5567,9 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
     {
       if (line.find("link_name=") == 0)
         _sensorCfg.linkName = line.substr(10);
+      /// ★ 2026-11-01 pose 语义：缺行 ⇒ 旧语义（量测点），老 ksm 行为不变
+      else if (line.find("pose_semantics=") == 0)
+        _sensorCfg.mountSemantics = (line.substr(15) == "mount");
       else if (line.find("instance=") == 0)
       {
         std::vector<std::string> parts;
@@ -4649,6 +5592,33 @@ bool ModelManager::ParseKSMFile(const std::string &_filepath,
             inst.camRate   = std::stod(parts[10]);
           }
           _sensorCfg.instances.push_back(inst);
+        }
+      }
+    }
+      else if (section == DEVICES)
+    {
+      if (line.find("link_name=") == 0)
+        _deviceCfg.linkName = line.substr(10);
+      else if (line.find("item=") == 0)
+      {
+        std::vector<std::string> parts;
+        boost::split(parts, line.substr(5), boost::is_any_of(","));
+        if (parts.size() >= 8)
+        {
+          DeviceType dt;
+          if (!deviceTypeFromName(parts[0], dt))
+          {
+            /// 未知类型：忽略该条但**不报错**（新版本 ksm 被老版本读时不炸）
+            std::cerr << "ParseKSMFile: 未知设备装饰类型，已忽略: " << parts[0] << std::endl;
+            continue;
+          }
+          DeviceItem it;
+          it.type = dt;
+          it.name = parts[1];
+          it.pose[0]=std::stod(parts[2]); it.pose[1]=std::stod(parts[3]);
+          it.pose[2]=std::stod(parts[4]); it.pose[3]=std::stod(parts[5]);
+          it.pose[4]=std::stod(parts[6]); it.pose[5]=std::stod(parts[7]);
+          _deviceCfg.items.push_back(it);
         }
       }
     }
@@ -4717,9 +5687,10 @@ bool ModelManager::LoadModelFromKsmFile(
   HydroConfig hydroCfg;
   hydroCfg.linkName = "";          /// 哨兵：仅当 HYDRO 段有 link_name 时才视为"启用了 Fossen"
   SensorConfig sensorCfg;
+  DeviceDecorConfig deviceCfg;                        ///< ★ 2026-10-30 设备外观装饰
   CollisionMode ksmCollision = CollisionMode::Mesh;   ///< 缺段 ⇒ 默认（向后兼容）
   if (!ParseKSMFile(_ksmPath, baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
-                    &ksmCollision))
+                    deviceCfg, &ksmCollision))
   {
     std::cerr << "LoadModelFromKsmFile: 解析失败 " << _ksmPath << std::endl;
     return false;
@@ -4747,6 +5718,10 @@ bool ModelManager::LoadModelFromKsmFile(
     CacheHydroConfig(_instanceName, hydroCfg);
   if (!sensorCfg.instances.empty())
     CacheSensorConfig(_instanceName, sensorCfg);
+  /// ★ 2026-10-30：设备装饰必须在第 4 步分派 spawn **之前**入缓存，
+  ///   否则首帧生成时读不到、电池电机会缺一次（直到下次重建）。
+  if (!deviceCfg.items.empty())
+    CacheDeviceDecor(_instanceName, deviceCfg);
 
   /// 4. 按段分派 spawn（规则与 KSW 加载一致，见函数头注释）
   bool ok = false;
@@ -4764,7 +5739,23 @@ bool ModelManager::LoadModelFromKsmFile(
   else
   {
     route = "SpawnModelInGazeboFromSDFString";
-    ok = SpawnModelInGazeboFromSDFString(_instanceName, baseSDF);
+    /// ★ 2026-10-30：本路线原先把 base SDF **原样** spawn ⇒ 该路线上的传感器与
+    ///   设备装饰都会丢（base 里从不含这两段）。此处按其它路线同一口径补进去；
+    ///   没有传感器/装饰时两段都是空串 ⇒ 无配置的模型行为与改动前完全一致。
+    {
+      std::string patched = baseSDF;
+      auto l = patched.rfind("</link>");
+      if (l != std::string::npos)
+      {
+        std::ostringstream extras;
+        if (!sensorCfg.instances.empty())
+          extras << MakeSensorSDF(sensorCfg, _instanceName, worldName);
+        AppendDeviceVisualSDF(extras, _instanceName);
+        if (!extras.str().empty())
+          patched = patched.substr(0, l) + extras.str() + patched.substr(l);
+      }
+      ok = SpawnModelInGazeboFromSDFString(_instanceName, patched);
+    }
   }
 
   if (!ok)

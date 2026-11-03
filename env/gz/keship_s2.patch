@@ -1,0 +1,197 @@
+diff --git a/src/keship/CMakeLists.txt b/src/keship/CMakeLists.txt
+index c38794f..1989d2e 100644
+--- a/src/keship/CMakeLists.txt
++++ b/src/keship/CMakeLists.txt
+@@ -40,6 +40,42 @@ find_package(ros_gz_sim REQUIRED)
+ # 查找Gazebo依赖
+ find_package(gz-sim8 REQUIRED) 
+ set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
++
++# ── 能力探测（2026-10-05）：gz-sim 是否支持**运行时**设置流体附加质量 ──────────
++#   KeShip 的「完全出水时取消 M_A」(S2) 需要 `gz::sim::Link::SetFluidAddedMass()`。
++#   该接口**不是上游 8.11.0 自带的** —— 本工程给 gz-sim 打了补丁才有
++#   （见 doc/plans/ma_air_upstream_setter_feasibility.md）。
++#   为让**未打补丁**的环境也能正常编译，这里做能力探测：
++#     具备  ⇒ 定义 KESHIP_HAS_SET_FLUID_ADDED_MASS，启用 S2
++#     不具备 ⇒ 自动降级（S2 段不参与编译），其余功能完全不受影响
++include(CheckCXXSourceCompiles)
++set(_keship_saved_libs "${CMAKE_REQUIRED_LIBRARIES}")
++set(_keship_saved_incs "${CMAKE_REQUIRED_INCLUDES}")
++set(CMAKE_REQUIRED_LIBRARIES gz-sim8::core)
++get_target_property(_keship_gzs_incs gz-sim8::core INTERFACE_INCLUDE_DIRECTORIES)
++if(_keship_gzs_incs)
++  set(CMAKE_REQUIRED_INCLUDES ${_keship_gzs_incs})
++endif()
++check_cxx_source_compiles("
++  #include <gz/sim/Link.hh>
++  #include <gz/math/Matrix6.hh>
++  int main()
++  {
++    gz::sim::Link link;
++    gz::math::Matrix6d m = gz::math::Matrix6d::Zero;
++    link.SetFluidAddedMass(*(gz::sim::EntityComponentManager *)nullptr, m);
++    return 0;
++  }
++" KESHIP_HAS_SET_FLUID_ADDED_MASS)
++set(CMAKE_REQUIRED_LIBRARIES "${_keship_saved_libs}")
++set(CMAKE_REQUIRED_INCLUDES "${_keship_saved_incs}")
++
++if(KESHIP_HAS_SET_FLUID_ADDED_MASS)
++  add_definitions(-DKESHIP_HAS_SET_FLUID_ADDED_MASS)
++  message(STATUS "KeShip: gz-sim 具备 SetFluidAddedMass ⇒ 启用「完全出水取消 M_A」(S2)")
++else()
++  message(STATUS "KeShip: gz-sim **不具备** SetFluidAddedMass ⇒ 跳过 S2（自动降级，其余功能不变）")
++endif()
+ find_package(gz-common5 REQUIRED) 
+ set(GZ_COMMON_VER ${gz-common5_VERSION_MAJOR})
+ find_package(Eigen3 REQUIRED)
+diff --git a/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.cc b/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.cc
+index af69aed..50b4fc9 100644
+--- a/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.cc
++++ b/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.cc
+@@ -3,6 +3,8 @@
+  */
+ /* KeShip 浮力-水动力合并插件实现 — 统一 PreUpdate 计算并一次性写入 ECM */
+ 
++#include <cstdlib>
++
+ #include "KSPlugin_HydroBuoyancy.hh"
+ 
+ #include <gz/sim/Model.hh>
+@@ -122,6 +124,39 @@ void KSPlugin_HydroBuoyancy::Configure(
+   this->linkObj_ = gz::sim::Link(this->linkEntity_);
+   this->linkObj_.EnableVelocityChecks(_ecm, true);
+ 
++#ifdef KESHIP_HAS_SET_FLUID_ADDED_MASS
++  /// ★ S2（2026-10-05）：读取 SDF 注入的**原始**流体附加质量。
++  ///   用于"完全出水时取消 M_A、重新入水时恢复"。
++  ///   注：`Link::SetFluidAddedMass` 只写命令组件、**不改 ECM 的 Inertial**，
++  ///   所以 ECM 里始终保存着 SDF 的原始值，可随时安全回读。
++  {
++    auto inertialComp =
++        _ecm.Component<gz::sim::components::Inertial>(this->linkEntity_);
++    if (inertialComp && inertialComp->Data().FluidAddedMass().has_value())
++    {
++      const auto &m = inertialComp->Data().FluidAddedMass().value();
++      bool anyNonZero = false;
++      for (std::size_t r = 0; r < 6 && !anyNonZero; ++r)
++      {
++        for (std::size_t c = 0; c < 6; ++c)
++        {
++          if (std::abs(m(r, c)) > 1e-12)
++          {
++            anyNonZero = true;
++            break;
++          }
++        }
++      }
++      this->dataPtr->hasAddedMass_ = anyNonZero;
++      if (anyNonZero)
++      {
++        gzmsg << "KSPlugin_HydroBuoyancy: 检出流体附加质量"
++              << "（完全出水时将自动取消）" << std::endl;
++      }
++    }
++  }
++#endif  // KESHIP_HAS_SET_FLUID_ADDED_MASS
++
+   /// 初始化 Fossen 模型（如已配置）
+   if (this->enableHydro_)
+   {
+@@ -446,6 +481,51 @@ void KSPlugin_HydroBuoyancy::PreUpdate(
+     }
+   }
+ 
++#ifdef KESHIP_HAS_SET_FLUID_ADDED_MASS
++  /// ═══════════════════════════════════════════════
++  /// 5b. ★ S2（2026-10-05）：完全出水时取消流体附加质量
++  ///
++  ///   背景：SDF `<fluid_added_mass>` 只在**创建时**注入 DART 惯性张量，
++  ///   此后无法随介质变化 ⇒ 模型跃出水面后**仍带附加惯性**，空中运动失真
++  ///   （实测：垂荡自由落体加速度只有正确值的 **53%**，见
++  ///   `doc/plans/ma_air_correction_plan.md` §5.3）。
++  ///
++  ///   做法：在**状态翻转**时调用 `Link::SetFluidAddedMass`（依赖 gz-sim 侧 S1）：
++  ///     完全出水（浸水体积 ≈ 0 或不在水区）→ **零矩阵**
++  ///     重新入水                        → **恢复 ECM 中的原始值**
++  ///
++  ///   ★ 只在**翻转**时下发（每帧下发会触发引擎重算惯性）⇒ 静水 / 半浸场景
++  ///     **零开销、行为逐位不变**。
++  ///   ★ 仅对 `hasAddedMass_` 的模型生效 ⇒ 其他模型完全不受影响。
++  /// ═══════════════════════════════════════════════
++  /// ★ 调试/对照开关（2026-10-05）：`KESHIP_MA_CANCEL=0` 时**禁用**本段，
++  ///   等价于 S1 行为 —— 用于两态对照实验与快速回退。
++  static const bool maCancelEnabled = []() {
++    const char *e = std::getenv("KESHIP_MA_CANCEL");
++    return !(e && std::string(e) == "0");
++  }();
++
++  if (maCancelEnabled && this->dataPtr->hasAddedMass_)
++  {
++    const bool outOfWater = (!inWater) || (totalSubVol < 1e-9);
++    if (outOfWater != this->dataPtr->maCancelled_)
++    {
++      gz::math::Matrix6d target = gz::math::Matrix6d::Zero;
++      if (!outOfWater)
++      {
++        auto orig = this->linkObj_.WorldFluidAddedMassMatrix(_ecm);
++        if (orig)
++          target = *orig;
++      }
++      this->linkObj_.SetFluidAddedMass(_ecm, target);
++      this->dataPtr->maCancelled_ = outOfWater;
++      gzmsg << "KSPlugin_HydroBuoyancy: 流体附加质量 "
++            << (outOfWater ? "已取消（完全出水）" : "已恢复（重新入水）")
++            << std::endl;
++    }
++  }
++#endif  // KESHIP_HAS_SET_FLUID_ADDED_MASS
++
+   /// ═══════════════════════════════════════════════
+   /// 6. 阻尼（水中，M_A 通过 <fluid_added_mass> 注入 DART 隐式处理）
+   /// ═══════════════════════════════════════════════
+diff --git a/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.hh b/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.hh
+index 2374f13..69ac845 100644
+--- a/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.hh
++++ b/src/keship/src_cpp/physics/KSPlugin_HydroBuoyancy.hh
+@@ -193,6 +193,14 @@ namespace keship
+     /// \brief 当前水区的波浪场实体 ID（缓存在此，供**每帧**读 EnvFlow 组件用；
+     /// 流速/风速可能被环境编辑器即时改动，不能只在"水区切换时"读一次）
+     gz::sim::Entity activeWfEntity_{gz::sim::kNullEntity};
++
++    /// \brief 该 link 是否有**非零**流体附加质量（Configure 时判定一次）。
++    /// 为 false 时"出水取消 M_A"整段不生效 ⇒ 其他模型完全不受影响。
++    bool hasAddedMass_ = false;
++
++    /// \brief 当前是否处于"附加质量已取消"状态（用于**只在翻转时**下发命令，
++    /// 避免每帧调用 Link::SetFluidAddedMass 触发引擎重算惯性）。
++    bool maCancelled_ = false;
+   };
+ 
+ } // namespace keship
+diff --git a/src/keship/src_cpp/utils/Buoyancy.cc b/src/keship/src_cpp/utils/Buoyancy.cc
+index e35f525..020e17c 100644
+--- a/src/keship/src_cpp/utils/Buoyancy.cc
++++ b/src/keship/src_cpp/utils/Buoyancy.cc
+@@ -1018,7 +1018,7 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
+                         }
+                     }
+                     break;
+-                case 0: // 水上水上都是三角形
++                case 0: // 水上水下都是三角形
+                 {
+                     int a = -1, b = -1, c = -1;
+                     gz::math::Vector3d bc_mid;
+@@ -1031,6 +1031,12 @@ void keship::Buoyancy::calculateWetSurfaceVolumeContribution()
+                         else
+                             c = tri.v[i];
+                     }
++                    /// ★ 2026-10-05 修复（退化三角形 ⇒ NaN）：
++                    ///   若三个顶点**全部**落在水线面内（signs 全 0），则 b/c 保持 -1，
++                    ///   下一行会 `vertices_[-1]` 越界 ⇒ subVol 变 NaN、仿真冻结。
++                    ///   该三角形体积贡献为 0 ⇒ 正确做法是**跳过**。
++                    if (b < 0 || c < 0)
++                        break;
+                     bc_mid = vertices_[b] + (vertexDistances_[b] / (vertexDistances_[b] - vertexDistances_[c])) * (vertices_[c] - vertices_[b]);
+                     /// 记录水线面多边形的边
+                     waterPlaneSegments_.emplace_back(

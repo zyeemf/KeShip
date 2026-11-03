@@ -4,6 +4,8 @@
 /* Phase C: 排水量验证实验对话框实现 */
 
 #include "DisplacementVerifyDialog.hh"
+#include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 #include "../shared/UiTheme.hh"
 
 #include "../shared/UiTheme.hh"
@@ -169,7 +171,7 @@ DisplacementVerifyDialog::DisplacementVerifyDialog(
 
   onTypeChanged();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg; auto *p = msg.mutable_params();
     gz::msgs::Any v;
@@ -177,8 +179,7 @@ DisplacementVerifyDialog::DisplacementVerifyDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
+    keship::WavefieldPublisher(transportNode_).Publish(msg);
   }
 
   std::cout << "Phase C: 排水量验证对话框已创建" << std::endl;
@@ -192,17 +193,9 @@ DisplacementVerifyDialog::~DisplacementVerifyDialog() {
   poseTimer_->stop(); doDeleteHull();
   delete generator_;
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
-  {
-    gz::msgs::Param msg; auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void DisplacementVerifyDialog::setupUI() {

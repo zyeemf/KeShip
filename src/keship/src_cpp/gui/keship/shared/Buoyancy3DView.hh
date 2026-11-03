@@ -163,6 +163,7 @@ private:
 
   /// mesh 质心（原始坐标中的 v_average），用于摄像机聚焦
   double meshCx_ = 0, meshCy_ = 0, meshCz_ = 0;
+  double meshRadius_ = 0;   ///< 网格相对形心的包围半径（用于自动定视距）
 
   /// 相机
   float theta_ = 1.2f, phi_ = 0.8f, dist_ = 10.0f;

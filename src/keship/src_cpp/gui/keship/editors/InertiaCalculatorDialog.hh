@@ -28,6 +28,9 @@ public:
   explicit InertiaCalculatorDialog(QWidget *_parent = nullptr);
   ~InertiaCalculatorDialog() override;
 
+  /// 无交互加载网格（离屏测试用，不弹 QFileDialog）。
+  void loadMeshFileForTest(const std::string &_path) { loadMeshFile(_path); }
+
 private slots:
   void onBrowseFile();
   void onDensityPreset(int _idx);

@@ -1,15 +1,19 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-04 数学船型稳性对比 — 对话框实现 */
+/* HS-05 数学船型稳性对比 — 对话框实现 */
 
 #include "HullStabilityDialog.hh"
+#include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 #include "../shared/UiTheme.hh"
 #include "keship/utils/LinearDamping.hh"
 #include "MeshUtils.hh"   // 与 ShipHullGenerator.hh 同目录（src_cpp/utils），非 include/keship/utils
 #include "../shared/UiTheme.hh"
+#include "../shared/ExpDeliverable.hh"
 
 #include <QVBoxLayout>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QGroupBox>
 #include <QFormLayout>
@@ -145,7 +149,7 @@ HullStabilityDialog::HullStabilityDialog(
     QWidget *_parent)
     : QDialog(_parent), transportNode_(_transportNode), worldName_(_worldName)
 {
-  setWindowTitle("SP-04 数学船型稳性对比");
+  setWindowTitle("HS-05 数学船型稳性对比");
   setModal(false); resize(960, 720);
   poseState_ = std::make_shared<HullPoseState>();
 
@@ -159,7 +163,7 @@ HullStabilityDialog::HullStabilityDialog(
   poseTimer_->start(33);
   onHullTypeChanged();
 
-  // 静水波浪参数：PMS + gain=0，WavefieldPublisher 会自动重发
+  // 静水波浪参数：PMS + gain=0（经进程内唯一发布器下发）
   {
     gz::msgs::Param msg;
     auto *p = msg.mutable_params();
@@ -168,12 +172,11 @@ HullStabilityDialog::HullStabilityDialog(
     v.set_string_value("PMS"); (*p)["model"] = v;
     v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
     v.set_double_value(0.0);  (*p)["gain"] = v;
-    auto pub = _transportNode.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
-    std::cout << "SP-04: 已发布静水波浪参数" << std::endl;
+    keship::WavefieldPublisher(_transportNode).Publish(msg);
+    std::cout << "HS-05: 已发布静水波浪参数" << std::endl;
   }
 
-  std::cout << "SP-04: 数学船型稳性对话框已创建" << std::endl;
+  std::cout << "HS-05: 数学船型稳性对话框已创建" << std::endl;
 }
 
 HullStabilityDialog::~HullStabilityDialog() {
@@ -181,19 +184,9 @@ HullStabilityDialog::~HullStabilityDialog() {
   if (!poseTopic_.empty()) transportNode_.Unsubscribe(poseTopic_);
   poseTimer_->stop(); doDeleteAll();
 
-  // 恢复波浪：PMS + gain=1.0，WavefieldPublisher 会自动重发
-  {
-    gz::msgs::Param msg;
-    auto *p = msg.mutable_params();
-    gz::msgs::Any v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_STRING);
-    v.set_string_value("PMS"); (*p)["model"] = v;
-    v.set_type(gz::msgs::Any_ValueType::Any_ValueType_DOUBLE);
-    v.set_double_value(1.0);  (*p)["gain"] = v;
-    auto pub = transportNode_.Advertise<gz::msgs::Param>("/keship/wavefield/parameters_set");
-    pub.Publish(msg);
-    std::cout << "SP-04: 已恢复波浪参数" << std::endl;
-  }
+  // 恢复实验前波浪参数（进程内快照，逐水区精确恢复；
+  // 2026-10-16 修复：原硬编码 gain=1.0 在 0 级海况场景下误开波浪）
+  keship::WaveParamSnapshot::Instance().Restore(transportNode_);
 }
 
 void HullStabilityDialog::setupUI() {
@@ -229,18 +222,30 @@ void HullStabilityDialog::setupUI() {
   hydroForm->addRow("GM(th):", gmLabel_);
   paramForm->addRow(hydroFrame);
 
+  /// ★ 2026-10-27（L1 链）：导入 SD-08 交付物。
+  /// 放在生成按钮**之前**——先导入再生成，学生看到的是同一条船。
+  importSd08Btn_ = new QPushButton("导入 SD-08 型线数据…", this);
+  paramForm->addRow(importSd08Btn_);
+  sd08Label_ = new QLabel("（未导入 SD-08；当前用本页手填的船型族与主尺度）", this);
+  sd08Label_->setWordWrap(true);
+  sd08Label_->setStyleSheet("color:#555;");
+  paramForm->addRow(sd08Label_);
+
   spawnBtn_ = new QPushButton("生成船型 + 压载块", this);
   spawnBtn_->setMinimumHeight(30); paramForm->addRow(spawnBtn_);
   topRow->addWidget(paramGroup);
 
   auto *ctlGroup = new QGroupBox("压载控制", this);
   auto *ctlForm = new QFormLayout(ctlGroup);
-  weightSlider_ = new QSlider(Qt::Horizontal, this);
-  weightSlider_->setRange(0, 500); weightSlider_->setValue(250);
-  sliderValueLabel_ = new QLabel("0.000 m", this); sliderValueLabel_->setStyleSheet("font-weight:bold;");
-  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（与 SP-03 同一处改造）。
+  /// ★ 2026-10-29（D5）：滑条改数值框（同 HS-04：滑条无程序化写入口、拖拽难精确定位）。
+  weightSpin_ = new QDoubleSpinBox(this);
+  weightSpin_->setRange(-0.25, 0.25); weightSpin_->setValue(0.0);
+  weightSpin_->setDecimals(3); weightSpin_->setSingleStep(0.005);
+  weightSpin_->setSuffix(" m");
+  weightSpin_->setToolTip("压载横向位置（m），范围 −0.25 ~ 0.25；步进 0.005 m，停 0.3 s 后移动压载");
+  /// ★ 2026-09-21：压载位置输入 **由 QDoubleSpinBox 改为 QLineEdit**（与 HS-04 同一处改造）。
   /// 原因：QDoubleSpinBox 自动格式化成固定小数位（decimals=3 → "0.000"），
-  /// "在小数点后插入一个 1" → "0.1000" 被判非法 → **按键被吞**（SP-03 实测同现象）。
+  /// "在小数点后插入一个 1" → "0.1000" 被判非法 → **按键被吞**（HS-04 实测同现象）。
   weightEdit_ = new QLineEdit("0", this);
   auto *wv = new QDoubleValidator(-0.25, 0.25, 6, this);
   wv->setNotation(QDoubleValidator::StandardNotation);
@@ -253,13 +258,13 @@ void HullStabilityDialog::setupUI() {
   applyBtn_->setToolTip("把压载移动到左侧输入框指定的位置（只有点这里才会真正移动）");
 
   auto *wRow = new QHBoxLayout();
-  wRow->addWidget(weightSlider_, 3);
+  wRow->addWidget(weightSpin_, 3);
   wRow->addWidget(weightEdit_, 1);
   wRow->addWidget(new QLabel("m", this));
   wRow->addWidget(applyBtn_);
-  ctlForm->addRow("压载 y:", sliderValueLabel_); ctlForm->addRow(wRow);
+  ctlForm->addRow(wRow);
 
-  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可直接拖动滑条（松手 0.3 s 后移动）", this);
+  auto *applyHint = new QLabel("输入后点『移动压载』生效；也可用数值框步进（停 0.3 s 后移动）", this);
   applyHint->setStyleSheet("color:#666; font-size:11px;"); applyHint->setWordWrap(true);
   ctlForm->addRow(applyHint);
 
@@ -291,8 +296,10 @@ void HullStabilityDialog::setupUI() {
   dataTable_->setMinimumHeight(100); mainLayout->addWidget(dataTable_, 1);
   chartWidget_ = new HullChartWidget(this); mainLayout->addWidget(chartWidget_, 2);
 
+  connect(importSd08Btn_, &QPushButton::clicked, this, &HullStabilityDialog::onImportSd08);
   connect(spawnBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onSpawn);
-  connect(weightSlider_, &QSlider::valueChanged, this, &HullStabilityDialog::onSliderChanged);
+  connect(weightSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+          this, &HullStabilityDialog::onBallastSpinChanged);
   connect(recordBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onRecord);
   connect(resetBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onResetWeight);
   connect(clearBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onClearAll);
@@ -307,7 +314,7 @@ void HullStabilityDialog::setupUI() {
           this, [this]() { onHullTypeChanged(); });
 
   /// ★ 2026-09-21：删掉原「滑条↔spinbox 双向同步、各自直接 moveWeight」的两条连接
-  /// （与 SP-03 同因：moveWeight 走 `/set_pose/blocking`，同步阻塞 RPC 最长 2 s，
+  /// （与 HS-04 同因：moveWeight 走 `/set_pose/blocking`，同步阻塞 RPC 最长 2 s，
   ///  逐键 / 逐格触发会冻住 UI）。现在只有滑条一条连接，且内部防抖 300 ms。
   connect(applyBtn_, &QPushButton::clicked, this, &HullStabilityDialog::onApplyWeight);
   moveDebounce_ = new QTimer(this);
@@ -334,9 +341,100 @@ void HullStabilityDialog::initPoseSubscription() {
       }));
 }
 
+//-----------------------------------------------------------------------------
+/// ★ 2026-10-27（L1 链）：读入 SD-08 型线交付物，并**在本页复现同一条船**。
+/// 链判据（B）：下游必须真的消费上游产出，且上游改一个量下游结果必须跟着动。
+/// 故这里不仅拷 L/B/D，还拷船型族、两个形状指数与密度 —— 少拷任何一个都会变成"另一条船"。
+void HullStabilityDialog::onImportSd08()
+{
+  const QString path = QFileDialog::getOpenFileName(
+      this, "导入 SD-08 型线交付物", "sd08_lines.json", "JSON (*.json)");
+  if (path.isEmpty()) return;
+
+  QString msg;
+  const bool ok = importSd08From(path, &msg);
+  if (!ok || !msg.isEmpty()) {
+    QMessageBox::warning(this, ok ? "导入 SD-08 型线（有偏差）" : "导入 SD-08 型线", msg);
+  }
+}
+
+//-----------------------------------------------------------------------------
+/// ★ 2026-11-03（D10）：无交互导入入口（测试 / 脚本用），跳过 QFileDialog 与模态框。
+/// 失败原因与「成功但有警告」的说明都经 _err 回传，由调用方决定怎么提示。
+bool HullStabilityDialog::importSd08From(const QString &_path, QString *_err)
+{
+  keship::ExpDeliverable d;
+  std::string err;
+  if (!keship::ReadExpDeliverable(_path.toStdString(), d, &err) ||
+      !keship::ValidExpDeliverable(d, "SD-08", &err)) {
+    if (_err) *_err = QString::fromStdString("无法使用该文件：\n" + err);
+    return false;
+  }
+
+  sd08FamilyIndex_ = d.object["familyIndex"].toInt(0);
+  sd08WlExp_       = d.params["wlExponent"].toDouble(2.0);
+  sd08SecExp_      = d.params["secExponent"].toDouble(2.0);
+  sd08Density_     = d.object["densityKgM3"].toDouble(500.0);
+  sd08Imported_    = true;
+
+  // 本页控件的量程窄于 SD-08（L 2~20 vs 2~30 等），越界会被 clamp ⇒ 必须提示，否则复现失败却看不出来
+  const double wantL = d.object["lengthM"].toDouble(6.0);
+  const double wantB = d.object["breadthM"].toDouble(1.5);
+  const double wantD = d.object["depthM"].toDouble(1.0);
+  bool clamped = false;
+  if (wantL < lengthSpin_->minimum() || wantL > lengthSpin_->maximum()) clamped = true;
+  if (wantB < breadthSpin_->minimum() || wantB > breadthSpin_->maximum()) clamped = true;
+  if (wantD < depthSpin_->minimum() || wantD > depthSpin_->maximum()) clamped = true;
+
+  hullTypeCombo_->setCurrentIndex(sd08FamilyIndex_);
+  lengthSpin_->setValue(wantL);
+  breadthSpin_->setValue(wantB);
+  depthSpin_->setValue(wantD);
+  onHullTypeChanged();
+
+  const double wantGm  = d.metrics["GMd"].toDouble();
+  const double wantVol = d.metrics["volumeD"].toDouble();
+  const double gotGm   = hydro_.GMd;
+  const double gotVol  = hydro_.volumeD;
+  const double relGm = (std::abs(wantGm) > 1e-9)
+                           ? std::abs(gotGm - wantGm) / std::abs(wantGm) : 0.0;
+
+  sd08Label_->setText(QString(
+      "已导入 SD-08：%1　p=%2　q=%3　ρ=%4 kg/m³\n"
+      "SD-08 交付：∇=%5 m³　GM=%6 m　→　本页复现：∇=%7 m³　GM=%8 m（GM 相对偏差 %9）%10")
+      .arg(d.object["family"].toString())
+      .arg(sd08WlExp_, 0, 'f', 3)
+      .arg(sd08SecExp_, 0, 'f', 3)
+      .arg(sd08Density_, 0, 'f', 1)
+      .arg(wantVol, 0, 'f', 5)
+      .arg(wantGm, 0, 'f', 5)
+      .arg(gotVol, 0, 'f', 5)
+      .arg(gotGm, 0, 'f', 5)
+      .arg(relGm * 100.0, 0, 'f', 2)
+      .arg(clamped ? "\n⚠ 主尺度超出本页量程，已被截断——复现结果不可比" : ""));
+  sd08Label_->setStyleSheet(relGm > 0.02 ? "color:#b00;" : "color:#338833;");
+
+  std::cout << "HS-05: 已导入 SD-08 交付物（GM 交付 " << wantGm
+            << " vs 复现 " << gotGm << "）" << std::endl;
+
+  if (relGm > 0.02 && !clamped && _err) {
+    *_err = QString("复现偏差超过 2%%（GM：交付 %1 m / 复现 %2 m）。\n"
+                    "说明上下游船型口径仍不一致，请把该文件与本次结果一并留证。")
+                .arg(wantGm, 0, 'f', 5).arg(gotGm, 0, 'f', 5);
+  }
+  return true;
+}
+
 void HullStabilityDialog::onHullTypeChanged() {
   double L = lengthSpin_->value(), B = breadthSpin_->value(), D = depthSpin_->value();
   params_ = mapHullSpec(hullTypeCombo_->currentIndex(), L, B, D);
+  /// ★ 2026-10-27（L1 链）：若已导入 SD-08，则**连形状指数与密度一起复现**。
+  /// 只复现 L/B/D 会让下游算出另一条船的 GM —— 那是"假贯通"，链判据（B）不认。
+  if (sd08Imported_) {
+    params_.wlExponent = sd08WlExp_;
+    params_.secExponent = sd08SecExp_;
+    params_.rho = sd08Density_;
+  }
   keship::ShipHullGenerator hull(params_);
   hydro_ = hull.hydroProps();
   updateHydroDisplay();
@@ -394,7 +492,7 @@ std::string HullStabilityDialog::makeHullSDF() const {
   visSpec.buoyNx = 20; visSpec.buoyNz = 10;
   keship::ShipHullGenerator hull(visSpec);
 
-  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与 SP-01 同一处错）：
+  /// ★ 文件名带**网格内容指纹**（2026-09-19 修，与 HS-02 同一处错）：
   /// gz 的 gz::common::MeshManager **按文件路径**缓存网格，同路径换内容仍返回旧网格
   /// → 改船型参数后"生成"显示的仍是第一艘船。详见 ShipHullGenerator::meshTag() 注释。
   const std::string meshTag = hull.meshTag();
@@ -410,7 +508,7 @@ std::string HullStabilityDialog::makeHullSDF() const {
   double iyy = m/12.0*(L*L + D*D);
   double izz = m/12.0*(L*L + B*B);
 
-  /// ── 线性阻尼（2026-09-19 新增，与 SP-01 的 7.5 ① 同一修法）──────────────
+  /// ── 线性阻尼（2026-09-19 新增，与 HS-02 的 7.5 ① 同一修法）──────────────
   /// 本实验要求"等横倾角稳定"才允许记录（判据 |Δheel|<0.05°/帧 × 15 帧，见 cc:563-564），
   /// 而**网格船体走不了插件的 pose_based 分支**（该分支需 hasCylinderGeometry_）→
   /// 原先 `<enable_hydro>false</enable_hydro>` 等于零阻尼 → 横摇 60 s 不衰减 →
@@ -481,9 +579,9 @@ std::string HullStabilityDialog::makeHullSDF() const {
 
 std::string HullStabilityDialog::makeWeightSDF(double _y) const {
   double wh = 0.2;
-  // 对齐 SP-03: deckZ = 甲板高度 + 压载半高 + 间隙
-  // SP-03: H/2 + wh/2 + 0.02 (驳船 centered box, 甲板在 H/2)
-  // SP-04: 0 + wh/2 + 0.02   (船体 mesh 甲板在 z=0)
+  // 对齐 HS-04: deckZ = 甲板高度 + 压载半高 + 间隙
+  // HS-04: H/2 + wh/2 + 0.02 (驳船 centered box, 甲板在 H/2)
+  // HS-05: 0 + wh/2 + 0.02   (船体 mesh 甲板在 z=0)
   double deckZ = wh/2.0 + 0.02;
   std::ostringstream sdf;
   sdf << "<?xml version=\"1.0\"?>\n<sdf version=\"1.6\">\n"
@@ -515,7 +613,7 @@ bool HullStabilityDialog::resolveEntityID(const std::string &_name, uint32_t &_i
 bool HullStabilityDialog::moveWeight(double _y) {
   if (weightEntityId_ == 0) return false;
   double wh = 0.2;
-  // 对齐 SP-03: deckZ = 甲板世界Z + 压载半高 + 间隙
+  // 对齐 HS-04: deckZ = 甲板世界Z + 压载半高 + 间隙
   double deckZ = currentHullZ_ + wh/2.0 + 0.02;
   gz::msgs::Pose req; req.set_id(weightEntityId_);
   req.mutable_position()->set_x(0); req.mutable_position()->set_y(_y); req.mutable_position()->set_z(deckZ);
@@ -544,7 +642,7 @@ bool HullStabilityDialog::doDeleteAll() {
 
 bool HullStabilityDialog::doSpawnAll() {
   doDeleteAll();
-  /// 回收上一轮的内容寻址网格（2026-09-19，缺陷 D 的配套，同 SP-01）。
+  /// 回收上一轮的内容寻址网格（2026-09-19，缺陷 D 的配套，同 HS-02）。
   /// 旧模型已由 doDeleteAll() 删除、KeshipSp03Dir() 由本对话框独占 → 可安全清理；
   /// 必须在 makeHullSDF() 之前，否则会删掉本轮刚写出的网格。
   keship::RemoveStaleMeshFiles(tempDir_, "hull_vis");
@@ -577,20 +675,19 @@ bool HullStabilityDialog::doSpawnAll() {
   spawnedHydro_ = hydro_;
   weightY_ = 0;
   if (moveDebounce_) moveDebounce_->stop();
-  weightSlider_->blockSignals(true); weightSlider_->setValue(250); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(0.0); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText("0"); weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText("0.000 m"); quiescent_ = false; settleCounter_ = 0; spawned_ = true;
-  std::cout << "SP-04: 船型+压载块已生成" << std::endl;
+  quiescent_ = false; settleCounter_ = 0; spawned_ = true;
+  std::cout << "HS-05: 船型+压载块已生成" << std::endl;
   return true;
 }
 
 void HullStabilityDialog::onSpawn() { if (!doSpawnAll()) QMessageBox::warning(this,"错误","生成失败"); updateHydroDisplay(); updateStatusDisplay(); }
-void HullStabilityDialog::onSliderChanged(int v) {
-  double y = (v/500.0-0.5)*0.5;
-  /// 纯 UI 更新：输入框与读数立即跟随（不下发 RPC）
+void HullStabilityDialog::onBallastSpinChanged(double _value) {
+  const double y = _value;
+  /// 纯 UI 更新：输入框立即跟随（不下发 RPC；数值框自身即读数）
   weightY_ = y;
   weightEdit_->blockSignals(true); weightEdit_->setText(QString::number(y,'f',3)); weightEdit_->blockSignals(false);
-  sliderValueLabel_->setText(QString::number(y,'f',3)+" m");
   if (spawned_) {
     /// ★ 先置"未稳定"：防抖窗口内若点了"记录"，此时压载尚未移动 → 让 onRecord 拒绝
     quiescent_ = false; settleCounter_ = 0; pendingY_ = y;
@@ -599,10 +696,10 @@ void HullStabilityDialog::onSliderChanged(int v) {
   updateStatusDisplay();
 }
 
-/// ★ 2026-09-21 新增：移动压载的统一入口（与 SP-03 同一套写法）
+/// ★ 2026-09-21 新增：移动压载的统一入口（与 HS-04 同一套写法）
 void HullStabilityDialog::commitMove(double _y) {
   weightY_ = _y;
-  sliderValueLabel_->setText(QString::number(_y,'f',3)+" m");
+  weightSpin_->blockSignals(true); weightSpin_->setValue(_y); weightSpin_->blockSignals(false);
   if (spawned_) { quiescent_ = false; settleCounter_ = 0; moveWeight(_y); }
   updateStatusDisplay();
 }
@@ -624,10 +721,9 @@ void HullStabilityDialog::onApplyWeight() {
     QMessageBox::information(this, "超出量程",
         QString("压载位置超出 ±0.25 m，已按 %1 m 处理。").arg(QString::number(y,'f',3)));
   }
-  if (moveDebounce_) moveDebounce_->stop();   ///< 与滑条防抖互斥
+  if (moveDebounce_) moveDebounce_->stop();   ///< 与数值框防抖互斥
   pendingY_ = y;
-  const int v = std::clamp((int)((y/0.5+0.5)*500.0), 0, 500);
-  weightSlider_->blockSignals(true); weightSlider_->setValue(v); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(y); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText(QString::number(y,'f',3)); weightEdit_->blockSignals(false);
   commitMove(y);
 }
@@ -639,7 +735,7 @@ void HullStabilityDialog::onRecord() {
   /// 原实现 `tanP` 保留符号、而 `wDy` 用 `std::abs(dY)`（恒 ≥0）
   /// ⇒ 压载移到**负侧**时记录点变成 (+w·Δy, −|tanφ|)，与正侧点符号自相矛盾
   /// ⇒ `computeLinearFit` 的斜率被破坏、`GM实验 = 1/(disp·slope)` 全废。
-  /// （与 SP-03 `IncliningExperimentDialog.cc` 同一处缺陷、同一修法；图表 x 轴同样硬编码从 0 起。）
+  /// （与 HS-04 `IncliningExperimentDialog.cc` 同一处缺陷、同一修法；图表 x 轴同样硬编码从 0 起。）
   double dY = weightY_, tanP = std::abs(std::tan(currentHeelDeg_*M_PI/180.0)), wDy = kWeightForce*std::abs(dY);
   recordedData_.push_back({weightY_, dY, currentHeelDeg_, tanP, wDy});
   int row = dataTable_->rowCount(); dataTable_->insertRow(row);
@@ -654,7 +750,7 @@ void HullStabilityDialog::onRecord() {
 void HullStabilityDialog::onResetWeight() {
   if (moveDebounce_) moveDebounce_->stop();
   commitMove(0);   ///< 统一入口：记录 y、重置判稳、下发、刷新
-  weightSlider_->blockSignals(true); weightSlider_->setValue(250); weightSlider_->blockSignals(false);
+  weightSpin_->blockSignals(true); weightSpin_->setValue(0.0); weightSpin_->blockSignals(false);
   weightEdit_->blockSignals(true); weightEdit_->setText("0"); weightEdit_->blockSignals(false);
   updateStatusDisplay();
 }

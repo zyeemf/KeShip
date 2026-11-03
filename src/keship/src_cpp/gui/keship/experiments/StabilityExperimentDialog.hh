@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024–2026 KeShip Team
  */
-/* SP-02 漂浮圆柱体初稳性实验对话框 */
+/* HS-03 漂浮圆柱体初稳性实验对话框 */
 /// 2026.5.27 重构：从配载-吃水模式改为初稳性观测模式
 
 #ifndef STABILITY_EXPERIMENT_DIALOG_HH_

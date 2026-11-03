@@ -203,7 +203,6 @@ namespace keship
         void calculateAllVertexVsWaterplane(const gz::math::Plane<double> &_waterPlane);
         /// \brief 计算湿表面的体积贡献
         void calculateWetSurfaceVolumeContribution();
-        void calculateWetSurfaceVolumeContribution_parallel();
 
     private:
         ///

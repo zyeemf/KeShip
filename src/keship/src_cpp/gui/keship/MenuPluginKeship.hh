@@ -45,6 +45,7 @@ class MenuPluginKeship : public gz::gui::Plugin
   Q_PROPERTY(QStringList waterAreaNames READ GetWaterAreaNames NOTIFY ModelNamesChanged)
   Q_PROPERTY(QStringList waterAreaSeaStates READ GetWaterAreaSeaStates NOTIFY ModelNamesChanged)
   Q_PROPERTY(QVariantList worldHierarchy READ GetWorldHierarchy NOTIFY ModelNamesChanged)
+  Q_PROPERTY(bool structVisualVisible READ isStructVisualVisible NOTIFY StructVisualVisibleChanged)
 
 
   /// \brief Constructor
@@ -64,6 +65,9 @@ class MenuPluginKeship : public gz::gui::Plugin
   public: int GetSelectedIndex() const { return selectedIndex_; }
   /// \brief Get paused state.
   public: bool isPaused() const { return paused_; }
+  /// \brief 结构模型（传感器 + 设备装饰）是否在 3D 场景中显示；推进器外观不受此开关影响。
+  public: bool isStructVisualVisible() const
+      { return keship::ModelManager::StructVisualEnabled(); }
   /// \brief Get model static flags.
   public: QVariantList GetModelStaticFlags() const;
   public: QVariantList GetModelMathHullFlags() const;
@@ -87,12 +91,16 @@ class MenuPluginKeship : public gz::gui::Plugin
   signals: void SensorListChanged();
   /// \brief Selected index changed signal.
   signals: void SelectedIndexChanged();
+  /// \brief 结构模型显示开关变化信号。
+  signals: void StructVisualVisibleChanged();
 
 
   /// \brief Load world from file.
   protected slots: void OnBtn_LoadWorld();
   /// \brief Pause/Resume toggle.
   protected slots: void OnPauseToggle();
+  /// \brief 切换「结构模型」（传感器 + 设备装饰）在场景中的显示。推进器外观常显，不参与。
+  protected slots: void OnToggleStructVisual();
   /// \brief Save world (all models).
   protected slots: void OnBtn_SaveWorld();
   /// \brief 保存子世界（按子 World 链独立导出；弹对话框确认）
@@ -101,6 +109,10 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_WorldSettings();
   /// \brief Load model from file.
   protected slots: void OnBtn_LoadModel();
+  /// \brief 载入 .ksm 模型文件（2026-10-25 菜单拆分：只列 .ksm）
+  protected slots: void OnBtn_LoadKsmModel();
+  /// \brief 载入原始模型文件（stl/dae/obj/sdf/gltf/glb，直接选文件）
+  protected slots: void OnBtn_LoadRawModel();
   /// \brief Load shape from file.
   protected slots: void OnBtn_LoadShape(const QString &_shapeType);
   /// \brief Delete model.
@@ -131,14 +143,30 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_MoveSubWorld(const QString &_chain);
   /// \brief 圆柱体浮力测试
   protected slots: void OnBtn_CylinderBuoyancyTest();
-  /// \brief SP-02 漂浮圆柱体初稳性
-  protected slots: void OnBtn_SP02_Stability();
-  /// \brief SP-03 初稳性倾斜实验
-  protected slots: void OnBtn_SP03_Inclining();
-  /// \brief SP-04 数学船型稳性对比
-  protected slots: void OnBtn_SP04_HullStability();
+  /// \brief HS-03 漂浮圆柱体初稳性
+  protected slots: void OnBtn_HS03_Stability();
+  /// \brief HS-04 初稳性倾斜实验
+  protected slots: void OnBtn_HS04_Inclining();
+  /// \brief HS-05 数学船型稳性对比
+  protected slots: void OnBtn_HS05_HullStability();
   /// \brief 编程计算排水量 (Phase D)
-  protected slots: void OnBtn_PR01_CodeRunner();
+  protected slots: void OnBtn_HS09_CodeRunner();
+  /// \brief MS-01 回转性观测（差动推力回转试验）
+  protected slots: void OnBtn_MS01_TurningCircle();
+  /// \brief MS-04 方向稳定性与 Z 形试验
+  protected slots: void OnBtn_MS04_Zigzag();
+  /// \brief MS-02 升沉与纵摇响应（规则波激励）
+  protected slots: void OnBtn_MS02_WaveResponse();
+  /// \brief MS-03 横摇 RAO 测量
+  protected slots: void OnBtn_MS03_Rao();
+  /// ★ 2026-10-16 新增：MS-06 RAO 编程计算实践（MS-03 姊妹实验）
+  protected slots: void OnBtn_MS06_RaoPractice();
+  /// \brief SC-08 传感器感知与位姿估计
+  protected slots: void OnBtn_SC08_SensorEstimation();
+
+  /// \brief SC-01~SC-12 控制设计链（L6）+ SC-08→SC-06 感知→控制链（L7）
+  ///        一个对话框按 expId 提供 11 个实验（ControlExpDialog）
+  protected slots: void OnBtn_SC_ControlExp(const QString &_expId);
   /// \brief 任务设定 (Phase 13)
   protected slots: void OnBtn_TaskSet();
   /// \brief 任务监控 (Phase 13)
@@ -157,6 +185,8 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_EditHydro(int _index);
   /// \brief 编辑传感器
   protected slots: void OnBtn_EditSensor(int _index);
+  /// \brief 编辑设备外观装饰（电池/电机）—— 纯视觉，不产生传感器数据
+  protected slots: void OnBtn_EditDeviceDecor(int _index);
   /// \brief 传感器下拉选中
   protected slots: void OnSensorSelected(const QString &_sensorId);
   /// \brief 刷新传感器列表
@@ -173,6 +203,39 @@ class MenuPluginKeship : public gz::gui::Plugin
   protected slots: void OnBtn_DeleteWaterArea(int _index);
   /// \brief 惯性计算工具
   protected slots: void OnBtn_InertiaCalculator();
+
+  /// \brief SD-06 代理几何体建模与简化（三档对比：Mesh/ConvexHull/None）
+  protected slots: void OnBtn_SD06_ProxyGeometry();
+
+  /// \brief SD-08 参数化型线设计（主尺度/形状指数 → 型值表 + Cb 反解 + 型线交付物）
+  protected slots: void OnBtn_SD08_ParametricHull();
+
+  /// \brief 非链实验：HS-06 大倾角稳性（wall-sided vs 数值）、SD-02 型线图识读
+  protected slots: void OnBtn_HS06_LargeAngleStability();
+  protected slots: void OnBtn_SD02_LinesReading();
+
+  /// \brief 结构子链 SD-01 → SD-03 → SD-09（交付物逐级贯通）
+  protected slots: void OnBtn_SD01_StructureCognition();
+  protected slots: void OnBtn_SD03_MidshipSection();
+  protected slots: void OnBtn_SD09_LongitudinalStrength();
+  protected slots: void OnBtn_SD10_OffsetsHull();
+
+  /// \brief MS-05 海况等级下的操限评估（多海况累积成表 + 操限交付物）
+  protected slots: void OnBtn_MS05_Operability();
+
+  /// \brief RP-01~06 阻力与推进链（L8）：四项共用 ResistanceDialog，两项共用 PropellerDialog
+  protected slots: void OnBtn_RP01_Resistance();
+  protected slots: void OnBtn_RP02_ResistanceCurve();
+  protected slots: void OnBtn_RP03_OpenWater();
+  protected slots: void OnBtn_RP04_Matching();
+  protected slots: void OnBtn_RP05_HullOptimization();
+  protected slots: void OnBtn_RP06_Extrapolation();
+
+  /// \brief L2 结构建模→稳性链：SD-04 → HS-07 → HS-08 → SD-07（交付物逐级贯通）
+  protected slots: void OnBtn_SD04_Compartment();
+  protected slots: void OnBtn_HS07_BuoyancyLayout();
+  protected slots: void OnBtn_HS08_GzStability();
+  protected slots: void OnBtn_SD07_DamageStability();
 
   /// \brief 清理未被 ksm 引用的网格规范化缓存（models_normalized）
   protected slots: void OnBtn_CleanMeshCache();
@@ -191,6 +254,12 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: void NotifyModelListChanged();
   /// \brief 请求设置仿真暂停/继续，并同步 paused_ 与 PausedChanged 信号。
   ///        （所有暂停/恢复统一走此通道，保证按钮状态与真实状态一致）
+  /// \brief 文件名合法性检查（两个载入入口共用，勿复制第二份）
+  private: bool CheckModelFileName(const QString &_filePath);
+  /// \brief .ksm 载入流程（选定文件后调用；与无头入口共用 ModelManager 实现）
+  private: void LoadKsmModelFile(const QString &_filePath);
+  /// \brief 原始模型载入流程（选定文件后调用）
+  private: void LoadRawModelFile(const QString &_filePath);
   private: bool SetSimulationPaused(bool _pause);
 
   /// \brief 单例化获取编辑器对话框（key = 类型/模型名）。
@@ -202,9 +271,15 @@ class MenuPluginKeship : public gz::gui::Plugin
   /// \brief 编辑器对话框单例表（key = 类型/模型名）
   private: std::map<QString, QDialog *> editorDialogs_;
 
-  private: QDialog *sp02Dialog_ = nullptr;
-  private: QDialog *sp03Dialog_ = nullptr;
-  private: QDialog *sp04Dialog_ = nullptr;
+  private: QDialog *hs03Dialog_ = nullptr;
+  private: QDialog *hs04Dialog_ = nullptr;
+  private: QDialog *hs05Dialog_ = nullptr;
+  private: QDialog *ms01Dialog_ = nullptr;
+  private: QDialog *ms04Dialog_ = nullptr;
+  private: QDialog *ms02Dialog_ = nullptr;
+  private: QDialog *ms03Dialog_ = nullptr;
+  private: QDialog *ms06Dialog_ = nullptr;
+  private: QDialog *sc08Dialog_ = nullptr;
 
   private: QDialog *taskSetDialog_ = nullptr;
   private: QDialog *taskMonitorDialog_ = nullptr;
@@ -261,8 +336,6 @@ class MenuPluginKeship : public gz::gui::Plugin
   private: void PublishWaveParams(const keship::WaveParams &_wp,
                                   const std::string &_areaName = "");
   /// \brief 持久发送器：避免每次新建 Advertise 的握手竞态导致消息丢失
-  private: gz::transport::Node::Publisher waveParamsPub_;
-  private: std::string waveCtlTopic_ = "/keship/wavefield/parameters_set";
 
   private: struct CachedPose { double x = 0, y = 0, yaw = 0; };
   private: std::map<std::string, CachedPose> modelPoseCache_;

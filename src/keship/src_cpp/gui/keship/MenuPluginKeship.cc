@@ -5,6 +5,8 @@
 /// Zhangyu 创建 2026.1.16
 
 #include "MenuPluginKeship.hh"
+#include "WavefieldPublisher.hh"
+#include "WaveParamSnapshot.hh"
 
 #include <iostream>
 #include <fstream>
@@ -22,6 +24,7 @@
 
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QApplication>
 #include <QUrl>
 #include <QTimer>
 #include <QDir>
@@ -48,12 +51,17 @@
 #include "shared/UiTheme.hh"
 #include "experiments/DisplacementVerifyDialog.hh"
 #include "experiments/CodeRunnerDialog.hh"
+#include "experiments/TurningCircleDialog.hh"
+#include "experiments/ZigzagDialog.hh"
+#include "experiments/WaveResponseDialog.hh"
+#include "experiments/SensorEstimationDialog.hh"
 #include "tasks/TaskSetDialog.hh"
 #include "tasks/TaskMonitorDialog.hh"
 #include "editors/BuoyancyEditorDialog.hh"
 #include "editors/ThrusterEditorDialog.hh"
 #include "editors/HydrodynamicsEditorDialog.hh"
 #include "editors/SensorEditorDialog.hh"
+#include "editors/DeviceDecorDialog.hh"
 #include "editors/WorldSettingsDialog.hh"
 #include "viewers/CameraViewerDialog.hh"
 #include "viewers/LidarViewerDialog.hh"
@@ -61,6 +69,22 @@
 #include "water/WaterAreaDrawDialog.hh"
 #include "editors/EnvironmentParamsDialog.hh"
 #include "editors/InertiaCalculatorDialog.hh"
+#include "editors/ProxyGeometryDialog.hh"
+#include "experiments/ParametricHullDialog.hh"
+#include "experiments/OffsetsHullDialog.hh"
+#include "experiments/OperabilityDialog.hh"
+#include "experiments/ResistanceDialog.hh"
+#include "experiments/PropellerDialog.hh"
+#include "experiments/CompartmentDialog.hh"
+#include "experiments/BuoyancyLayoutDialog.hh"
+#include "experiments/GzStabilityDialog.hh"
+#include "experiments/DamageStabilityDialog.hh"
+#include "experiments/ControlExpDialog.hh"
+#include "experiments/LargeAngleStabilityDialog.hh"
+#include "experiments/LinesReadingDialog.hh"
+#include "experiments/StructureCognitionDialog.hh"
+#include "experiments/MidshipSectionDialog.hh"
+#include "experiments/LongitudinalStrengthDialog.hh"
 #include "editors/LoadWorldDialog.hh"
 #include "editors/SaveWorldDialog.hh"
 #include "editors/SelectWorldDialog.hh"
@@ -958,10 +982,51 @@ bool MenuPluginKeship::SetSimulationPaused(bool _pause)
   return ok;
 }
 
+//////////////////////////////////////////////////////////////////////////////////
+void MenuPluginKeship::OnToggleStructVisual()
+{
+  const bool on = !keship::ModelManager::StructVisualEnabled();
+  keship::ModelManager::SetStructVisualEnabled(on);
+
+  /// <visual> 是**模型生成期**产物（MakeSensorSDF / MakeDeviceItemVisualSDF 拼进 SDF），
+  /// 所以开关只能靠重建体现。范围 = 有传感器配置**或**有设备装饰配置的模型；
+  /// 推进器外观常显（不受开关控制），但重建会把它们一并重画，无害。
+  const auto models = this->modelManager->GetModelList();   // 取副本，避免重建时迭代失效
+  int rebuilt = 0, skipped = 0, failed = 0;
+  for (const auto &kv : models)
+  {
+    keship::SensorConfig sCfg;
+    const bool hasSensor = this->modelManager->GetCachedSensorConfig(kv.first, sCfg)
+                           && !sCfg.instances.empty();
+    keship::DeviceDecorConfig dCfg;
+    const bool hasDecor = this->modelManager->GetCachedDeviceDecor(kv.first, dCfg)
+                          && !dCfg.items.empty();
+    if (!hasSensor && !hasDecor)
+    {
+      skipped++;
+      continue;
+    }
+    if (this->modelManager->RebuildModelWithSensors(kv.first, sCfg))
+      rebuilt++;
+    else
+      failed++;
+  }
+
+  std::cout << "keship: 结构模型显示 = " << (on ? "开" : "关")
+            << "（重建 " << rebuilt << " 个，无结构模型跳过 " << skipped << " 个"
+            << (failed ? "，失败 " + std::to_string(failed) + " 个" : std::string())
+            << "）" << std::endl;
+
+  emit StructVisualVisibleChanged();
+  NotifyModelListChanged();
+}
+
 /////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_LoadModel()
 {
-  ///--- 第一步：选择模型文件（ks_model 列表 + 原始模型浏览双通道）
+  /// 兼容入口（2026-10-25：菜单已拆为「载入ksm模型文件」与「载入模型（stl\dae等）」两入口）。
+  /// 本函数保留原双通道行为；两条新入口复用下面的 LoadKsmModelFile / LoadRawModelFile，
+  /// 不要再在入口里复制一遍加载逻辑 —— 那正是本文件注释里警告过的"两份实现漂移"。
   SelectKsmDialog dlg(QString::fromStdString(keship::KeshipKsmDir()),
                       SidebarUrls());
   if (dlg.exec() != QDialog::Accepted)
@@ -969,25 +1034,40 @@ void MenuPluginKeship::OnBtn_LoadModel()
     std::cout << "keship未选择模型文件" << std::endl;
     return;
   }
-  QString filePath;
   if (!dlg.selectedRawFile().isEmpty())
-    filePath = dlg.selectedRawFile();
-  else
-    filePath = dlg.selectedFile();
+  {
+    LoadRawModelFile(dlg.selectedRawFile());
+    return;
+  }
+  const QString filePath = dlg.selectedFile();
   if (filePath.isEmpty())
   {
     std::cout << "keship未选择模型文件" << std::endl;
     return;
   }
+  LoadKsmModelFile(filePath);
+}
+
+/// 文件名合法性检查（原 OnBtn_LoadModel 第一步）—— 两个载入入口共用，勿复制第二份
+bool MenuPluginKeship::CheckModelFileName(const QString &_filePath)
+{
   /// 检查模型文件名是否符合要求：文件名只能包含字母、数字、下划线
-  QFileInfo fileInfo(filePath);                   // 获取文件信息
-  QString fileNameBaseName = fileInfo.baseName(); // 提取文件名（不包含路径和后缀）
+  QFileInfo fileInfo(_filePath);                   // 获取文件信息
+  QString fileNameBaseName = fileInfo.baseName();  // 提取文件名（不包含路径和后缀）
   QRegExp regex("[a-zA-Z0-9_]+$");
   if (!regex.exactMatch(fileNameBaseName))
   {
     QMessageBox::warning(nullptr, "错误", "文件名只能包含字母、数字、下划线");
-    return;
+    return false;
   }
+  return true;
+}
+
+/// 载入 .ksm 模型文件（菜单「载入ksm模型文件」与兼容入口共用）
+void MenuPluginKeship::LoadKsmModelFile(const QString &filePath)
+{
+  if (!CheckModelFileName(filePath))
+    return;
 
   /// 检测是否为 .ksm 文件
   std::string fileExt = boost::to_lower_copy(filePath.toStdString().substr(filePath.toStdString().find_last_of(".") + 1));
@@ -1000,10 +1080,12 @@ void MenuPluginKeship::OnBtn_LoadModel()
     keship::HydroConfig hydroCfg;
     hydroCfg.linkName = "";
     keship::SensorConfig sensorCfg;
+    /// ★ 2026-10-30：设备外观装饰段（此路径只做预览展示，解析出来仅用于将来回填，不参与 spawn）
+    keship::DeviceDecorConfig deviceCfg;
     /// ★ 2026-09-28（D2）：一并取出 ksm 里持久化的碰撞方式，用于**回填对话框**
     keship::CollisionMode ksmCollision = keship::CollisionMode::Mesh;
-    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg, hydroCfg, sensorCfg,
-                                          &ksmCollision))
+    if (!this->modelManager->ParseKSMFile(filePath.toStdString(), baseSDF, buoyCfg, thrustCfg,
+                                          hydroCfg, sensorCfg, deviceCfg, &ksmCollision))
     {
       QMessageBox::warning(nullptr, "错误", "无法解析 .ksm 文件");
       return;
@@ -1066,6 +1148,13 @@ void MenuPluginKeship::OnBtn_LoadModel()
     std::cout << "keship: 成功加载 .ksm 模型: " << instanceName << std::endl;
     return;
   }
+}
+
+/// 载入原始模型文件（菜单「载入模型（stl\dae等）」与兼容入口共用）
+void MenuPluginKeship::LoadRawModelFile(const QString &filePath)
+{
+  if (!CheckModelFileName(filePath))
+    return;
 
   ///
   std::cout << "keship选择的模型文件路径: " << filePath.toStdString() << std::endl;
@@ -1199,8 +1288,38 @@ void MenuPluginKeship::OnBtn_LoadModel()
     return;
   }
   
+}
 
+/// 只选 .ksm：列表对话框里不提供"从其他目录选择原始模型"通道
+void MenuPluginKeship::OnBtn_LoadKsmModel()
+{
+  SelectKsmDialog dlg(QString::fromStdString(keship::KeshipKsmDir()),
+                      SidebarUrls(), nullptr, /*_ksmOnly=*/true);
+  if (dlg.exec() != QDialog::Accepted)
+  {
+    std::cout << "keship未选择模型文件" << std::endl;
+    return;
+  }
+  const QString filePath = dlg.selectedFile();
+  if (filePath.isEmpty())
+  {
+    std::cout << "keship未选择模型文件" << std::endl;
+    return;
+  }
+  LoadKsmModelFile(filePath);
+}
 
+/// 直接选原始模型文件（stl/dae/obj/sdf/gltf/glb）
+void MenuPluginKeship::OnBtn_LoadRawModel()
+{
+  const QString filePath = QFileDialog::getOpenFileName(
+      nullptr, "选择模型文件", QString(),
+      "3D 模型 (*.dae *.sdf *.stl *.obj *.gltf *.glb);;"
+      "DAE (*.dae);;SDF (*.sdf);;STL (*.stl);;OBJ (*.obj);;"
+      "glTF (*.gltf *.glb);;All Files (*)");
+  if (filePath.isEmpty())
+    return;
+  LoadRawModelFile(filePath);
 }
 
 /////////////////////////////////////////////////
@@ -1638,12 +1757,12 @@ void MenuPluginKeship::OnBtn_CylinderBuoyancyTest()
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP02_Stability()
+void MenuPluginKeship::OnBtn_HS03_Stability()
 {
-  if (sp02Dialog_)
+  if (hs03Dialog_)
   {
-    sp02Dialog_->raise();
-    sp02Dialog_->activateWindow();
+    hs03Dialog_->raise();
+    hs03Dialog_->activateWindow();
     return;
   }
 
@@ -1652,21 +1771,21 @@ void MenuPluginKeship::OnBtn_SP02_Stability()
   dialog->setAttribute(Qt::WA_DeleteOnClose);
 
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
-    sp02Dialog_ = nullptr;
+    hs03Dialog_ = nullptr;
   });
 
-  sp02Dialog_ = dialog;
+  hs03Dialog_ = dialog;
   dialog->show();
-  std::cout << "SP-02: 初稳性实验对话框已打开" << std::endl;
+  std::cout << "HS-03: 初稳性实验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP03_Inclining()
+void MenuPluginKeship::OnBtn_HS04_Inclining()
 {
-  if (sp03Dialog_)
+  if (hs04Dialog_)
   {
-    sp03Dialog_->raise();
-    sp03Dialog_->activateWindow();
+    hs04Dialog_->raise();
+    hs04Dialog_->activateWindow();
     return;
   }
 
@@ -1675,27 +1794,27 @@ void MenuPluginKeship::OnBtn_SP03_Inclining()
   dialog->setAttribute(Qt::WA_DeleteOnClose);
 
   QObject::connect(dialog, &QDialog::destroyed, this, [this]() {
-    sp03Dialog_ = nullptr;
+    hs04Dialog_ = nullptr;
   });
 
-  sp03Dialog_ = dialog;
+  hs04Dialog_ = dialog;
   dialog->show();
-  std::cout << "SP-03: 倾斜实验对话框已打开" << std::endl;
+  std::cout << "HS-04: 倾斜实验对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_SP04_HullStability()
+void MenuPluginKeship::OnBtn_HS05_HullStability()
 {
-  if (sp04Dialog_) { sp04Dialog_->raise(); sp04Dialog_->activateWindow(); return; }
+  if (hs05Dialog_) { hs05Dialog_->raise(); hs05Dialog_->activateWindow(); return; }
   auto *dialog = new HullStabilityDialog(modelManager->GetNode(), "keship_world");
   dialog->setAttribute(Qt::WA_DeleteOnClose);
-  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sp04Dialog_ = nullptr; });
-  sp04Dialog_ = dialog; dialog->show();
-  std::cout << "SP-04: 数学船型对话框已打开" << std::endl;
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { hs05Dialog_ = nullptr; });
+  hs05Dialog_ = dialog; dialog->show();
+  std::cout << "HS-05: 数学船型对话框已打开" << std::endl;
 }
 
 /////////////////////////////////////////////////
-void MenuPluginKeship::OnBtn_PR01_CodeRunner()
+void MenuPluginKeship::OnBtn_HS09_CodeRunner()
 {
   auto *dlg = new CodeRunnerDialog();
   dlg->setAttribute(Qt::WA_DeleteOnClose);
@@ -1780,22 +1899,70 @@ void MenuPluginKeship::OnBtn_Displacement()
 }
 
 /////////////////////////////////////////////////
+/////////////////////////////////////////////////
+/// SD-10 型值表编程生成可浮船型
+/// 对话框负责「学生代码 → 型值表 → 校验 → spec」，spawn 由本槽完成
+/// （与 OnBtn_NewMathHull 同一模式：对话框发信号，插件持有 modelManager）。
+void MenuPluginKeship::OnBtn_SD10_OffsetsHull()
+{
+  auto *dialog = new OffsetsHullDialog(nullptr);   ///< 插件不是 QWidget（同 ShipHullDialog）
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &OffsetsHullDialog::spawnRequested, this,
+    [this](keship::ShipHullSpec spec, std::string name) {
+      int suffix = 1;
+      std::string finalName = name;
+      for (const auto &m : modelManager->GetModelList())
+        if (m.first == finalName) finalName = name + "_" + std::to_string(++suffix);
+
+      double pos[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+      pos[2] = 0.0;   ///< 从水面位置释放，让它自己浮到平衡吃水
+
+      keship::MathHullPluginOpts opts;
+      keship::HydroConfig hydroCfg = keship::ModelManager::EstimateMathHullHydro(spec, false);
+      opts.enableHydro = true;   ///< 不给阻尼 ⇒ 长时间垂荡不收敛（实测 40 s 才稳）
+      opts.hydro = &hydroCfg;
+      opts.publishSubVolume = true;
+
+      if (modelManager->SpawnMathHull(finalName, spec, pos, opts)) {
+        std::cout << "SD-10: 型值表船型 " << finalName << " 已生成" << std::endl;
+        NotifyModelListChanged();
+      } else {
+        std::cerr << "SD-10: 型值表船型生成失败" << std::endl;
+      }
+    });
+  dialog->show();
+}
+
 void MenuPluginKeship::OnBtn_NewMathHull()
 {
-  auto *dialog = new ShipHullDialog();
+  /// ★ 2026-10-25：实例名称与生成位姿改由对话框输入（此前名称取自船型名、
+  ///   位姿固定 {0, 0, D/2+0.1, 0, 0, 0}）—— HS-01 与本入口是同一个函数，改这里两处同时生效
+  auto *dialog = new ShipHullDialog(this->GetModelNames());
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   QObject::connect(dialog, &ShipHullDialog::spawnRequested, this,
-    [this](keship::ShipHullSpec spec, std::string name) {
-      // 去重
+    [this, dialog](keship::ShipHullSpec spec, std::string name) {
+      // 去重（对话框已做重名校验，这里只兜底：列表在对话框打开期间变动等情况）
       int suffix = 1;
       std::string finalName = name;
       for (const auto &m : modelManager->GetModelList())
         if (m.first == finalName) { finalName = name + "_" + std::to_string(++suffix); }
 
-      double pos[6] = {0, 0, spec.D / 2.0 + 0.1, 0, 0, 0};
-      if (modelManager->SpawnMathHull(finalName, spec, pos)) {
+      double pos[6];
+      dialog->getPose(pos);   // 对话框的 X/Y/Z(m) + R/P/Y(°) → 弧度
+
+      /// 水动力默认系数（2026-10-25）：对话框勾选时按船型/尺寸估算并写入 SDF
+      keship::MathHullPluginOpts opts;
+      keship::HydroConfig hydroCfg;
+      if (dialog->isHydroEnabled())
+      {
+        hydroCfg = dialog->hydroConfig();
+        opts.enableHydro = true;
+        opts.hydro = &hydroCfg;
+      }
+      if (modelManager->SpawnMathHull(finalName, spec, pos, opts)) {
         std::cout << "Phase B: 数学船型 " << finalName << " 已生成" << std::endl;
         mathHullNames_.insert(finalName);
+        dialog->setInstanceNames(GetModelNames());   // 连续生成时同步重名列表
         NotifyModelListChanged();
       } else
         std::cerr << "Phase B: 数学船型生成失败" << std::endl;
@@ -2009,13 +2176,60 @@ void MenuPluginKeship::OnBtn_EditSensor(int _index)
         QString::fromStdString(nameAndId.first), "base_link", modelInfo);
 
     keship::SensorConfig existingCfg;
-    if (this->modelManager->GetCachedSensorConfig(nameAndId.first, existingCfg))
+    const bool hadCfg = this->modelManager->GetCachedSensorConfig(nameAndId.first, existingCfg);
+    if (hadCfg)
+      d->setConfig(existingCfg);
+
+    /// ★ 2026-11-01 pose 语义：新建（无缓存）用**新语义**（pose = 安装点，sensor 自带偏移）；
+    ///   已有配置保持原语义 —— 否则打开老模型改一下传感器，整船传感器会集体平移 3~30 cm。
+    const bool mountSemantics = hadCfg ? existingCfg.mountSemantics : true;
+
+    QObject::connect(d, &QDialog::accepted, this,
+        [this, d, name = nameAndId.first, mountSemantics]() {
+      keship::SensorConfig config = d->getConfig();
+      config.mountSemantics = mountSemantics;
+      if (!this->modelManager->RebuildModelWithSensors(name, config))
+        QMessageBox::warning(nullptr, "重建失败", "模型重建失败，请重试");
+      NotifyModelListChanged();
+    });
+    return d;
+  });
+  if (dialog)
+    dialog->show();
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_EditDeviceDecor(int _index)
+{
+  std::cout << "keship: 编辑设备装饰 index=" << _index << std::endl;
+
+  if (_index < 0 || _index >= (int)this->modelManager->GetModelList().size())
+  {
+    std::cout << "keship: 设备装饰索引无效" << std::endl;
+    return;
+  }
+
+  auto nameAndId = this->modelManager->GetModelNameAndIDByIndex(_index);
+  if (nameAndId.first.empty())
+    return;
+
+  QString key = "DeviceDecor/" + QString::fromStdString(nameAndId.first);
+  auto *dialog = this->acquireEditor(key, [this, nameAndId]() -> QDialog * {
+    auto *d = new DeviceDecorDialog(QString::fromStdString(nameAndId.first), "base_link");
+
+    keship::DeviceDecorConfig existingCfg;
+    if (this->modelManager->GetCachedDeviceDecor(nameAndId.first, existingCfg))
       d->setConfig(existingCfg);
 
     QObject::connect(d, &QDialog::accepted, this,
         [this, d, name = nameAndId.first]() {
-      keship::SensorConfig config = d->getConfig();
-      if (!this->modelManager->RebuildModelWithSensors(name, config))
+      const keship::DeviceDecorConfig newCfg = d->getConfig();
+      /// ★ 先入缓存**再**重建：视觉段是生成期读缓存拼出来的，顺序反了会画旧图
+      this->modelManager->CacheDeviceDecor(name, newCfg);
+
+      keship::SensorConfig sCfg;
+      this->modelManager->GetCachedSensorConfig(name, sCfg);
+      if (!this->modelManager->RebuildModelWithSensors(name, sCfg))
         QMessageBox::warning(nullptr, "重建失败", "模型重建失败，请重试");
       NotifyModelListChanged();
     });
@@ -2276,6 +2490,8 @@ void MenuPluginKeship::OnBtn_ShowWaterEnv(int _index)
   if (_index < 0 || _index >= (int)areas.size())
     return;
 
+  // 2026-10-26：回滚「挂主窗口」的改动 —— 项目内其余 20 个对话框都不挂父窗口，
+  // 混入 transient 关系反而加重窗口层级竞争。
   EnvironmentParamsDialog dlg(areas[_index]);
   if (dlg.exec() != QDialog::Accepted) return;
   auto updated = dlg.getWaterArea();
@@ -2285,15 +2501,21 @@ void MenuPluginKeship::OnBtn_ShowWaterEnv(int _index)
   for (auto &ca : customWaterAreas_)
     if (ca.name == victim) ca = updated;
 
-  {
-    std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
-    auto all = waterAreaMgr_.Areas();
-    waterAreaMgr_.Clear();
-    for (auto &a : all)
-      waterAreaMgr_.AddArea(a.name == victim ? updated : a);
-    RebuildWaterAreas();
-  }
-  PublishWaveParams(updated.waveParams, updated.name);
+  /// 2026-10-26：先让对话框真正关闭、主窗口完成一次重绘，再重建水面。
+  /// 旧实现在这里同步调用 RebuildWaterAreas()：其中 SpawnAll 会做阻塞式 transport
+  /// 请求并轮询等待旧水面消失，实测在 GUI 线程上堵 523 ms ⇒ 3D 画面（独立渲染线程）
+  /// 先变化、对话框区域后消失。改为延迟到下一拍事件循环执行。
+  QTimer::singleShot(0, this, [this, updated]() {
+    {
+      std::lock_guard<std::recursive_mutex> lock(waterAreaMutex_);
+      auto all = waterAreaMgr_.Areas();
+      waterAreaMgr_.Clear();
+      for (auto &a : all)
+        waterAreaMgr_.AddArea(a.name == updated.name ? updated : a);
+      RebuildWaterAreas();
+    }
+    PublishWaveParams(updated.waveParams, updated.name);
+  });
 }
 
 void MenuPluginKeship::OnBtn_EditWaterArea(int _index)
@@ -3081,6 +3303,9 @@ void MenuPluginKeship::OnBtn_MoveSubWorld(const QString &_chain)
 void MenuPluginKeship::PublishWaveParams(const keship::WaveParams &_wp,
                                          const std::string &_areaName)
 {
+  // 记录用户级下发：实验对话框关闭时以此为恢复基准（2026-10-16 修复，
+  // 取代原硬编码恢复 gain=1.0 的错误做法，见 WaveParamSnapshot.hh 文件头）
+  keship::WaveParamSnapshot::Instance().Save(_areaName, _wp);
   // 波浪参数通过 PMS 控制 topic 下发（KSPlugin_WavesModel 应用），
   // 带 area 标识只更新指定水区波浪场，使界面设置的波浪立即生效。
   // 实验对话框亦采用同一通道（无 area = 更新全部水区）。
@@ -3105,21 +3330,15 @@ void MenuPluginKeship::PublishWaveParams(const keship::WaveParams &_wp,
   v.set_type(gz::msgs::Any_ValueType::Any_ValueType_INT32);
   v.set_int_value(_wp.number);       (*p)["number"] = v;
 
-  // 持久发送器：首次 Advertise 后复用，避免每次新建的握手竞态丢消息
-  if (!this->waveParamsPub_)
-  {
-    this->waveParamsPub_ = this->modelManager->GetNode().Advertise<gz::msgs::Param>(
-        this->waveCtlTopic_);
-  }
-  this->waveParamsPub_.Publish(msg);
+  // 经进程内唯一发布器下发：避免同一进程重复 Advertise 拿到无效发布器
+  // 而静默失效（2026-10-16 修复，详见 WavefieldPublisher.hh 文件头）
+  keship::WavefieldPublisher(this->modelManager->GetNode()).Publish(msg);
   std::cout << "keship: 波浪参数已下发 (gain=" << _wp.gain << ")"
             << std::endl;
 
   // 300ms 后补发一次，覆盖握手窗口期的潜在丢失
   QTimer::singleShot(300, this, [this, msg]() {
-    if (!this->waveParamsPub_)
-      return;
-    this->waveParamsPub_.Publish(msg);
+    keship::WavefieldPublisher(this->modelManager->GetNode()).Publish(msg);
     std::cout << "keship: 波浪参数已补发" << std::endl;
   });
 }
@@ -3133,6 +3352,181 @@ void MenuPluginKeship::OnBtn_InertiaCalculator()
 }
 
 //-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD06_ProxyGeometry()
+{
+  auto *dlg = new ProxyGeometryDialog(nullptr);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "SD-06: 代理几何体建模与简化对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+/// L6/L7：11 个控制实验共用一个对话框，按 expId 切换默认参数与界面组合。
+/// 用「一个带参数的槽」而不是 11 个几乎相同的槽，避免 11 份代码各自漂移。
+void MenuPluginKeship::OnBtn_SC_ControlExp(const QString &_expId)
+{
+  auto *dlg = new ControlExpDialog(modelManager->GetNode(), "keship_world",
+                                   GetModelNames(), _expId);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << _expId.toStdString() << ": 控制实验对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_HS06_LargeAngleStability()
+{ auto *d = new LargeAngleStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-06: 大倾角稳性对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD02_LinesReading()
+{ auto *d = new LinesReadingDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-02: 型线图识读对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD01_StructureCognition()
+{ auto *d = new StructureCognitionDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-01: 船体结构认知对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD03_MidshipSection()
+{ auto *d = new MidshipSectionDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-03: 横剖面结构对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD09_LongitudinalStrength()
+{ auto *d = new LongitudinalStrengthDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-09: 综合结构设计对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_RP01_Resistance()
+{ auto *d = new ResistanceDialog(nullptr, "RP-01"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-01: 阻力成分分解对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP02_ResistanceCurve()
+{ auto *d = new ResistanceDialog(nullptr, "RP-02"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-02: 阻力曲线测定对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP05_HullOptimization()
+{ auto *d = new ResistanceDialog(nullptr, "RP-05"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-05: 船型阻力优化对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP06_Extrapolation()
+{ auto *d = new ResistanceDialog(nullptr, "RP-06"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-06: 尺度换算与实船阻力外推对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP03_OpenWater()
+{ auto *d = new PropellerDialog(nullptr, "RP-03"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-03: 螺旋桨敞水特性对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_RP04_Matching()
+{ auto *d = new PropellerDialog(nullptr, "RP-04"); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "RP-04: 推进性能匹配对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD04_Compartment()
+{ auto *d = new CompartmentDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-04: 舱室划分对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_HS07_BuoyancyLayout()
+{ auto *d = new BuoyancyLayoutDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-07: 浮体布局设计对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_HS08_GzStability()
+{ auto *d = new GzStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "HS-08: 完整稳性综合校核对话框已打开" << std::endl; }
+
+void MenuPluginKeship::OnBtn_SD07_DamageStability()
+{ auto *d = new DamageStabilityDialog(nullptr); d->setAttribute(Qt::WA_DeleteOnClose); d->show();
+  std::cout << "SD-07: 破舱稳性仿真对话框已打开" << std::endl; }
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_MS05_Operability()
+{
+  auto *dlg = new OperabilityDialog(modelManager->GetNode(), "keship_world",
+                                    GetModelNames());
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "MS-05: 海况操限评估对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_SD08_ParametricHull()
+{
+  auto *dlg = new ParametricHullDialog(nullptr);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->show();
+  std::cout << "SD-08: 参数化型线设计对话框已打开" << std::endl;
+}
+
+//-----------------------------------------------------------------------------
+void MenuPluginKeship::OnBtn_MS01_TurningCircle()
+{
+  if (ms01Dialog_) { ms01Dialog_->raise(); ms01Dialog_->activateWindow(); return; }
+  auto *dialog = new TurningCircleDialog(modelManager->GetNode(), "keship_world",
+                                         GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms01Dialog_ = nullptr; });
+  ms01Dialog_ = dialog; dialog->show();
+  std::cout << "MS-01: 回转性观测对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS04_Zigzag()
+{
+  if (ms04Dialog_) { ms04Dialog_->raise(); ms04Dialog_->activateWindow(); return; }
+  auto *dialog = new ZigzagDialog(modelManager->GetNode(), "keship_world",
+                                  GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms04Dialog_ = nullptr; });
+  ms04Dialog_ = dialog; dialog->show();
+  std::cout << "MS-04: Z 形试验对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS02_WaveResponse()
+{
+  if (ms02Dialog_) { ms02Dialog_->raise(); ms02Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms02");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms02Dialog_ = nullptr; });
+  ms02Dialog_ = dialog; dialog->show();
+  std::cout << "MS-02: 升沉与纵摇响应对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS03_Rao()
+{
+  if (ms03Dialog_) { ms03Dialog_->raise(); ms03Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms03");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms03Dialog_ = nullptr; });
+  ms03Dialog_ = dialog; dialog->show();
+  std::cout << "MS-03: 横摇 RAO 对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_MS06_RaoPractice()
+{
+  if (ms06Dialog_) { ms06Dialog_->raise(); ms06Dialog_->activateWindow(); return; }
+  auto *dialog = new WaveResponseDialog(modelManager->GetNode(), "keship_world",
+                                        GetModelNames(), "ms06");
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { ms06Dialog_ = nullptr; });
+  ms06Dialog_ = dialog; dialog->show();
+  std::cout << "MS-06: RAO 编程计算实践对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
+void MenuPluginKeship::OnBtn_SC08_SensorEstimation()
+{
+  if (sc08Dialog_) { sc08Dialog_->raise(); sc08Dialog_->activateWindow(); return; }
+  auto *dialog = new SensorEstimationDialog(modelManager->GetNode(), "keship_world",
+                                            GetModelNames());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  QObject::connect(dialog, &QDialog::destroyed, this, [this]() { sc08Dialog_ = nullptr; });
+  sc08Dialog_ = dialog; dialog->show();
+  std::cout << "SC-08: 传感器位姿估计对话框已打开" << std::endl;
+}
+
+/////////////////////////////////////////////////
 void MenuPluginKeship::OnBtn_CleanMeshCache()
 {
   if (QMessageBox::question(nullptr, "清理网格缓存",

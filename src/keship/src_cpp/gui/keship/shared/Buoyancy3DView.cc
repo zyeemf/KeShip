@@ -868,6 +868,16 @@ void Buoyancy3DView::buildMeshGeo(Geo &_geo, const std::string &_path)
 
   meshCx_ = cx; meshCy_ = cy; meshCz_ = cz;
 
+  // 相对形心的最大距离（包围半径）—— 供 updateCamera 自动定视距，
+  // 否则大尺寸网格会因沿用默认圆柱尺寸而贴面显示（2026-10-15）
+  double r2 = 0.0;
+  for (auto &vt : mesh.vertices)
+  {
+    const double dx = vt.X() - cx, dy = vt.Y() - cy, dz = vt.Z() - cz;
+    r2 = std::max(r2, dx * dx + dy * dy + dz * dz);
+  }
+  meshRadius_ = std::sqrt(r2);
+
   std::vector<float> v;
   for (auto &t : mesh.triangles)
   {
@@ -989,8 +999,9 @@ void Buoyancy3DView::updateCamera()
   if (hasModel_)
   {
     auto &m = modelInfo_;
-    if (m.isBox) maxDim = std::max({m.boxDx, m.boxDy, m.boxDz, maxDim});
-    else         maxDim = std::max({m.cylRadius*2, m.cylLength, maxDim});
+    if (m.isBox)              maxDim = std::max({m.boxDx, m.boxDy, m.boxDz, maxDim});
+    else if (!m.meshPath.empty()) maxDim = std::max({meshRadius_ * 2.0, maxDim});
+    else                      maxDim = std::max({m.cylRadius*2, m.cylLength, maxDim});
   }
   for (auto &b : bodies_)
   {

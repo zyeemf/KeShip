@@ -8,7 +8,7 @@
  *     · pose_based —— **需要 hasCylinderGeometry_**，网格船体 / 长方体走不到；
  *     · fossen     —— 读 SDF 的 <linear_damping>（Zw/Kp/Mq）。
  *   所以网格船体与长方体**不给 <linear_damping> 就是零阻尼** → 横摇长时间不衰减 →
- *   "等横倾角稳定"类判据永不满足（SP-03 Inclining / SP-04 HullStability 因此不可用）。
+ *   "等横倾角稳定"类判据永不满足（HS-04 Inclining / HS-05 HullStability 因此不可用）。
  *
  *   ⚠️ 另一个坑：插件在 `enable_hydro=true` 而 fossen **无效**时会**整体 return，
  *      连浮力都不施加**（cc:200-203）→ 系数必须有正下限兜底，否则模型会沉底。

@@ -36,7 +36,9 @@ NO_BUILD=false
 HEADLESS=false
 NO_GPU_WARM=false
 NO_D3D12=false
+TEST_ISOLATED=false   # --test-isolated：隔离实例（不改任何步骤）
 EXTRA_GZ_ARGS=""
+GZ_VERBOSE=""   # gz 日志等级（空=用 launch 默认 4）
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -44,12 +46,16 @@ while [ $# -gt 0 ]; do
         --headless)     HEADLESS=true; shift ;;
         --no-gpu-warm)  NO_GPU_WARM=true; shift ;;
         --no-d3d12)     NO_D3D12=true; shift ;;
+        --test-isolated) TEST_ISOLATED=true; shift ;;
+        --gz-verbose)   GZ_VERBOSE="$2"; shift 2 ;;
         --help|-h)
             echo "KeShip 启动脚本"
             echo "  --no-build     跳过编译，直接启动（运行时可能是旧版本）"
             echo "  --headless     无头模式（gz sim -s，无 GUI）"
+            echo "  --gz-verbose N gz 日志等级 0~4（默认 4；调低可减少刷屏）"
             echo "  --no-gpu-warm  跳过 GPU 预热"
             echo "  --no-d3d12     退回 Mesa 默认渲染（软件渲染），用于对比/回滚"
+            echo "  --test-isolated 测试隔离实例：独立锁 + 跳过全局 gz 检查 + 跳过文档自检"
             echo "  其余参数       转发为 Gazebo 的 extra_gz_args"
             echo "退出码: 0 正常 / 1 已有实例或启动失败 / 2 编译失败 / 3 环境缺失"
             exit 0
@@ -90,6 +96,9 @@ check_stale_build() {
 # ═══════════════════════════════════════════════════════════
 mkdir -p "$KSHIP_WS/data"
 LOCK_FILE="$KSHIP_WS/data/keship.lock"
+if [ "$TEST_ISOLATED" = true ]; then
+    LOCK_FILE="$KSHIP_WS/data/keship_test.lock"   # 不占用生产锁
+fi
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     echo ""
@@ -97,13 +106,24 @@ if ! flock -n 9; then
     echo "         同时运行多个实例会互相干扰导致仿真错乱。"
     echo "         请先关闭现有实例，再重新启动。"
     echo ""
+    echo "  ── 当前占用的进程（便于排查）──"
+    pgrep -af "[g]z sim|[g]z_tools_vendor|[k]eship_world_bridge|[p]arameter_bridge" 2>/dev/null \
+        | cut -c1-140 | sed 's/^/    /' | head -8
+    echo ""
+    echo "  一键清理：bash data/test/cleanup_and_shutdown.sh"
+    echo ""
     exit 1
 fi
 
-if pgrep -f "[g]z sim -v 4" > /dev/null 2>&1; then
+if [ "$TEST_ISOLATED" != true ] && pgrep -f "[g]z sim -v 4" > /dev/null 2>&1; then
     echo ""
     echo "  [错误] 检测到 gz sim 进程已在运行，拒绝启动。"
     echo "         请先关闭现有实例，再重新启动。"
+    echo ""
+    pgrep -af "[g]z sim -v 4" 2>/dev/null \
+        | cut -c1-140 | sed 's/^/    /' | head -8
+    echo ""
+    echo "  一键清理：bash data/test/cleanup_and_shutdown.sh"
     echo ""
     exit 1
 fi
@@ -180,7 +200,9 @@ echo ""
 # Step 3: 代码变更自动检查（非阻塞）
 #   仅在编译成功之后执行 —— 编译失败时跑它没有意义
 # ═══════════════════════════════════════════════════════════
-if [ -f "$KSHIP_WS/tools/auto_check.sh" ]; then
+if [ "$TEST_ISOLATED" = true ]; then
+    echo "[文档] 测试模式跳过自动检查（避免污染 doc 工作区）"
+elif [ -f "$KSHIP_WS/tools/auto_check.sh" ]; then
     echo "[文档] 代码变更自动检查..."
     bash "$KSHIP_WS/tools/auto_check.sh" --quick || true
     echo ""
@@ -219,43 +241,11 @@ echo ""
 #   ⚠ 两个变量都要设：LD_LIBRARY_PATH 管库；GZ_SIM_SYSTEM_PLUGIN_PATH 管 gz 系统插件。
 #   ⚠ 前缀不存在时保持原行为（走系统/vendor，S2 降级），不报错、不中断启动。
 # ═══════════════════════════════════════════════════════════
-KESHIP_GZ_PREFIX="${KESHIP_GZ_PREFIX:-/opt/keship-gz}"
-if [ -d "$KESHIP_GZ_PREFIX/lib" ]; then
-    export LD_LIBRARY_PATH="$KESHIP_GZ_PREFIX/lib:$LD_LIBRARY_PATH"
-    if [ -d "$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins" ]; then
-        export GZ_SIM_SYSTEM_PLUGIN_PATH="$KESHIP_GZ_PREFIX/lib/gz-sim-8/plugins:$GZ_SIM_SYSTEM_PLUGIN_PATH"
-    fi
-    echo "[环境] 已启用自建 gz-sim: $KESHIP_GZ_PREFIX （S2 出水取消 M_A 生效）"
-else
-    echo "[环境] 未发现自建 gz-sim（$KESHIP_GZ_PREFIX）—— S2 将自动降级"
-fi
-
-# ═══════════════════════════════════════════════════════════
-# Step 3.7: 自建 gz-physics 引擎插件（A）+ DART 告警静默（B）
-#   背景：DART 的 Inertia 语义是「刚体参数 (m,c,I)」，而附加质量 M_A 是各向异性
-#         对称阵 ⇒ M_RB+M_A 不再是刚体惯性形式 ⇒ verifySpatialTensor 告警刷屏。
-#         该告警**已判定良性**（求解器用原始 6×6，M_A 正确生效）。
-#         见 doc/audit/inertia_warning_2026-10-07.md §6.5。
-#   A: 自建 gz-physics7 的 dartsim 引擎插件（AddedMassFeatures 调 setSpatialTensor(M,false)）
-#      ⇒ 12 行/次 → 1 行/次（降 92%）。**需同时设两个变量**（gz-sim 默认引擎路径优先）。
-#   B: LD_PRELOAD 静默库（覆盖 dart::common::colorErr，吞 Inertia.cpp 的告警）⇒ 归零。
-#   ⚠ 两者都不改物理、不改数据；回退：KESHIP_PHYSICS_PREFIX="" / KESHIP_QUIET_INERTIA=0
-# ═══════════════════════════════════════════════════════════
-KESHIP_PHYSICS_PREFIX="${KESHIP_PHYSICS_PREFIX-/home/keship/gz-build/install-physics-7.8.0}"
-if [ -n "$KESHIP_PHYSICS_PREFIX" ] && [ -d "$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins" ]; then
-    export GZ_SIM_PHYSICS_ENGINE_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${GZ_SIM_PHYSICS_ENGINE_PATH:+:$GZ_SIM_PHYSICS_ENGINE_PATH}"
-    export LD_LIBRARY_PATH="$KESHIP_PHYSICS_PREFIX/lib/gz-physics-7/engine-plugins${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-    echo "[环境] 已启用自建 gz-physics 引擎插件（A：关闭 DART 惯性自校验）: $KESHIP_PHYSICS_PREFIX"
-else
-    echo "[环境] 未发现自建 gz-physics（$KESHIP_PHYSICS_PREFIX）—— 走系统/vendor（告警照旧）"
-fi
-
-KESHIP_QUIET_INERTIA="${KESHIP_QUIET_INERTIA-1}"
-KESHIP_QUIET_SO=/home/keship/gz-build/kship_quiet_inertia.so
-if [ "$KESHIP_QUIET_INERTIA" = "1" ] && [ -f "$KESHIP_QUIET_SO" ]; then
-    export LD_PRELOAD="$KESHIP_QUIET_SO${LD_PRELOAD:+:$LD_PRELOAD}"
-    echo "[环境] 已启用 DART 告警静默库（B）: $KESHIP_QUIET_SO"
-fi
+# 2026-10-23：环境准备已抽到 tools/keship_env.sh（**唯一来源**）
+#   修复「GUI 与无头台架环境不一致」的测试隐患（张老师指出）：
+#   原先自建 gz-sim / gz-physics / DART 静默库的配置写在本脚本内，
+#   绕过本脚本的 `ros2 launch` 路径会缺环境 ⇒ 曾导致 E0~E6 跑在系统 8.10.0 上。
+source "$(cd "$(dirname "$0")" && pwd)/tools/keship_env.sh"
 
 echo ""
 
@@ -323,6 +313,9 @@ if [ "$HEADLESS" = true ]; then
 fi
 if [ -n "$EXTRA_GZ_ARGS" ]; then
     LAUNCH_CMD+=("extra_gz_args:=$EXTRA_GZ_ARGS")
+fi
+if [ -n "$GZ_VERBOSE" ]; then
+    LAUNCH_CMD+=("gz_verbose:=$GZ_VERBOSE")
 fi
 
 echo "[启动] 正在启动 KeShip 仿真..."
