@@ -85,7 +85,8 @@ public:
   ~ControlExpDialog() override;
 
   /// 导出当前结果到指定路径（无头测试/脚本入口，与「导出交付物」按钮同一份实现）
-  bool exportTo(const QString &_path);
+  /// ★ 2026-11-03：新增 _err 出参 —— 此前失败原因只打到 stdout，驱动拿不到，界面/脚本只能看到 FAIL
+  bool exportTo(const QString &_path, std::string *_err = nullptr);
 
   /// SC-06：导入 SC-08 的航向估计（既支持 SC-08 现有 CSV，也支持 keship.exp.v1 JSON）
   bool importSc08(const QString &_path, QString *_err = nullptr);

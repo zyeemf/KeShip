@@ -263,9 +263,10 @@ bool TryExport(QDialog *_dlg, const QString &_p, std::string *_err)
     return false;
   }
   std::string err;
+  // 命中即 return；走不到末尾那句「分派表缺此项」⇒ 两种失败原因天然区分开
   auto done = [&](bool _ok) {
     if (!_ok && _err)
-      *_err = err.empty() ? "该实验未实现无交互导出（TryExport 分派表缺此项）" : err;
+      *_err = err.empty() ? "导出失败（该实验未回传原因，详见其自身日志）" : err;
     return _ok;
   };
   if (auto *x = qobject_cast<MidshipSectionDialog *>(_dlg))        return done(x->exportTo(_p, &err));
@@ -283,6 +284,9 @@ bool TryExport(QDialog *_dlg, const QString &_p, std::string *_err)
   if (auto *x = qobject_cast<LargeAngleStabilityDialog *>(_dlg))   return done(x->exportTo(_p));
   // ★ 2026-11-03：SC-08 原先完全不在分派表里 —— 导出恒 FAIL 且无原因
   if (auto *x = qobject_cast<SensorEstimationDialog *>(_dlg))      return done(x->exportTo(_p, &err));
+  // ★ 2026-11-03（同类排查发现）：ControlExpDialog 早有 exportTo，却同样漏在分派表外
+  //   ⇒ SC-01~07 / SC-09~12 共 11 项的 --export 也走不通。
+  if (auto *x = qobject_cast<ControlExpDialog *>(_dlg))            return done(x->exportTo(_p, &err));
   if (_err) *_err = "该实验未实现无交互导出（TryExport 分派表缺此项）";
   return false;
 }

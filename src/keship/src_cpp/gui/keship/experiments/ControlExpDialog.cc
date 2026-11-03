@@ -1427,15 +1427,17 @@ bool ControlExpDialog::buildDeliverable(keship::ExpDeliverable &_d,
   return true;
 }
 
-bool ControlExpDialog::exportTo(const QString &_path) {
+bool ControlExpDialog::exportTo(const QString &_path, std::string *_err) {
   keship::ExpDeliverable d;
   std::string err;
   if (!buildDeliverable(d, &err)) {
     std::cout << "SC: 导出失败 —— " << err << std::endl;
+    if (_err) *_err = err;
     return false;
   }
   if (!keship::WriteExpDeliverable(_path.toStdString(), d, &err)) {
     std::cout << "SC: 写文件失败 —— " << err << std::endl;
+    if (_err) *_err = "写文件失败：" + err;
     return false;
   }
   std::cout << "SC: 已导出交付物 " << _path.toStdString()
