@@ -28,6 +28,29 @@
 #include <cmath>
 #include <iostream>
 
+namespace {
+
+/// ★ 2026-11-03：CSV 与 JSON 交付物同名不同后缀（_p 给任一个都能推导出另一个）。
+/// 提取成函数是为了让「导出 CSV」按钮与无交互入口 exportTo() 共用同一套路径规则。
+QString Sc08CsvPath(const QString &_p)
+{
+  QString s = _p;
+  if (!s.endsWith(QStringLiteral(".csv"), Qt::CaseInsensitive)) {
+    s.replace(QRegularExpression(QStringLiteral("\\.[A-Za-z0-9]+$")), QString());
+    s += QStringLiteral(".csv");
+  }
+  return s;
+}
+
+QString Sc08JsonPath(const QString &_p)
+{
+  QString s = Sc08CsvPath(_p);
+  s.replace(QRegularExpression(QStringLiteral("\\.csv$")), QStringLiteral(".json"));
+  return s;
+}
+
+}  // namespace
+
 // ══════════════════════════════════════════════════════════════════
 // 估计 vs 真值 图
 // ══════════════════════════════════════════════════════════════════
@@ -221,12 +244,39 @@ void SensorEstimationDialog::onExport() {
     QMessageBox::information(this, "导出", "尚无数据。");
     return;
   }
-  QString path = QFileDialog::getSaveFileName(this, "导出估计对比 CSV",
+  const QString path = QFileDialog::getSaveFileName(this, "导出估计对比 CSV",
       "sc08_estimation.csv", "CSV (*.csv)");
   if (path.isEmpty()) return;
-  if (!core_->exportCsv(path.toStdString())) {
-    QMessageBox::warning(this, "导出", "无法写入文件。");
+
+  std::string err;
+  if (!exportTo(path, &err)) {
+    QMessageBox::warning(this, "导出", QString::fromStdString(err));
     return;
+  }
+  QMessageBox::information(this, "导出",
+      QString("已导出：\n%1（CSV）\n%2（SC-08 交付物，供 SC-06 读入）")
+          .arg(Sc08CsvPath(path), Sc08JsonPath(path)));
+}
+
+//-----------------------------------------------------------------------------
+/// ★ 2026-11-03：无交互导出入口（测试 / 脚本用），跳过 QFileDialog 与模态框。
+/// 原「导出 CSV」按钮的完整逻辑搬到这里，GUI 侧只剩「取路径 + 提示」。
+/// 失败原因一律经 _err 回传 —— 不再出现「EXPORT FAIL 但没有任何原因」。
+bool SensorEstimationDialog::exportTo(const QString &_path, std::string *_err)
+{
+  auto fail = [&](const std::string &_m) {
+    if (_err) *_err = _m;
+    return false;
+  };
+  if (core_->trail().empty()) {
+    return fail("尚无数据：需先采集一段位姿样本再导出（无头模式请用 --actions 采集后导出）");
+  }
+
+  const QString csvPath  = Sc08CsvPath(_path);
+  const QString jsonPath = Sc08JsonPath(_path);
+
+  if (!core_->exportCsv(csvPath.toStdString())) {
+    return fail("CSV 写入失败：" + csvPath.toStdString());
   }
 
   /// ★ 2026-10-27（L7 链）：同时写一份**机器可读交付物** sc08_pose.json。
@@ -234,10 +284,6 @@ void SensorEstimationDialog::onExport() {
   /// 此前只导出 CSV，SC-06 只能靠猜列名，链实际是断的。
   /// 只放姿态（本实验不产位置）—— 下游据此只把**航向**换成估计值，位置仍用真值，
   /// 这个边界写进 extra.note，避免下游误以为位置也是估计的。
-  QString jsonPath = path;
-  jsonPath.replace(QRegularExpression("\\.csv$"), ".json");
-  if (jsonPath == path) jsonPath += ".json";
-
   const auto &tr = core_->trail();
   double sumSq = 0.0, maxAbs = 0.0;
   QJsonArray samples;
@@ -270,13 +316,10 @@ void SensorEstimationDialog::onExport() {
   d.extra["columns"] = "t / est_yaw / ref_yaw（度）";
   d.extra["note"] = "本交付物只含姿态角，不含位置；下游位置必须用真值";
 
-  std::string err;
-  if (!keship::WriteExpDeliverable(jsonPath.toStdString(), d, &err)) {
-    QMessageBox::warning(this, "导出 SC-08 交付物",
-        QString::fromStdString("CSV 已写出，但 JSON 交付物写入失败：" + err));
-    return;
+  std::string werr;
+  if (!keship::WriteExpDeliverable(jsonPath.toStdString(), d, &werr)) {
+    return fail("CSV 已写出，但 JSON 交付物写入失败：" + werr);
   }
-  QMessageBox::information(this, "导出",
-      QString("已导出：\n%1（CSV）\n%2（SC-08 交付物，供 SC-06 读入）").arg(path, jsonPath));
   std::cout << "SC-08: 已导出交付物 " << jsonPath.toStdString() << std::endl;
+  return true;
 }

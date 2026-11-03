@@ -48,6 +48,13 @@ public:
                          QWidget *_parent = nullptr);
   ~SensorEstimationDialog() override;
 
+  /// ★ 2026-11-03：无交互导出（测试 / 脚本入口，与「导出 CSV」按钮同一份实现）。
+  /// 同时写出 CSV 与机器可读交付物 sc08_pose.json（同名不同后缀）。
+  /// _path 可给 .csv 或 .json，均按同名规则推导另一份。
+  /// 失败原因经 _err 回传 —— 无头环境下弹模态框会让驱动定时器挂起（D2 教训）。
+  /// @return false 时 _err 必有内容（如「尚无数据」），不再静默失败
+  bool exportTo(const QString &_path, std::string *_err = nullptr);
+
 private slots:
   void onStart();
   void onStop();

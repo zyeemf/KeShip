@@ -253,23 +253,37 @@ bool TryImport(QDialog *_dlg, const QString &_p1, const QString &_p2)
 }
 
 /// 无交互导出（D1）：同上。带 err 的与不带 err 的两组签名分别处理。
-bool TryExport(QDialog *_dlg, const QString &_p)
+/// ★ 2026-11-03：新增 _err 出参 —— 此前 err 变量被丢弃，导出失败只打 EXPORT FAIL、
+/// 无任何原因（SC-08 静默失败即此）。现在失败必有原因：
+/// 各 exportTo 自己给的用它的，没给的用统一话术（分派表缺此项）。
+bool TryExport(QDialog *_dlg, const QString &_p, std::string *_err)
 {
-  if (_p.isEmpty()) return false;
+  if (_p.isEmpty()) {
+    if (_err) *_err = "导出路径为空";
+    return false;
+  }
   std::string err;
-  if (auto *x = qobject_cast<MidshipSectionDialog *>(_dlg))        return x->exportTo(_p, &err);
-  if (auto *x = qobject_cast<LongitudinalStrengthDialog *>(_dlg))  return x->exportTo(_p, &err);
-  if (auto *x = qobject_cast<StructureCognitionDialog *>(_dlg))    return x->exportTo(_p, &err);
-  if (auto *x = qobject_cast<ParametricHullDialog *>(_dlg))        return x->exportTo(_p, &err);
-  if (auto *x = qobject_cast<OffsetsHullDialog *>(_dlg))          return x->exportTo(_p, &err);
-  if (auto *x = qobject_cast<LinesReadingDialog *>(_dlg))          return x->exportTo(_p);
-  if (auto *x = qobject_cast<BuoyancyLayoutDialog *>(_dlg))        return x->exportTo(_p);
-  if (auto *x = qobject_cast<GzStabilityDialog *>(_dlg))           return x->exportTo(_p);
-  if (auto *x = qobject_cast<DamageStabilityDialog *>(_dlg))       return x->exportTo(_p);
-  if (auto *x = qobject_cast<CompartmentDialog *>(_dlg))           return x->exportTo(_p);
-  if (auto *x = qobject_cast<ResistanceDialog *>(_dlg))            return x->exportTo(_p);
-  if (auto *x = qobject_cast<PropellerDialog *>(_dlg))             return x->exportTo(_p);
-  if (auto *x = qobject_cast<LargeAngleStabilityDialog *>(_dlg))   return x->exportTo(_p);
+  auto done = [&](bool _ok) {
+    if (!_ok && _err)
+      *_err = err.empty() ? "该实验未实现无交互导出（TryExport 分派表缺此项）" : err;
+    return _ok;
+  };
+  if (auto *x = qobject_cast<MidshipSectionDialog *>(_dlg))        return done(x->exportTo(_p, &err));
+  if (auto *x = qobject_cast<LongitudinalStrengthDialog *>(_dlg))  return done(x->exportTo(_p, &err));
+  if (auto *x = qobject_cast<StructureCognitionDialog *>(_dlg))    return done(x->exportTo(_p, &err));
+  if (auto *x = qobject_cast<ParametricHullDialog *>(_dlg))        return done(x->exportTo(_p, &err));
+  if (auto *x = qobject_cast<OffsetsHullDialog *>(_dlg))          return done(x->exportTo(_p, &err));
+  if (auto *x = qobject_cast<LinesReadingDialog *>(_dlg))          return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<BuoyancyLayoutDialog *>(_dlg))        return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<GzStabilityDialog *>(_dlg))           return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<DamageStabilityDialog *>(_dlg))       return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<CompartmentDialog *>(_dlg))           return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<ResistanceDialog *>(_dlg))            return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<PropellerDialog *>(_dlg))             return done(x->exportTo(_p));
+  if (auto *x = qobject_cast<LargeAngleStabilityDialog *>(_dlg))   return done(x->exportTo(_p));
+  // ★ 2026-11-03：SC-08 原先完全不在分派表里 —— 导出恒 FAIL 且无原因
+  if (auto *x = qobject_cast<SensorEstimationDialog *>(_dlg))      return done(x->exportTo(_p, &err));
+  if (_err) *_err = "该实验未实现无交互导出（TryExport 分派表缺此项）";
   return false;
 }
 
@@ -467,9 +481,12 @@ int main(int _argc, char **_argv)
 
   // ---- 无交互导出（D1）：不弹 QFileDialog ----
   if (!exportPath.isEmpty()) {
-    const bool ok = TryExport(dlg, exportPath);
+    std::string xerr;
+    const bool ok = TryExport(dlg, exportPath, &xerr);
     std::printf("EXPORT\t%s\t%s\n", ok ? "OK" : "FAIL",
                 exportPath.toUtf8().constData());
+    if (!ok)  // ★ 2026-11-03：失败必须给原因，不再静默
+      std::printf("EXPORT\tREASON\t%s\n", xerr.c_str());
     std::fflush(stdout);
   }
 
