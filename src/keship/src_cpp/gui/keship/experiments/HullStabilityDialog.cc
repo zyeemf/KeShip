@@ -351,13 +351,24 @@ void HullStabilityDialog::onImportSd08()
       this, "导入 SD-08 型线交付物", "sd08_lines.json", "JSON (*.json)");
   if (path.isEmpty()) return;
 
+  QString msg;
+  const bool ok = importSd08From(path, &msg);
+  if (!ok || !msg.isEmpty()) {
+    QMessageBox::warning(this, ok ? "导入 SD-08 型线（有偏差）" : "导入 SD-08 型线", msg);
+  }
+}
+
+//-----------------------------------------------------------------------------
+/// ★ 2026-11-03（D10）：无交互导入入口（测试 / 脚本用），跳过 QFileDialog 与模态框。
+/// 失败原因与「成功但有警告」的说明都经 _err 回传，由调用方决定怎么提示。
+bool HullStabilityDialog::importSd08From(const QString &_path, QString *_err)
+{
   keship::ExpDeliverable d;
   std::string err;
-  if (!keship::ReadExpDeliverable(path.toStdString(), d, &err) ||
+  if (!keship::ReadExpDeliverable(_path.toStdString(), d, &err) ||
       !keship::ValidExpDeliverable(d, "SD-08", &err)) {
-    QMessageBox::warning(this, "导入 SD-08 型线",
-        QString::fromStdString("无法使用该文件：\n" + err));
-    return;
+    if (_err) *_err = QString::fromStdString("无法使用该文件：\n" + err);
+    return false;
   }
 
   sd08FamilyIndex_ = d.object["familyIndex"].toInt(0);
@@ -406,12 +417,12 @@ void HullStabilityDialog::onImportSd08()
   std::cout << "HS-05: 已导入 SD-08 交付物（GM 交付 " << wantGm
             << " vs 复现 " << gotGm << "）" << std::endl;
 
-  if (relGm > 0.02 && !clamped) {
-    QMessageBox::warning(this, "导入 SD-08 型线",
-        QString("复现偏差超过 2%%（GM：交付 %1 m / 复现 %2 m）。\n"
-                "说明上下游船型口径仍不一致，请把该文件与本次结果一并留证。")
-            .arg(wantGm, 0, 'f', 5).arg(gotGm, 0, 'f', 5));
+  if (relGm > 0.02 && !clamped && _err) {
+    *_err = QString("复现偏差超过 2%%（GM：交付 %1 m / 复现 %2 m）。\n"
+                    "说明上下游船型口径仍不一致，请把该文件与本次结果一并留证。")
+                .arg(wantGm, 0, 'f', 5).arg(gotGm, 0, 'f', 5);
   }
+  return true;
 }
 
 void HullStabilityDialog::onHullTypeChanged() {

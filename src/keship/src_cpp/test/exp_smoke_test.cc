@@ -236,6 +236,19 @@ bool TryImport(QDialog *_dlg, const QString &_p1, const QString &_p2)
     std::string err;
     return x->applyCsvText(QString::fromUtf8(f.readAll()), &err);
   }
+  // ★ 2026-11-03（D10）：补 HS-05 与 SC-06 两个分支 —— 缺它们时 --import 恒返回 false，
+  //   L1 的 SD-08→HS-05 边、L7 的 SC-08→SC-06 边只能静态核对，拿不到运行证据。
+  if (auto *x = qobject_cast<HullStabilityDialog *>(_dlg)) {
+    QString err;
+    const bool ok = x->importSd08From(_p1, &err);
+    if (!err.isEmpty())  // 成功但有警告（如复现偏差 >2%）也如实报出
+      std::printf("IMPORT WARN\t%s\n", err.replace("\n", " ").toUtf8().constData());
+    return ok;
+  }
+  if (auto *x = qobject_cast<ControlExpDialog *>(_dlg)) {
+    QString err;
+    return x->importSc08(_p1, &err);
+  }
   return false;
 }
 

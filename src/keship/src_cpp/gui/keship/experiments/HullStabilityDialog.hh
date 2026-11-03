@@ -66,6 +66,12 @@ public:
                       QWidget *_parent = nullptr);
   ~HullStabilityDialog() override;
 
+  /// ★ 2026-11-03（D10）：无交互导入 SD-08 型线交付物（测试 / 脚本入口）。
+  /// 与「导入 SD-08」按钮走**同一份实现**，仅跳过 QFileDialog 与模态提示 ——
+  /// 无头环境下弹模态框会让驱动定时器挂起（D2 教训）。
+  /// @return false = 文件不可用（原因见 _err）；true 且 _err 非空 = 导入成功但有警告（复现偏差 >2%）
+  bool importSd08From(const QString &_path, QString *_err = nullptr);
+
 private slots:
   void onSpawn();
   /// ★ 2026-10-29（D5）：压载位置控件由 QSlider 改为 QDoubleSpinBox（同 HS-04）。
