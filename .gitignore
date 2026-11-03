@@ -65,6 +65,12 @@ models_env/
 # 个人 AI agent 配置（本地使用，不入库）
 AGENTS.md
 
+# ===== 实验指导书：逐个检查通过后才入库（2026-11-03 张老师定）=====
+# 目录整体忽略；某个指导书验收通过后，用下面命令单独纳入：
+#   git add -f doc/experiments/<文件名>.md
+doc/experiments/*
+!doc/experiments/.gitkeep
+
 # ===== 私人研究资料（论文投稿，不入库）=====
 paper/
 
