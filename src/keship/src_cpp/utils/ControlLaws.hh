@@ -326,6 +326,7 @@ inline double ColregsHeadingBiasDeg(double _relBearingDeg, double _rangeM,
 ///   headingSteadyErr   = 末 20% 的 mean(|headingErr|)
 ///   settlingTimeS      = 「最后一次出带」之后一点的 t；带 = max(2%·|目标航向|, 0.5°)
 ///   overshootPct       = (越过目标的峰值) / |目标−初始| × 100；跨度 < kMinOvershootSpanDeg 时为 -1（N/A）
+///                        **仅 kPidHeading 计算**：其余律的目标随时间切换，分子分母不在同一基准，恒 -1
 ///   lateralRmsM        = sqrt(mean(lateral²))；maxLateralM = max|lateral|
 ///   dpHoldErrM         = 末 20% 到目标点（DP/编队目标）的平均距离
 ///   arrivalRate        = 已到达航路点 / 总航路点（无航路点 = −1）
@@ -385,11 +386,22 @@ inline ControlMetrics ComputeMetrics(const std::vector<ControlSample> &_trail,
 
   // 超调
   {
+    // ★ 2026-11-03（D11）：口径收窄到「固定航向阶跃」这一类。
+    //   只有 kPidHeading（SC-02 / SC-03 / SC-04）是「目标航向固定、从起航航向跃变过去」，
+    //   此时 (越过峰值 / 跨度) 才有物理意义。其余律：
+    //     · kLos      SC-06 / SC-10 —— 目标是路径，航路段随时切换；
+    //     · kColregs  SC-11        —— 期望航向随障碍相对位置变；
+    //     · kFormation SC-12       —— 跟随虚拟领航者；
+    //     · kDp       SC-07        —— 期望航向由位置误差反算；
+    //     · kPidSpeed SC-05        —— 目标是航速，航向本就不参与。
+    //   这些模式下 tgt 每段变化，而 y0 取首帧 ⇒ 分子分母不在同一基准，
+    //   比值失去意义（实测 SC-10 曾算出 7213%）。故一律 N/A，界面显示「—」。
+    const bool stepLike = (_ctx.law == ControlLaw::kPidHeading);
     const double tgt = _ctx.targetHeadingDeg;
     const double y0 = _trail.front().yawDeg;
     const double span = std::abs(tgt - y0);
-    if (span < kMinOvershootSpanDeg) {
-      m.overshootPct = -1.0;   ///< N/A：跨度太小，百分比无物理意义
+    if (!stepLike || span < kMinOvershootSpanDeg) {
+      m.overshootPct = -1.0;   ///< N/A：非阶跃律，或跨度太小（分母趋零）
     } else {
       const double dir = (tgt >= y0) ? 1.0 : -1.0;
       double peak = 0.0;

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDoubleSpinBox>
@@ -331,6 +332,10 @@ int main(int _argc, char **_argv)
       exportPath = QString::fromLocal8Bit(_argv[++i]);
     } else if (std::strcmp(a, "--click") == 0 && i + 1 < _argc) {
       actions.push_back({'C', 0, 0.0, _argv[++i]});
+    } else if (std::strcmp(a, "--check") == 0 && i + 1 < _argc) {
+      // ★ 2026-11-03（D11 配套）：勾选 QCheckBox。此前驱动只能点按钮，
+      //   像 SC-02「启用参数扫描」这类开关无法无头打开 ⇒ sweep 场景测不到。
+      actions.push_back({'K', 0, 0.0, _argv[++i]});
     } else if (std::strcmp(a, "--wait") == 0 && i + 1 < _argc) {
       waitMs = std::atoi(_argv[++i]);
     } else if (std::strcmp(a, "--pause") == 0 && i + 1 < _argc) {
@@ -479,6 +484,22 @@ int main(int _argc, char **_argv)
     } else if (a.kind == 'P') {
       Pump(app, static_cast<int>(a.val));
       std::printf("PAUSE\t%d\n", static_cast<int>(a.val));
+      std::fflush(stdout);
+    } else if (a.kind == 'K') {
+      QCheckBox *hit = nullptr;
+      for (auto *c : dlg->findChildren<QCheckBox *>()) {
+        if (c->text().contains(QString::fromStdString(a.text), Qt::CaseInsensitive)) {
+          hit = c;
+          break;
+        }
+      }
+      if (!hit) {
+        std::printf("NOCHECK\t%s\n", a.text.c_str());
+      } else {
+        hit->setChecked(true);
+        Pump(app, waitMs);
+        std::printf("CHECKED\t%s\n", a.text.c_str());
+      }
       std::fflush(stdout);
     }
   }
