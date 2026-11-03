@@ -68,7 +68,8 @@ public:
   void setDocCoords(bool _on);
   bool docCoords() const;
 
-  /// 船型说明的完整 HTML（网页版；onShowFamilyHelp 写文件并打开浏览器）
+  /// 船型说明的完整 HTML（onShowFamilyHelp 在 gz GUI 内部窗口渲染，
+  /// 不写临时文件、不依赖系统浏览器；SVG 段转位图内嵌）
   QString familyHelpHtml() const;
 
 signals:

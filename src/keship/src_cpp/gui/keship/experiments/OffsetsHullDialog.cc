@@ -12,7 +12,6 @@
 #include <QCheckBox>
 #include <QUrl>
 #include <QDir>
-#include <QDesktopServices>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -28,11 +27,19 @@
 #include <QRadioButton>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QDialog>
+#include <QFont>
+#include <QImage>
+#include <QRegularExpression>
+#include <QTextBrowser>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include "../shared/ExpDeliverable.hh"
 #include "../shared/StudentCodeRunner.hh"
+#include "Sd10EquationSvg.hh"
 
 namespace {
 constexpr double kWaterDensity = 1000.0;
@@ -561,10 +568,16 @@ QString OffsetsHullDialog::familyHelpHtml() const
   static const char *kName[] = {"Wigley 经典", "Wigley 平底", "Wigley 尖底", "Wigley 瘦削",
                                 "Lewis U 形", "Lewis V 形", "资料 Model I/II",
                                 "资料 Model III/IV"};
-  static const char *kW[] = {"1 − ξ²", "1 − ξ²", "1 − ξ²", "1 − ξ⁴",
-                             "1 − ξ²", "1 − ξ²", "见资料公式", "见资料公式"};
-  static const char *kS[] = {"1 − ζ²", "1 − ζ⁴", "1 − ζ", "1 − ζ²",
-                             "√(1 − ζ²)", "1 − ζ", "见资料公式", "见资料公式"};
+  // 表格内的短表达式用富文本上下标（Qt 不支持 LaTeX；<sup> 给出正确的上标位置与字号），
+  // 变量加斜体以贴近数学排版惯例。整块公式见上方 SVG（Sd10EquationSvg.hh）。
+  static const char *kW[] = {"1 − <i>ξ</i><sup>2</sup>", "1 − <i>ξ</i><sup>2</sup>",
+                             "1 − <i>ξ</i><sup>2</sup>", "1 − <i>ξ</i><sup>4</sup>",
+                             "1 − <i>ξ</i><sup>2</sup>", "1 − <i>ξ</i><sup>2</sup>",
+                             "见资料公式", "见资料公式"};
+  static const char *kS[] = {"1 − <i>ζ</i><sup>2</sup>", "1 − <i>ζ</i><sup>4</sup>",
+                             "1 − <i>ζ</i>", "1 − <i>ζ</i><sup>2</sup>",
+                             "√(1 − <i>ζ</i><sup>2</sup>)", "1 − <i>ζ</i>",
+                             "见资料公式", "见资料公式"};
   static const char *kColor[] = {"#2563eb", "#16a34a", "#dc2626", "#9333ea",
                                  "#ea580c", "#0891b2", "#be123c", "#7c3aed"};
 
@@ -619,13 +632,18 @@ svg{border:1px solid #e5e7eb;border-radius:6px;background:#fcfcfd;display:block;
   html += R"HTML(
 <h2>一、通用形式</h2>
 <p>所有船型族的半宽都能写成<b>两个函数的乘积</b>：</p>
-<div class="formula">y(x, z) = (B/2) · W(ξ) · S(ζ)　　其中　ξ = 2x/L − 1 ∈ [−1, 1]，　ζ = −z/D ∈ [0, 1]</div>
+)HTML";
+  // 公式以 SVG 内联（matplotlib mathtext 离线渲染，字形已转 path）；
+  // 渲染层会把它转成位图并居中显示。见 Sd10EquationSvg.hh 顶部说明。
+  html += QString::fromUtf8(keship::sd10_eq::kGeneralForm);
+  html += R"HTML(
 <p><code>ξ</code> 沿船长（−1 艉端 → +1 艏端），<code>ζ</code> 沿吃水（0 水线 → 1 龙骨）。
 <b>换族 = 换 W 和 S 这两个函数</b>，主尺度不变。</p>
 )HTML";
 
   html += QString("<h2>二、平台内置六族 + 资料两族</h2>");
-  html += QString("<table><tr><th>族</th><th>水线面 W(ξ)</th><th>横剖面 S(ζ)</th>"
+  html += QString("<table><tr><th>族</th><th>水线面 <i>W</i>(<i>ξ</i>)</th>"
+                  "<th>横剖面 <i>S</i>(<i>ζ</i>)</th>"
                   "<th>全船体积 (m³)</th><th>相对经典族</th></tr>");
   for (int i = 0; i < 8; ++i) {
     const double v = keship::ShipHullGenerator(specOf(i)).hydroProps().volume;
@@ -659,14 +677,18 @@ svg{border:1px solid #e5e7eb;border-radius:6px;background:#fcfcfd;display:block;
 <h2>三、课程资料：Wigley 四模型（Journée 1992）</h2>
 <p>来源：<b>Journée, J.M.J. (1992)</b>, <i>Experiments and Calculations on 4 Wigley Hull Forms
 in Head Waves</i>, Report 0909, Ship Hydromechanics Laboratory, Delft University of Technology.</p>
-<div class="formula">y = (1 − ζ²)(1 − ξ²)(1 + a₂ξ² + a₄ξ⁴) + α · ζ²(1 − ζ⁸)(1 − ξ²)⁴</div>
+)HTML";
+  html += QString::fromUtf8(keship::sd10_eq::kJournee);
+  html += R"HTML(
 <p>参数：<code>a₂ = 0.2</code>，<code>a₄ = 0.0</code>；
 <code>α = 1.0</code> → Model I/II（Cm = 0.909）；<code>α = 0.0</code> → Model III/IV（Cm = 0.667）。</p>
-<div class="note"><b>自检（可用于核对实现）：</b><br>
-α=1 时舯剖面 y(0,ζ) = (1−ζ²) + ζ²(1−ζ⁸) = <b>1 − ζ¹⁰</b>，∫₀¹(1−ζ¹⁰)dζ = 10/11 = <b>0.9091</b> ⇒ Cm = 0.909 ✓<br>
-α=0 时 y(0,ζ) = 1 − ζ²，∫₀¹ = 2/3 ⇒ Cm = 0.667 ✓<br>
-体积同样吻合：L3/B0.3/d0.1875 下 Model I 得 <b>0.0946</b>、Model III 得 <b>0.0780</b>，与资料表 1 一致。
-</div>
+<div class="note"><b>自检（可用于核对实现）：</b>下面三段可直接与代码实现逐项核对。</div>
+)HTML";
+  html += QString::fromUtf8(keship::sd10_eq::kSelfCheckA1);
+  html += QString::fromUtf8(keship::sd10_eq::kSelfCheckA1Int);
+  html += QString::fromUtf8(keship::sd10_eq::kSelfCheckA0);
+  html += R"HTML(
+<p>体积同样吻合：L3/B0.3/d0.1875 下 Model I 得 <b>0.0946</b>、Model III 得 <b>0.0780</b>，与资料表 1 一致。</p>
 <p><b>Model I 与 II 的区别不在公式</b>，而在主尺度（L/B = 10 vs 5）；III 与 IV 同理。
 所以在参考族里选「资料 Model I/II」或「资料 Model III/IV」即可，L/B 由你自己输入。</p>
 )HTML";
@@ -708,7 +730,7 @@ in Head Waves</i>, Report 0909, Ship Hydromechanics Laboratory, Delft University
 <h2>六、建议路线</h2>
 <ol>
 <li>先做 <b>Wigley 经典</b>（体积恰为 4LBD/9），跑通全流程；</li>
-<li>再试 <b>资料 Model III/IV</b>（Cm=0.667，与经典族差约 4%），体会 <code>(1+0.2ξ²)</code> 项的影响；</li>
+<li>再试 <b>资料 Model III/IV</b>（Cm=0.667，与经典族差约 4%），体会 <code>(1+0.2<i>ξ</i><sup>2</sup>)</code> 项的影响；</li>
 <li>最后试 <b>资料 Model I/II</b>（Cm=0.909，剖面丰满得多），观察它对稳性 GM 的影响；</li>
 <li>造好的船可以接 <b>RP-01/02 阻力实验</b>，与资料附带的实测阻力（Fn=0.20/0.30）对照。</li>
 </ol>
@@ -719,17 +741,77 @@ in Head Waves</i>, Report 0909, Ship Hydromechanics Laboratory, Delft University
 }
 
 //-----------------------------------------------------------------------------
+// 2026-11-03 修复（张老师实测：点「船型说明」无反应，gazebo 日志报
+//   "Unable to detect a launcher for 'file:///tmp/keship_sd10_hull_family_help.html'"）
+//
+// 根因：原实现 = 写 /tmp/*.html + QDesktopServices::openUrl 交给系统浏览器。
+//   教学机 / WSL / 机房环境普遍**没有 xdg-open、也没有装浏览器**（本机实测：
+//   xdg-utils 与 wslu 均未安装，WSL 内无任何 browser），Qt 找不到 launcher 就
+//   只打一行 warning 直接返回 ⇒ 按钮点了毫无反应，学生看不到任何说明。
+//   （本文件是全仓唯一 QDesktopServices 使用点。）
+//
+// 修法：改为在 gz GUI 内部自渲染 —— 不写临时文件、不依赖任何外部程序。
+//   SVG 段用 QImage::fromData(..., "SVG") 转位图（libqsvg 图像插件，运行时包
+//   libqt5svg5 已装，**无需新增编译依赖**），经 QTextDocument::addResource
+//   内嵌为 <img>，曲线图得以保留。
+//
+// ⚠ 已知降级（Qt 富文本引擎限制，非本处可解）：不支持 border-left ⇒
+//   .formula / .note 的彩色左边条不显示；表格边框、底色、内嵌图、code 底色
+//   经离屏探针实测均正常（build/probe_rich.png）。
+// ⚠ 用非模态 show()：模态框会阻塞 gz GUI 的驱动定时器（D2 教训）。
 void OffsetsHullDialog::onShowFamilyHelp()
 {
-  const QString path = QDir::tempPath() + "/keship_sd10_hull_family_help.html";
-  QFile f(path);
-  if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-    QMessageBox::warning(this, "船型说明", "无法写入说明文件：" + path);
-    return;
+  const QString html = familyHelpHtml();
+
+  auto *dlg = new QDialog(this);
+  dlg->setAttribute(Qt::WA_DeleteOnClose);
+  dlg->setWindowTitle("数学船型族说明 · SD-10");
+  dlg->resize(920, 720);
+  auto *lay = new QVBoxLayout(dlg);
+  lay->setContentsMargins(0, 0, 0, 0);
+
+  auto *view = new QTextBrowser(dlg);
+  view->setOpenExternalLinks(false);  // 防止正文链接再次触发系统 launcher
+  lay->addWidget(view);
+
+  QTextDocument *doc = view->document();
+  doc->setDefaultFont(QFont(QStringLiteral("Sans Serif"), 10));
+
+  // 1) <style> 内容转为默认样式表（Qt 支持 CSS 子集：元素选择器可用）
+  const QRegularExpression styleRe(QStringLiteral("<style[^>]*>(.*?)</style>"),
+                                   QRegularExpression::DotMatchesEverythingOption);
+  const QRegularExpressionMatch styleMatch = styleRe.match(html);
+  if (styleMatch.hasMatch()) doc->setDefaultStyleSheet(styleMatch.captured(1));
+
+  // 2) 内嵌 <svg>…</svg> → 位图资源 → <img>（顺序必须在 setHtml 之前，否则资源丢）
+  const QRegularExpression svgRe(QStringLiteral("<svg[^>]*>.*?</svg>"),
+                                 QRegularExpression::DotMatchesEverythingOption);
+  QString out;
+  int lastEnd = 0;
+  int figNo = 0;
+  int dropped = 0;
+  QRegularExpressionMatch m = svgRe.match(html, 0);
+  while (m.hasMatch()) {
+    out += html.mid(lastEnd, m.capturedStart() - lastEnd);
+    const QImage img = QImage::fromData(m.captured().toUtf8(), "SVG");
+    if (img.isNull()) {
+      ++dropped;  // 转不出图就丢掉整段，绝不把裸 XML 当正文显示给学生
+    } else {
+      const QString key = QStringLiteral("keship://fig%1").arg(++figNo);
+      doc->addResource(QTextDocument::ImageResource, QUrl(key), img);
+      out += QStringLiteral("<p align=\"center\"><img src=\"%1\"></p>").arg(key);
+    }
+    lastEnd = m.capturedEnd();
+    m = svgRe.match(html, lastEnd);
   }
-  f.write(familyHelpHtml().toUtf8());
-  f.close();
-  QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+  out += html.mid(lastEnd);
+  if (dropped > 0) {
+    fprintf(stderr, "[SD-10] 船型说明：%d 段 SVG 转位图失败，已省略\n", dropped);
+  }
+
+  doc->setHtml(out);
+  view->moveCursor(QTextCursor::Start);
+  dlg->show();
 }
 
 //-----------------------------------------------------------------------------

@@ -12,13 +12,19 @@
  */
 
 #include <QApplication>
+#include <QDialog>
 #include <QEventLoop>
+#include <QImage>
 #include <QTimer>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPainter>
 #include <QPlainTextEdit>
+#include <QTextBrowser>
+#include <QTextDocument>
+#include <QUrl>
 
 #include <cmath>
 #include <cstdio>
@@ -333,23 +339,68 @@ int main(int argc, char **argv)
     dlg.setFamilyIndex(0);
   }
 
-  // ⑨ 船型说明网页：内容完整性（不打开浏览器）
+  // ⑨ 船型说明：内容完整性（纯文本层，不涉及渲染）
   {
     const QString h = dlg.familyHelpHtml();
     check(h.contains("数学船型族说明"), "说明 HTML 有标题");
     check(h.contains("Journée, J.M.J. (1992)"), "说明 HTML 引用原始文献");
-    check(h.contains("(1 − ζ⁸)"), "说明 HTML 公式为 (1−ζ⁸)（非 (1−ζ)⁸）");
-    check(h.contains("1 − ζ¹⁰") || h.contains("10/11"), "说明 HTML 含 Cm 自检算式");
     check(h.contains("<svg"), "说明 HTML 含 SVG 剖面图");
     check(h.count("<path") >= 8, "SVG 至少 8 条剖面曲线（6 族 + 资料 2 族）");
+    // 公式排版：5 个核心公式以 SVG 内联（matplotlib mathtext 离线渲染，字形转 path），
+    // 不再用 Unicode 上下标拼纯文本。断言「是矢量图，不是文本」。
+    check(h.count("<svg") >= 6, "含 5 个公式 SVG + 1 个剖面图 SVG");
+    check(!h.contains("ζ¹⁰") && !h.contains("ξ²") && !h.contains("ζ²"),
+          "正文不再残留 Unicode 上下标拼的纯文本公式");
     check(h.contains("z_平台 = −z_资料 · D"), "说明 HTML 含坐标换算公式");
     check(h.contains("Gazebo Z_UP"), "说明 HTML 说明平台 z 向上");
     check(h.contains("资料 Model I/II"), "说明 HTML 含资料族");
-    // 落盘供人工查看渲染效果（测试副作用，便于验收）
-    QFile out(QStringLiteral("/tmp/keship_sd10_help_preview.html"));
-    if (out.open(QIODevice::WriteOnly | QIODevice::Text)) {
-      out.write(h.toUtf8());
-      out.close();
+  }
+
+  // ⑩ 船型说明：**渲染路径**必须在无外部 launcher 的环境下可用
+  //   （2026-11-03 缺陷：原实现写 /tmp/*.html 后交 QDesktopServices 打开系统浏览器；
+  //     教学机 / WSL 无 xdg-open 也无浏览器 ⇒ Qt 只打一行 warning 就返回，
+  //     学生点「船型说明」毫无反应。现改为 gz GUI 内 QTextBrowser 自渲染。）
+  //   断言：能弹出内部窗口、HTML 已被解析、SVG 已转位图内嵌、正文无裸 SVG 标签。
+  {
+    check(dlg.findChild<QTextBrowser *>() == nullptr, "调用前对话框内无说明窗口");
+    QMetaObject::invokeMethod(&dlg, "onShowFamilyHelp", Qt::DirectConnection);
+    QApplication::processEvents();
+
+    auto *view = dlg.findChild<QTextBrowser *>();
+    check(view != nullptr, "点「船型说明」在 GUI 内部弹出窗口（不再依赖系统浏览器）");
+    if (view) {
+      const QString txt = view->toPlainText();
+      check(txt.contains("数学船型族说明"), "渲染后正文含标题（HTML 已被解析）");
+      check(txt.contains("Journée"), "渲染后正文含文献引用");
+      check(!txt.contains("<svg"), "正文无裸 SVG 标签残留（已被替换为图片）");
+      // 6 个内嵌图：1 个剖面曲线图 + 5 个公式，均应已转位图
+      int figs = 0;
+      for (int i = 1; i <= 6; ++i) {
+        const QVariant r = view->document()->resource(
+            QTextDocument::ImageResource,
+            QUrl(QStringLiteral("keship://fig%1").arg(i)));
+        if (r.isValid() && !r.value<QImage>().isNull()) ++figs;
+      }
+      check(figs >= 6, "6 个内嵌图（1 剖面 + 5 公式）均已转位图并注册");
+      check(!view->document()->resource(QTextDocument::ImageResource,
+                                        QUrl(QStringLiteral("keship://fig7"))).isValid(),
+            "资源编号不超过实际图数（无多余注册）");
+      check(view->isVisible() || view->parentWidget() != nullptr, "说明窗口已构建");
+      // 落盘渲染结果供人工验收（与旧版 html 落盘同用途；失败不影响判定）
+      {
+        QTextDocument *d = view->document();
+        d->setTextWidth(880);
+        const int shotH = static_cast<int>(d->size().height()) + 8;
+        QImage shot(880, shotH, QImage::Format_ARGB32);
+        shot.fill(Qt::white);
+        QPainter p(&shot);
+        d->drawContents(&p);
+        p.end();
+        shot.save(QStringLiteral("/tmp/keship_sd10_help_preview.png"));
+      }
+      // 关掉，避免影响后续断言与退出
+      if (auto *w = qobject_cast<QWidget *>(view->window())) w->close();
+      QApplication::processEvents();
     }
   }
 
